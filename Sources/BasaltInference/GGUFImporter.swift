@@ -52,20 +52,36 @@ package struct GGUFImporter: Sendable {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
         var writer = ShardWriter(directory: output, maxBytes: 4 << 30, metadata: ["format": "mlx"])
         var (summary, layers, natives) = (Summary(), [String: Int](), [String: GGUFNativeLoader.Entry]())
+        let macaqBlock = Self.macaqHadamardBlock(in: file)
         for tensor in file.tensors {
+            if tensor.name.hasSuffix(".pre_scale"),
+               file.tensor(String(tensor.name.dropLast(".pre_scale".count)) + ".weight") != nil {
+                continue
+            }
             guard let plan = layout.plan(tensor) else {
                 summary.skipped.append(tensor.name)
                 continue
             }
             let base = plan.target.hasSuffix(".weight") ? String(plan.target.dropLast(".weight".count)) : plan.target
+            let preTensor = tensor.name.hasSuffix(".weight")
+                ? file.tensor(String(tensor.name.dropLast(".weight".count)) + ".pre_scale")
+                : nil
             let arrays: [String: MLXArray]
             if grid == .native, plan.bits != nil, tensor.dims.count == 2, tensor.type.block.elements > 1 {
-                arrays = packed(tensor, plan, base: base)
-                natives[base] = GGUFNativeLoader.Entry(type: tensor.type.name, inputOrder: arrays[base + ".input_order"] == nil ? nil : true)
+                var built = packed(tensor, plan, base: base)
+                if let preTensor {
+                    built[base + ".pre_scale"] = MLXArray(file.floats(preTensor), [preTensor.count])
+                }
+                arrays = built
+                natives[base] = GGUFNativeLoader.Entry(
+                    type: tensor.type.name,
+                    inputOrder: arrays[base + ".input_order"] == nil ? nil : true,
+                    hadamardBlock: preTensor != nil ? macaqBlock : nil,
+                    preScale: preTensor != nil ? true : nil)
                 summary.types[tensor.type.name, default: 0] += 1
             } else {
                 let bits = grid == .native ? nil : plan.bits.map { max($0, minimumBits) }
-                arrays = convert(tensor, plan, bits: bits)
+                arrays = convert(tensor, plan, bits: bits, preScale: preTensor, macaqBlock: macaqBlock)
                 if let bits {
                     layers[base] = bits
                     summary.bits[bits, default: 0] += 1
@@ -78,6 +94,14 @@ package struct GGUFImporter: Sendable {
         _ = try writer.finish()
         try writeConfig(template: template, output: output, layers: layers, natives: natives)
         return summary
+    }
+
+    static func macaqHadamardBlock(in file: GGUFFile) -> Int? {
+        switch file.metadata["macaq.hadamard_block"] {
+        case .uint(let v): Int(v)
+        case .int(let v): Int(v)
+        default: nil
+        }
     }
 
     func packed(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, base: String) -> [String: MLXArray] {
@@ -93,10 +117,24 @@ package struct GGUFImporter: Sendable {
         return arrays
     }
 
-    func convert(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, bits: Int?, dense: DType = .bfloat16) -> [String: MLXArray] {
+    func convert(
+        _ tensor: GGUFTensor,
+        _ plan: GGUFTensorPlan,
+        bits: Int?,
+        dense: DType = .bfloat16,
+        preScale: GGUFTensor? = nil,
+        macaqBlock: Int? = nil
+    ) -> [String: MLXArray] {
         let rows = tensor.count / tensor.rowLength
         let targetShape = tensor.dims.count == 1 ? [tensor.count] : Array(tensor.dims.reversed())
         var weight = MLXArray(file.floats(tensor), targetShape)
+        if let preScale, tensor.dims.count == 2 {
+            let pArr = MLXArray(file.floats(preScale), [1, preScale.count])
+            if let b = macaqBlock, b > 1 {
+                weight = MACaQMath.rotateBlocks(weight, blockSize: b)
+            }
+            weight = weight * pArr
+        }
         switch plan.transform {
         case .none: break
         case .subtractOne: weight = weight - 1

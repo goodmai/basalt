@@ -128,17 +128,33 @@ private let matvecKernel = MLXFast.metalKernel(
 final class GGUFLinear: Linear {
     let type: GGMLType
     let inputs: Int
+    let hadamardBlock: Int?
     @ParameterInfo(key: "input_order") var inputOrder: MLXArray?
+    @ParameterInfo(key: "pre_scale") var preScale: MLXArray?
 
-    init(type: GGMLType, outputs: Int, inputs: Int, permutedInput: Bool = false) {
-        (self.type, self.inputs) = (type, inputs)
+    init(
+        type: GGMLType,
+        outputs: Int,
+        inputs: Int,
+        permutedInput: Bool = false,
+        hadamardBlock: Int? = nil,
+        hasPreScale: Bool = false
+    ) {
+        (self.type, self.inputs, self.hadamardBlock) = (type, inputs, hadamardBlock)
         self._inputOrder.wrappedValue = permutedInput ? MLXArray.zeros([inputs], dtype: .int32) : nil
+        self._preScale.wrappedValue = hasPreScale ? MLXArray.ones([inputs], dtype: .float32) : nil
         super.init(weight: MLXArray.zeros([outputs, inputs / type.block.elements * type.block.bytes], dtype: .uint8))
         freeze()
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let x = inputOrder.map { x.take($0, axis: -1) } ?? x
+        var x = inputOrder.map { x.take($0, axis: -1) } ?? x
+        if let block = hadamardBlock, block > 1 {
+            let scale = preScale ?? MLXArray.ones([inputs], dtype: x.dtype)
+            x = MACaQFusedKernels.blockHadamard(x, scaleVector: scale, blockSize: block, isInverse: false)
+        } else if let preScale {
+            x = (x.asType(.float32) * preScale.asType(.float32)).asType(x.dtype)
+        }
         guard inputs > 0, x.size > 0, inputs.isMultiple(of: type.block.elements) else {
             return GGUFKernels.matmul(x, weight, type: type, columns: inputs)
         }

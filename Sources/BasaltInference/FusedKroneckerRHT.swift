@@ -220,6 +220,13 @@ extension FusedKroneckerRHT {
     }
 
     private static func blockHadamard(_ x: MLXArray, signs: MLXArray, blockSize: Int, isInverse: Bool) -> MLXArray {
+        if MACaQFusedKernels.supportsSingleSimdHadamard(blockSize: blockSize, dtype: x.dtype) {
+            return MACaQFusedKernels.blockHadamard(x, scaleVector: signs, blockSize: blockSize, isInverse: isInverse)
+        }
+        return blockHadamardFallback(x, signs: signs, blockSize: blockSize, isInverse: isInverse)
+    }
+
+    package static func blockHadamardFallback(_ x: MLXArray, signs: MLXArray, blockSize: Int, isInverse: Bool) -> MLXArray {
         let origType = x.dtype
         guard x.ndim > 0, blockSize > 0 else { return x }
         let width = x.dim(-1)

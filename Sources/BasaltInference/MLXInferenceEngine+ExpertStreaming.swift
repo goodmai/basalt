@@ -20,6 +20,10 @@ extension MLXInferenceEngine {
     }
 
     func loadContainer(from directory: URL) async throws -> ModelContainer {
+        if let macaq = try await MACaQNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
+            logger.info("Experimental MACaQ native weights: \(directory.lastPathComponent) runs fused Hadamard + channel-balanced low-bit decode on basalt's Metal kernels")
+            return macaq
+        }
         if let qtip = try await QTIPNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental QTIP native weights: \(directory.lastPathComponent) runs bitshift trellis blocks on basalt's Metal decode kernel")
             return qtip

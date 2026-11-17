@@ -83,6 +83,18 @@ extension ModelInspector {
                 mode = "qtip"
                 groupSize = 16
             }
+            if let macaq = json["macaq_quantization"] as? [String: Any],
+               let modules = macaq["modules"] as? [String: Any] {
+                mode = "macaq"
+                for (layer, raw) in modules {
+                    guard let entry = raw as? [String: Any] else { continue }
+                    if let g = entry["group_size"] as? Int {
+                        layerGroupSizes[layer] = g
+                        if groupSize == nil { groupSize = g }
+                    }
+                    if bits == nil, let b = entry["bits"] as? Int { bits = b }
+                }
+            }
             dtype = json["torch_dtype"] as? String
         }
 

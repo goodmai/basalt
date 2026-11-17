@@ -9,10 +9,14 @@ enum GGUFNativeLoader {
         let type: String
         var inputOrder: Bool? = nil
         var dtype: String? = nil
+        var hadamardBlock: Int? = nil
+        var preScale: Bool? = nil
 
         enum CodingKeys: String, CodingKey {
             case type, dtype
             case inputOrder = "input_order"
+            case hadamardBlock = "hadamard_block"
+            case preScale = "pre_scale"
         }
 
         var activationType: DType { DType.allCases.first { "\($0)" == dtype } ?? .bfloat16 }
@@ -57,7 +61,11 @@ enum GGUFNativeLoader {
             switch modules[path] {
             case let linear as Linear:
                 let (outputs, inputs) = linear.shape
-                updates.append((path, GGUFLinear(type: type, outputs: outputs, inputs: inputs, permutedInput: entry.inputOrder ?? false)))
+                updates.append((path, GGUFLinear(
+                    type: type, outputs: outputs, inputs: inputs,
+                    permutedInput: entry.inputOrder ?? false,
+                    hadamardBlock: entry.hadamardBlock,
+                    hasPreScale: entry.preScale ?? false)))
             case let embedding as Embedding:
                 updates.append((path, GGUFEmbedding(type: type, count: embedding.weight.dim(0), dimensions: embedding.weight.dim(1), dtype: entry.activationType)))
             default:

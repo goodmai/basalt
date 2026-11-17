@@ -82,12 +82,31 @@ struct ConvertSubcommand: AsyncParsableCommand {
     )
     var experimentalQtipBudget: Double?
 
+    @Flag(
+        name: .customLong("experimental-macaq-refine"),
+        help: "Experimental (#535): refine native MLX quantized codes (affine 2/3/4-bit, nf4 or mxfp4) in place via MACaQ-R streaming shared-input Hessians and active-set greedy coordinate-descent flips with zero runtime overhead"
+    )
+    var experimentalMacaqRefine = false
+
+    @Option(
+        name: .customLong("experimental-macaq"),
+        help: "Experimental (#535): quantize linear weights with MACaQ channel balance, block-Hadamard rotation and Hessian flip-refinement (affine:<2|3|4>:<32|64|128> or mxfp4)"
+    )
+    var experimentalMacaq: String?
+
+    @Option(name: .customLong("macaq-block"), help: "With --experimental-macaq: Hadamard rotation block size (32 or 64; default 64)")
+    var macaqBlock: Int?
+
+    @Option(name: .customLong("macaq-alpha"), help: "With --experimental-macaq: channel-balance exponent alpha in [0, 1] (default 0.75)")
+    var macaqAlpha: Float?
+
     func validate() throws {
         let gsqBPW = try gsqRCOBits()
         try validatePVOptions(isGSQRCO: gsqBPW != nil)
         try validateUniformQTIP()
         try validateBudgetQTIP(isGSQRCO: gsqBPW != nil)
         try validateGSQRCOOptions(gsqBPW)
+        try validateMACaQOptions(isGSQRCO: gsqBPW != nil)
     }
 
     static func resolveModelDirectory(_ spec: String) throws -> URL {
@@ -102,6 +121,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
 
     mutating func run() async throws {
         if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
+        if let spec = experimentalMacaq { return try await convertMACaQ(spec: spec) }
         if let bpw = try gsqRCOBits() { return try await convertGSQRCO(bpw: bpw) }
         if let bpw = experimentalQtipBudget { return try await convertQTIPBudget(bpw: bpw) }
         if let bpw = experimentalQtip { return try await convertQTIP(bpw: bpw) }
@@ -133,12 +153,13 @@ extension ConvertSubcommand {
     }
 
     func validatePVOptions(isGSQRCO: Bool) throws {
-        if pvTeacher != nil, !experimentalPvTune {
-            throw ValidationError("--pv-teacher requires --experimental-pv-tune")
+        if pvTeacher != nil, !experimentalPvTune && !experimentalMacaqRefine {
+            throw ValidationError("--pv-teacher requires --experimental-pv-tune or --experimental-macaq-refine")
         }
-        let usesCalibration = experimentalPvTune || experimentalQtip != nil || experimentalQtipBudget != nil || isGSQRCO
+        let usesCalibration = experimentalPvTune || experimentalMacaqRefine || experimentalMacaq != nil
+            || experimentalQtip != nil || experimentalQtipBudget != nil || isGSQRCO
         if pvCalibration != nil, !usesCalibration {
-            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-qtip, --experimental-qtip-budget or --quantize gsq-rco")
+            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget or --quantize gsq-rco")
         }
         if experimentalPvTune, format != .mlx || dequantize != nil || isGGUFSource {
             throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")
@@ -208,13 +229,15 @@ extension ConvertSubcommand {
         let start = ContinuousClock.now
         let summary: WeightConverter.Summary
         let pvSummary: PVTuneSummary?
+        let macaqSummary: MACaQSummary?
         do {
             summary = try converter.run(source: sourceURL, output: outURL)
+            macaqSummary = try await runOptionalMACaQRefine(output: outURL, teacher: teacherURL, calibrationText: calibrationText)
             pvSummary = experimentalPvTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
         } catch {
-            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
+            if experimentalPvTune || experimentalMacaqRefine { try? FileManager.default.removeItem(at: outURL) }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }
@@ -225,6 +248,7 @@ extension ConvertSubcommand {
         if let plan = summary.plan {
             print("  Plan:      \(plan.highLayers.count) of \(plan.layers) layers at the high bits, \(plan.unscored) unscored kept low")
         }
+        printMACaQRefineSummary(macaqSummary)
         if let pv = pvSummary {
             print(String(
                 format: "  PV-Tune:   valKL %.4f → %.4f, %d code(s) updated, %d tensor(s) rewritten",
