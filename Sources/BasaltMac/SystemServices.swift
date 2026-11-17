@@ -21,7 +21,8 @@ final class ServiceProvider: NSObject {
         let fallback = model.model
         guard let launch = urls.lazy.compactMap({ EngineChoice.launchURL($0, fallbackChatModel: fallback) }).first else { return nil }
         defaults.set(launch.model, forKey: EngineChoice.modelKey)
-        defaults.set("", forKey: EngineChoice.composeKey)
+        let compose = launch.arguments.count >= 3 && launch.arguments[1] == "--compose" ? launch.arguments[2] : ""
+        defaults.set(compose, forKey: EngineChoice.composeKey)
         show()
         return launch.arguments
     }

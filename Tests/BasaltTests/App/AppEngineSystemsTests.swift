@@ -31,16 +31,19 @@ struct AppEngineSystemsTests {
         #expect(stream.arguments == ["serve", "--model", "goodmai/Qwen3.6-35B-A3B-8bit", "--experimental-expert-streaming"])
         let ocr = try #require(try resolve("basalt://run?model=goodmai/DeepSeek-OCR-2-8bit&role=ocr", fallback: "goodmai/Qwen3-0.6B-4bit"))
         #expect(ocr.model == "goodmai/Qwen3-0.6B-4bit" && ocr.arguments == ["serve", "--model", "goodmai/Qwen3-0.6B-4bit", "--pipeline-ocr-model", "goodmai/DeepSeek-OCR-2-8bit"])
-        for (role, flag) in [("rerank", "--rerank-model"), ("embed", "--embedding-model"), ("asr", "--pipeline-audio-model"), ("decide", "--decision-model")] {
+        for (role, flag) in [("rerank", "--rerank-model"), ("embed", "--embedding-model"), ("asr", "--pipeline-audio-model"), ("tts", "--tts-model"), ("image", "--image-model"), ("decide", "--decision-model")] {
             let sidecar = try #require(try resolve("basalt://run?model=goodmai/laya&role=\(role)", fallback: "bad"))
             #expect(sidecar.model == EngineChoice.defaultChatModel && sidecar.arguments == ["serve", "--model", EngineChoice.defaultChatModel, flag, "goodmai/laya"])
         }
+        let compose = try #require(try resolve("basalt://run?profile=24gb-voice-zonos"))
+        #expect(compose.arguments == ["serve", "--compose", "24gb-voice-zonos"])
         for bad in [
             "https://huggingface.co/goodmai/gemma-4-12B-it-qat-4bit",
             "basalt://exec?model=goodmai/gemma-4-12B-it-qat-4bit",
             "basalt://run?model=../etc/passwd",
             "basalt://run?model=goodmai/gemma%20--unsafe",
             "basalt://run?model=goodmai/gemma-4-12B-it-qat-4bit&role=--unsafe",
+            "basalt://run?profile=ghost-profile",
         ] {
             #expect(try resolve(bad) == nil)
         }
