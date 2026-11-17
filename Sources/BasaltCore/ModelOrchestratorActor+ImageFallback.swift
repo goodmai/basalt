@@ -16,6 +16,10 @@ extension ModelOrchestratorActor {
         media.transcribesImagesForTextModels = imageFallback
     }
 
+    public func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]? {
+        try await engine.sharedImagePromptEmbedding(prompt, dimension: dimension)
+    }
+
     @concurrent
     public nonisolated func transcribingImages(
         in request: GenerationRequest, modelId: String? = nil

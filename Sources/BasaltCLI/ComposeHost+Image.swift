@@ -3,22 +3,76 @@ import BasaltCore
 import BasaltServer
 
 extension ComposeHost {
+    func loadOrderedTargets(
+        _ names: [String],
+        in spec: ComposeSpec,
+        base: [String: ComposeHeld]
+    ) async throws -> [String: ComposeHeld] {
+        var current = base
+        for name in names where current[name] == nil && !spec.imageGeneratorModels.contains(name) {
+            current[name] = try await load(name, in: spec, visibleHeld: current)
+        }
+        for name in names where current[name] == nil {
+            current[name] = try await load(name, in: spec, visibleHeld: current)
+        }
+        return current
+    }
+
+    func loadNewTargets(
+        _ names: [String],
+        in spec: ComposeSpec,
+        baseHeld: [String: ComposeHeld]
+    ) async throws -> [String: ComposeHeld] {
+        var fresh: [String: ComposeHeld] = [:]
+        do {
+            for name in names where !spec.imageGeneratorModels.contains(name) {
+                fresh[name] = try await load(name, in: spec, visibleHeld: baseHeld.merging(fresh) { $1 })
+            }
+            for name in names where spec.imageGeneratorModels.contains(name) {
+                fresh[name] = try await load(name, in: spec, visibleHeld: baseHeld.merging(fresh) { $1 })
+            }
+            return fresh
+        } catch {
+            for model in fresh.values { await Self.unload(model) }
+            throw error
+        }
+    }
+
+    func loadImageDecoder(
+        _ name: String,
+        source: String,
+        model: ComposeSpec.Model
+    ) async throws -> ComposeHeld {
+        let onDemand = model.keep == .onDemand
+        let path = try await services.resolve(source)
+        await events.emit(onDemand ? "registered" : "ready", model: name, source)
+        return .imageDecoder(source: source, path: path)
+    }
+
     func loadImageGenerator(
         _ name: String,
         source: String,
         model: ComposeSpec.Model,
-        in spec: ComposeSpec
+        in spec: ComposeSpec,
+        held: [String: ComposeHeld]
     ) async throws -> ComposeHeld {
         let onDemand = model.keep == .onDemand
         let path = try await services.resolve(source)
         await events.emit(onDemand ? "registered" : "loading", model: name, source)
-        let embedder = sharedEmbedder(forGenerator: name, in: spec)
+        let embedder = sharedEmbedder(forGenerator: name, in: spec, held: held)
+        let decPath = decoderPath(forGenerator: name, in: spec, held: held)
+        let loadSynth = Self.makeSynthesizerLoader(
+            services: services,
+            source: source,
+            path: path,
+            decoderPath: decPath,
+            embedder: embedder
+        )
         guard onDemand else {
-            let loaded = try await services.imageGenerator(source, path, embedder)
+            let loaded = try await loadSynth()
             await events.emit("ready", model: name, source)
             return .imageGenerator(loaded)
         }
-        let imageGenerator = services.imageGenerator
         let descriptor = ImageModelDescriptor.detect(identifier: source)
         return .onDemandImageGenerator(
             OnDemandImageSynthesizer(
@@ -26,22 +80,78 @@ extension ComposeHost {
                 path: path,
                 descriptor: descriptor,
                 idle: .seconds(model.idleUnload ?? ComposeSpec.defaultIdleUnload),
-                loader: { try await imageGenerator(source, path, embedder) }
+                loader: loadSynth
             )
         )
     }
 
-    private func sharedEmbedder(
-        forGenerator name: String,
-        in spec: ComposeSpec
-    ) -> (@Sendable (String) async throws -> [Float])? {
-        let wantsShare = spec.views.contains {
-            guard let imagine = $0.spec.imagine, imagine.chain.contains(name) else { return false }
-            return imagine.shareEncoder != nil
+    private static func makeSynthesizerLoader(
+        services: ComposeServices,
+        source: String,
+        path: String,
+        decoderPath: String?,
+        embedder: (@Sendable (String) async throws -> [Float])?
+    ) -> @Sendable () async throws -> any ImageSynthesizer {
+        let stdLoader = services.imageGenerator
+        let decLoader = services.imageGeneratorWithDecoder
+        return {
+            if let decoderPath {
+                return try await decLoader(source, path, decoderPath, embedder)
+            }
+            return try await stdLoader(source, path, embedder)
         }
-        return wantsShare ? services.sharedTextEmbedder : nil
     }
 
+    private func decoderPath(
+        forGenerator name: String,
+        in spec: ComposeSpec,
+        held: [String: ComposeHeld]
+    ) -> String? {
+        let decName = spec.views.compactMap { view -> String? in
+            guard let imagine = view.spec.imagine, imagine.chain.contains(name) else { return nil }
+            return imagine.decoderVia
+        }.first
+        guard let decName, case .imageDecoder(_, let path)? = held[decName] else { return nil }
+        return path
+    }
+
+    private func sharedEmbedder(
+        forGenerator name: String,
+        in spec: ComposeSpec,
+        held: [String: ComposeHeld]
+    ) -> (@Sendable (String) async throws -> [Float])? {
+        let encoderName = spec.views.compactMap { view -> String? in
+            guard let imagine = view.spec.imagine, imagine.chain.contains(name) else { return nil }
+            return imagine.shareEncoder
+        }.first
+        guard let encoderName else { return nil }
+        let fallback = services.sharedTextEmbedder
+        switch held[encoderName] {
+        case .resident(let orch):
+            return { prompt in
+                if let vec = try await orch.sharedImagePromptEmbedding(prompt, dimension: 256) { return vec }
+                if let fallback { return try await fallback(prompt) }
+                return []
+            }
+        case .onDemand(let onDemand):
+            return { prompt in
+                _ = try await onDemand.acquire()
+                defer {
+                    await withTaskCancellationShield {
+                        await onDemand.release()
+                    }
+                }
+                if let vec = try await onDemand.model.sharedImagePromptEmbedding(prompt, dimension: 256) { return vec }
+                if let fallback { return try await fallback(prompt) }
+                return []
+            }
+        default:
+            return fallback
+        }
+    }
+}
+
+extension ComposeHost {
     func imageSynthesizer(
         for view: ComposeSpec,
         of spec: ComposeSpec,
@@ -59,7 +169,8 @@ extension ComposeHost {
             }
         }
         guard !entries.isEmpty else { return nil }
-        let aux = buildImagineAux(imagine, view: view, spec: spec, held: held)
+        let isFlux3 = entries.contains { $0.synthesizer.descriptor.family == .flux3Klein }
+        let aux = buildImagineAux(imagine, spec: spec, held: held, flux3SceneCaption: isFlux3)
         let gate = chat.gate
         let gpuBusyProbe: @Sendable () async -> Bool = {
             if await gate.inFlight > 0 { return true }
@@ -75,17 +186,18 @@ extension ComposeHost {
 
     private func buildImagineAux(
         _ imagine: ComposeSpec.Imagine,
-        view: ComposeSpec,
         spec: ComposeSpec,
-        held: [String: ComposeHeld]
+        held: [String: ComposeHeld],
+        flux3SceneCaption: Bool
     ) -> RoutedImageSynthesizer.AuxStages {
         var aux = RoutedImageSynthesizer.AuxStages(sharedEncoderModel: imagine.shareEncoder)
+        aux.decoderModel = imagine.decoderVia
         aux.defaultCandidates = imagine.candidates
         aux.defaultTeacacheThreshold = imagine.teacacheThreshold
         aux.defaultPreviewEverySteps = imagine.previewEverySteps
         if let upsampleName = imagine.upsampleVia, let answerTarget = try? target(upsampleName, held: held, in: spec) {
             aux.upsamplerModel = upsampleName
-            aux.upsampler = Self.makePromptUpsampler(using: answerTarget)
+            aux.upsampler = Self.makePromptUpsampler(using: answerTarget, flux3SceneCaption: flux3SceneCaption)
         }
         if let judgeName = imagine.judgeVia, let judgeTarget = try? target(judgeName, held: held, in: spec) {
             aux.judgeModel = judgeName
@@ -95,9 +207,20 @@ extension ComposeHost {
     }
 
     private static func makePromptUpsampler(
-        using target: any AnswerTarget
+        using target: any AnswerTarget,
+        flux3SceneCaption: Bool
     ) -> @Sendable (String) async throws -> String {
-        { rawPrompt in
+        if flux3SceneCaption {
+            return { rawPrompt in
+                let prompt = """
+                    You are the prompt upsampler of a FLUX.3 text-to-image model. Expand the user's request into ONE detailed, self-contained scene caption: open with the medium convention (e.g. Full-color outdoor photograph, Studio photograph, Digital illustration), preserve every explicit subject, count, text and spatial cue, specify concrete lighting, materials and composition, and output ONLY the caption with no quotes or markdown:
+                    \(rawPrompt)
+                    """
+                let reply = try await target.answer(GenerationRequest(prompt: prompt, maxTokens: 240, temperature: 0.35))
+                return reply.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return { rawPrompt in
             let prompt = "Expand this image prompt into 1-2 vivid visual sentences describing lighting, composition and texture. Reply ONLY with the expanded prompt:\n\(rawPrompt)"
             let reply = try await target.answer(GenerationRequest(prompt: prompt, maxTokens: 160, temperature: 0.4))
             return reply.text.trimmingCharacters(in: .whitespacesAndNewlines)

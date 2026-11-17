@@ -224,6 +224,7 @@ public struct ImageCompletedArtifact: Sendable, Codable, Equatable {
     public var compute: ImageComputeBackend
     public var licenseTier: ImageLicenseTier
     public var upsampledPrompt: String?
+    public var decoderModel: String?
     public var elapsedMs: Int
 
     public init(
@@ -245,6 +246,7 @@ public struct ImageCompletedArtifact: Sendable, Codable, Equatable {
         self.compute = .mlx
         self.licenseTier = .permissiveCommercial
         self.upsampledPrompt = nil
+        self.decoderModel = nil
         self.elapsedMs = 0
     }
 
@@ -263,6 +265,7 @@ public struct ImageRouteDecision: Sendable, Codable, Equatable {
     public var fallbackFrom: String?
     public var sharedEncoderModel: String?
     public var upsamplerModel: String?
+    public var decoderModel: String?
     public var judgeModel: String?
 
     public init(selectedModel: String, compute: ImageComputeBackend = .mlx, fallbackFrom: String? = nil) {
@@ -271,6 +274,7 @@ public struct ImageRouteDecision: Sendable, Codable, Equatable {
         self.fallbackFrom = fallbackFrom
         self.sharedEncoderModel = nil
         self.upsamplerModel = nil
+        self.decoderModel = nil
         self.judgeModel = nil
     }
 }

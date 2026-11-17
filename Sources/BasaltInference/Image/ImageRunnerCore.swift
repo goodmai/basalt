@@ -38,15 +38,34 @@ protocol ImageStepRunner: ImageSynthesizer {
 enum ImageRunnerCore {
     static func parseDirectoryConfig(
         directory: URL,
-        identifier: String
+        identifier: String,
+        externalDecoderDirectory: URL? = nil
     ) throws(BasaltError) -> (descriptor: ImageModelDescriptor, config: ImageDiTConfig) {
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
             throw .modelNotFound(identifier: directory.path)
         }
-        let configURL = directory.appending(component: "config.json")
-        var rawJSON: [String: Any]?
-        if FileManager.default.fileExists(atPath: configURL.path) {
+        let rawJSON = try readFirstJSONObject(
+            at: [
+                directory.appending(component: "config.json"),
+                directory.appending(path: "transformer/config.json"),
+            ]
+        )
+        let vaeJSON = try readFirstJSONObject(
+            at: [
+                externalDecoderDirectory?.appending(component: "config.json"),
+                externalDecoderDirectory?.appending(path: "vae/config.json"),
+                directory.appending(path: "vae/config.json"),
+            ].compactMap { $0 }
+        )
+        let descriptor = ImageModelDescriptor.detect(identifier: identifier, configJSON: rawJSON)
+        var config = buildDiTConfig(raw: rawJSON, identifier: identifier, descriptor: descriptor)
+        config.decoderBaseChannels = resolveDecoderChannels(vaeJSON: vaeJSON ?? rawJSON)
+        return (descriptor, config)
+    }
+
+    private static func readFirstJSONObject(at urls: [URL]) throws(BasaltError) -> [String: Any]? {
+        for configURL in urls where FileManager.default.fileExists(atPath: configURL.path) {
             let data: Data
             do {
                 data = try Data(contentsOf: configURL)
@@ -56,11 +75,16 @@ enum ImageRunnerCore {
             guard let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
                 throw .modelConfigurationInvalid(path: configURL.path, reason: "config.json must be a JSON object")
             }
-            rawJSON = parsed
+            return parsed
         }
-        let descriptor = ImageModelDescriptor.detect(identifier: identifier, configJSON: rawJSON)
-        let config = buildDiTConfig(raw: rawJSON, identifier: identifier, descriptor: descriptor)
-        return (descriptor, config)
+        return nil
+    }
+
+    private static func resolveDecoderChannels(vaeJSON: [String: Any]?) -> Int {
+        if let decOut = vaeJSON?["decoder_block_out_channels"] as? [Int], let first = decOut.first, first < 128 {
+            return 18
+        }
+        return 24
     }
 
     private static func buildDiTConfig(
@@ -68,11 +92,14 @@ enum ImageRunnerCore {
         identifier: String,
         descriptor: ImageModelDescriptor
     ) -> ImageDiTConfig {
-        let rawHidden = raw?["hidden_size"] as? Int ?? raw?["dim"] as? Int ?? 64
-        let cappedHidden = min(256, max(32, rawHidden))
         let heads = raw?["num_attention_heads"] as? Int ?? raw?["num_heads"] as? Int ?? 4
-        let layers = min(6, max(1, raw?["num_hidden_layers"] as? Int ?? raw?["num_layers"] as? Int ?? 2))
-        let latentCh = raw?["latent_channels"] as? Int ?? raw?["in_channels"] as? Int ?? 16
+        let derivedHidden = (raw?["attention_head_dim"] as? Int).map { $0 * heads }
+        let rawHidden = raw?["hidden_size"] as? Int ?? raw?["dim"] as? Int ?? derivedHidden ?? 64
+        let cappedHidden = min(256, max(32, rawHidden))
+        let baseLayers = raw?["num_hidden_layers"] as? Int ?? raw?["num_layers"] as? Int ?? 2
+        let singleLayers = raw?["num_single_layers"] as? Int ?? 0
+        let layers = min(6, max(1, baseLayers + singleLayers))
+        let latentCh = min(32, max(4, raw?["latent_channels"] as? Int ?? raw?["in_channels"] as? Int ?? 16))
         let defaultPatch: Int = switch descriptor.family {
         case .pixelDiT: 16
         case .linearSana: 1
@@ -88,18 +115,19 @@ enum ImageRunnerCore {
             patchSize: patch
         )
         cfg.vaeScale = descriptor.family == .linearSana ? 32 : (descriptor.usesVAE ? 8 : 1)
-        cfg.quantizationBits = raw?["bits"] as? Int ?? (descriptor.family == .ternaryBitNet ? 2 : 8)
+        let macaqBits = (raw?["macaq_quantization"] as? [String: Any])?["bits"] as? Int
+        cfg.quantizationBits = raw?["bits"] as? Int ?? macaqBits ?? (descriptor.family == .ternaryBitNet ? 2 : 8)
         let idHash = identifier.unicodeScalars.reduce(UInt64(517)) { ($0 &* 131) &+ UInt64($1.value) }
         cfg.initSeed = raw?["seed"] as? UInt64 ?? (idHash == 0 ? 517 : idHash)
         return cfg
     }
 
     static func loadSafetensorsIfPresent(in directory: URL, into module: Module) throws(BasaltError) {
-        let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "safetensors" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let topFiles = safetensorsFiles(in: directory)
+        let weightDir = topFiles.isEmpty ? directory.appending(component: "transformer") : directory
+        let files = topFiles.isEmpty ? safetensorsFiles(in: weightDir) : topFiles
         guard !files.isEmpty else { return }
-        if let manifest = MACaQNativeLoader.manifest(in: directory) {
+        if let manifest = MACaQNativeLoader.manifest(in: weightDir) ?? MACaQNativeLoader.manifest(in: directory) {
             try MACaQNativeLoader.install(manifest.modules, in: module)
         }
         let existing = Dictionary(uniqueKeysWithValues: module.parameters().flattened())
@@ -120,6 +148,12 @@ enum ImageRunnerCore {
         } catch {
             throw .weightsCorrupted(path: directory.path, reason: error.localizedDescription)
         }
+    }
+
+    private static func safetensorsFiles(in directory: URL) -> [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "safetensors" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     static func wantsNativeAlpha(request: ImageGenerationRequest, descriptor: ImageModelDescriptor) -> Bool {

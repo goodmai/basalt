@@ -36,10 +36,11 @@ struct ComposeProfilesMatrixTests {
         #expect(ComposeProfileCatalog.resolve(id: "192gb-coding-agent")?.id == "256gb-coding-agent")
     }
 
-    @Test("Every one of the 84 hardware-tiered profiles, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
+    @Test("Every one of the 84 hardware-tiered profiles, 5 FLUX.3 4-stage presets, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
     func allBundledProfilesParseCleanly() throws {
         let bundledKeys = ComposeFile.bundled.keys.sorted()
-        #expect(bundledKeys.count == 84 + 4 * 12 + 3)
+        #expect(ComposeProfileCatalog.flux3Combinations.count == 5)
+        #expect(bundledKeys.count == 84 + 4 * 12 + 3 + 5)
         for key in bundledKeys {
             let spec = try ComposeFile.load(key)
             #expect(spec.issues.isEmpty, "Bundled profile \(key) had issues: \(spec.issues)")

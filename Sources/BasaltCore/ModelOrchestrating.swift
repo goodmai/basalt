@@ -59,9 +59,13 @@ public protocol ModelOrchestrating: Actor {
     func exclusively<T: Sendable>(
         unloadingModel unloads: Bool, _ body: @escaping @Sendable () async throws(BasaltError) -> T
     ) async throws(BasaltError) -> (value: T, swap: Duration)
+    func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]?
 }
 
 extension ModelOrchestrating {
+    public func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]? {
+        nil
+    }
     public func setCloudFallback(
         _ fallback: (any CloudFallback)?, arbiter: HybridArbiter = HybridArbiter(),
         freeMemory: @escaping @Sendable () -> Int64 = { SystemProfiler.availableSystemMemory() }

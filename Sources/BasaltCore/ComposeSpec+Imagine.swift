@@ -5,6 +5,7 @@ extension ComposeSpec {
         public var chain: [String]
         public var upsampleVia: String?
         public var shareEncoder: String?
+        public var decoderVia: String?
         public var steps: Int?
         public var size: String?
         public var format: ImageOutputFormat?
@@ -25,6 +26,7 @@ extension ComposeSpec {
             self.chain = chain
             self.upsampleVia = upsampleVia
             self.shareEncoder = shareEncoder
+            self.decoderVia = nil
             self.steps = steps
             self.size = size
             self.format = nil
@@ -39,6 +41,7 @@ extension ComposeSpec {
             case chain, steps, size, format, candidates
             case upsampleVia = "upsample_via"
             case shareEncoder = "share_encoder"
+            case decoderVia = "decoder_via"
             case teacacheThreshold = "teacache_threshold"
             case previewEverySteps = "preview_every_steps"
             case judgeVia = "judge_via"
@@ -52,6 +55,11 @@ extension ComposeSpec {
         Set(views.flatMap { $0.spec.imagine?.chain ?? [] }.filter { models[$0]?.isCloud == false })
     }
 
+    public var imagineDecoderModels: Set<String> {
+        let names = views.compactMap { $0.spec.imagine?.decoderVia }
+        return Set(names.filter { models[$0]?.isCloud == false })
+    }
+
     public var imagineAuxModels: Set<String> {
         let names = views.flatMap { view -> [String] in
             guard let imagine = view.spec.imagine else { return [] }
@@ -62,6 +70,10 @@ extension ComposeSpec {
 
     var imagineRoleNames: [String] {
         imagine?.chain ?? []
+    }
+
+    var imagineDecoderRoleNames: [String] {
+        [imagine?.decoderVia].compactMap { $0 }
     }
 
     var imagineAuxRoleNames: [String] {
@@ -109,6 +121,7 @@ extension ComposeSpec {
         for (key, value) in [
             ("upsample_via", imagine.upsampleVia),
             ("share_encoder", imagine.shareEncoder),
+            ("decoder_via", imagine.decoderVia),
             ("judge_via", imagine.judgeVia),
         ] {
             guard let name = value else { continue }
@@ -116,6 +129,8 @@ extension ComposeSpec {
                 issues.append(Issue("pipeline.imagine.\(key)", "\(name) is not a model declared under models"))
             } else if key == "share_encoder", models[name]?.isCloud == true {
                 issues.append(Issue("pipeline.imagine.share_encoder", "\(name) is a cloud model; shared text encoders must be local"))
+            } else if key == "decoder_via", models[name]?.isCloud == true {
+                issues.append(Issue("pipeline.imagine.decoder_via", "\(name) is a cloud model; latent VAE decoders must be local"))
             }
         }
         return issues

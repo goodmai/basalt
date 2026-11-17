@@ -26,7 +26,7 @@ extension ComposeHost {
             switch name.flatMap({ held[$0] }) {
             case .resident(let model): model
             case .onDemand(let model): model.model
-            case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, nil: nil
+            case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, .imageDecoder, nil: nil
             }
         }
         let speech: (any AudioTranscriber)? = view.usesSpeechAnalyzer ? (first ? (startup.speech ?? SpeechAnalyzerTranscriber()) : SpeechAnalyzerTranscriber()) : nil
@@ -61,7 +61,7 @@ extension ComposeHost {
         case .cloud(let id):
             let client = try OpenRouterClient(config: .init(apiKey: services.key(spec.models[name]), baseURL: ServeCommand.openRouterAnswers, timeout: 120, maxRetries: 1))
             return CloudAnswer(client: client, model: id, gate: cloudGate)
-        case .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, nil:
+        case .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, .imageDecoder, nil:
             throw BasaltError.invalidRequestStructure(details: "compose: \(name) is not loaded as an answer model")
         }
     }
@@ -80,7 +80,7 @@ extension ComposeHost {
                 (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
             case .onDemandImageGenerator(let onDemand):
                 (entry.state, entry.lastUsed, entry.idleUnload) = (ComposeModelState(await onDemand.phase), await onDemand.lastUsed, model.idleUnload ?? ComposeSpec.defaultIdleUnload)
-            case .speaker, .imageGenerator:
+            case .speaker, .imageGenerator, .imageDecoder:
                 entry.state = .ready
             case .cloud(let id):
                 let refusal = await cloudGate.refusal(id)
