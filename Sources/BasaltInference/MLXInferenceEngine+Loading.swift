@@ -111,6 +111,7 @@ extension MLXInferenceEngine {
             DeepSeekOCRProcessor(try JSONDecoder.json5().decode(DeepSeekOCRProcessorConfiguration.self, from: data), tokenizer: tokenizer, geometry: .v2)
         }
         VLMProcessorLoadingRegistry.shared.register(ModelTypeProcessorResolver(processorTypes: [DeepSeekOCR2.modelType: DeepSeekOCRProcessor.ocr2ProcessorType]))
+        await registerMuseGlimmerAliases()
     }
 
     public static func registerAliases() async {

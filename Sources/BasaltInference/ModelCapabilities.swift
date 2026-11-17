@@ -52,7 +52,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["llama", "qwen3", "qwen3_moe", "minimax_m2", "minimax-m2"], attention),
             (["qwen3_5", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8", PrismHadamard.modelType], qwen35),
             (["qwen3_5_moe", "qwen3_6_moe", "qwen3_8_moe", "qwen3.8_moe"], qwen35),
-            (["nemotron_h", NemotronTranscribeModel.modelType, "lfm2", "lfm2_moe", RicursiveModel.modelType, RicursiveModel.aliasModelType], recurrent),
+            (["nemotron_h", NemotronTranscribeModel.modelType, "lfm2", "lfm2_moe", RicursiveModel.modelType, RicursiveModel.aliasModelType, MuseGlimmerTextModel.multimodalModelType, MuseGlimmerTextModel.modelType, "muse-glimmer"], recurrent),
             (["gemma3", "gemma3_text"], gemma3),
             (["gemma4", "gemma4_text"], gemma4),
             ([FlintModel.modelType], flint),

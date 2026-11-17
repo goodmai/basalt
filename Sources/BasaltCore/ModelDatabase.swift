@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ModelFamily: String, Codable, Sendable {
-    case qwen, gemma, llama, mistral, deepseek
+    case qwen, gemma, llama, mistral, deepseek, muse
 }
 
 public enum ModelTask: String, Codable, Sendable {
@@ -224,6 +224,36 @@ public struct ModelDatabase: Sendable {
             spec: ModelDefinition.Spec(
                 ramMB: 4500, contextWindow: 65536, quantization: "4-bit", quality: 0.88,
                 totalParameters: 7.0, activeParameters: 7.0)
+        ),
+        ModelDefinition(
+            id: "mlx-community/Muse-Glimmer-30B-4bit",
+            name: "Meta Muse Glimmer 30B (MLX 4-bit)",
+            family: .muse,
+            task: .code,
+            modality: .multimodal,
+            spec: ModelDefinition.Spec(
+                ramMB: 18500, contextWindow: 131072, quantization: "4-bit", quality: 0.95,
+                totalParameters: 30.0, activeParameters: 30.0)
+        ),
+        ModelDefinition(
+            id: "Jundot/Muse-Glimmer-30B-oQ4e",
+            name: "Meta Muse Glimmer 30B (MLX oQ4e)",
+            family: .muse,
+            task: .code,
+            modality: .multimodal,
+            spec: ModelDefinition.Spec(
+                ramMB: 20200, contextWindow: 131072, quantization: "oQ4e", quality: 0.96,
+                totalParameters: 30.0, activeParameters: 30.0)
+        ),
+        ModelDefinition(
+            id: "meta-models/Muse-Glimmer-30B",
+            name: "Meta Muse Glimmer 30B (Base BF16)",
+            family: .muse,
+            task: .code,
+            modality: .multimodal,
+            spec: ModelDefinition.Spec(
+                ramMB: 59500, contextWindow: 131072, quantization: "bfloat16", quality: 0.97,
+                totalParameters: 30.0, activeParameters: 30.0)
         )
     ]
 

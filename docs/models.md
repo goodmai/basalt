@@ -21,6 +21,7 @@ M4 Pro, 24 GB, release build, November 2026.
 | `Tongyi-MAI/Z-Image-Turbo` | DiT image synthesis | ~6.4 GB | 4–8 steps (`1024×1024`) | `pipeline.imagine` with TeaCache & shared text encoder (#517, #519) |
 | `Ricursive/Ripple-65B-4bit` | 65B gated-attention sparse MoE (`128` experts, top-8) | ~35 GB (64 GB+ resident, or SSD streaming) | architecture verified | NoPE / partial RoPE (#520, #522) |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + Latently-Routed MoE (`lr_moe`) | ~17 GB (4-bit) | architecture verified | interleaved GQA + Mamba-2 (#521, #522) |
+| `meta-models/Muse-Glimmer-30B` (`mlx-community/Muse-Glimmer-30B-4bit`) | 30B hybrid SWA (`2048`) + NoPE full attention + ViT-G/14 VLM | ~18.1 GB (4-bit) · ~19.8 GB (`oQ4e`) | architecture & HF shards verified | Onyx `to=self` reasoning + ATEM tool calls + GGUF de-centered norm import (#533) |
 
 ### Measured for 0.8
 

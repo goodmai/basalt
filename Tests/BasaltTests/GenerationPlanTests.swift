@@ -185,6 +185,8 @@ struct GenerationPlanTests {
               (.prism, PrismHadamard.modelType), (.nemotronH, "nemotron_h"), (.sigmoidMoe, "nemotron_h"), (.lfm2, "lfm2"), (.lfm2Moe, "lfm2_moe"),
               (.gemma3, "gemma3_text"), (.gemma4, "gemma4_text"), (.gemma4Moe, "gemma4"), (.flint, FlintModel.modelType),
               (.ricursive, RicursiveModel.modelType),
+              (.museGlimmer, MuseGlimmerTextModel.multimodalModelType),
+              (.museGlimmerText, MuseGlimmerTextModel.modelType),
           ])
     func exclusionsMatchTheRuntime(family: TinyModel.Family, modelType: String) throws {
         let capabilities = try #require(ModelCapabilities.of(modelType: modelType))

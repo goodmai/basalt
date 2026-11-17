@@ -89,14 +89,15 @@ struct GenerationLauncher {
     let context: ModelContext
     let started: ContinuousClock.Instant
 
-    func handing(_ iterator: some TokenIteratorProtocol, promptTokens: Int) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval) {
-        MLXInferenceEngine.handOff(
+    func handing(_ iterator: some TokenIteratorProtocol, promptTokens: Int) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval, OnyxReasoningBox?) {
+        MLXInferenceEngine.handOffWithOnyx(
             promptTokenCount: promptTokens, context: context, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
     }
 
     func uncached(_ iterator: some TokenIteratorProtocol) -> MLXInferenceEngine.GenerationLaunch {
-        let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1))
-        return MLXInferenceEngine.GenerationLaunch(stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill)
+        let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1))
+        return MLXInferenceEngine.GenerationLaunch(
+            stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill, onyxReasoning: onyx)
     }
 
     func fresh(_ plan: FreshCache, batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
@@ -172,10 +173,10 @@ struct GenerationLauncher {
             input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
             drafter: drafter, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
             blockSize: request.blockSize, components: components)
-        let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
+        let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
         return MLXInferenceEngine.GenerationLaunch(
             stream: stream, task: task, cache: kept?.cache, reusedTokens: TokenCount(staged ? reused : 0),
-            prefillSeconds: prefill, mtpPrefix: kept?.prefix)
+            prefillSeconds: prefill, mtpPrefix: kept?.prefix, onyxReasoning: onyx)
     }
 
     func stage(
@@ -222,10 +223,11 @@ struct GenerationLauncher {
         let hybrid = cache.isHybrid
         func launching(_ iterator: some TokenIteratorProtocol) -> MLXInferenceEngine.GenerationLaunch {
             let keepable = iterator.state == nil || hybrid
-            let (stream, task, prefill) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - reused)
+            let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - reused)
             return MLXInferenceEngine.GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
-                reusedTokens: TokenCount(reused), exactTokens: TokenCount(blended?.exactPrefix ?? Int.max), prefillSeconds: prefill)
+                reusedTokens: TokenCount(reused), exactTokens: TokenCount(blended?.exactPrefix ?? Int.max), prefillSeconds: prefill,
+                onyxReasoning: onyx)
         }
         if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers),
            let seat = batch.seat(in: context, kvBits: params.kvBits) {

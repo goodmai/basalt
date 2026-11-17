@@ -70,6 +70,7 @@ extension MLXInferenceEngine {
         var exactTokens = TokenCount(Int.max)
         var prefillSeconds: TimeInterval = 0
         var mtpPrefix: MTPPrefix?
+        var onyxReasoning: OnyxReasoningBox?
     }
 
     static func launch(input: LMInput, prompt: CachedPrompt, options: LaunchOptions, context: ModelContext) throws -> GenerationLaunch {
@@ -105,12 +106,36 @@ extension MLXInferenceEngine {
         promptTokenCount: Int, context: ModelContext, iterator: consuming T, tools: [ToolSpec]?,
         toolCallPolicy: ToolCallPolicy, since started: ContinuousClock.Instant = .now
     ) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval) {
+        let result = handOffWithOnyx(
+            promptTokenCount: promptTokenCount, context: context, iterator: iterator, tools: tools,
+            toolCallPolicy: toolCallPolicy, since: started)
+        return (result.0, result.1, result.2)
+    }
+
+    static func handOffWithOnyx<T: TokenIteratorProtocol>(
+        promptTokenCount: Int, context: ModelContext, iterator: consuming T, tools: [ToolSpec]?,
+        toolCallPolicy: ToolCallPolicy, since started: ContinuousClock.Instant = .now
+    ) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval, OnyxReasoningBox?) {
         Stream.defaultStream.synchronize()
         let prefill = (ContinuousClock.now - started).inSeconds
+        var config = context.configuration
+        if config.toolCallFormat == nil { config.toolCallFormat = context.model.toolCallFormat }
+        if config.reasoningConfig == nil { config.reasoningConfig = context.model.reasoningConfig }
+        if config.toolCallFormat == .atem {
+            config.extraEOSTokens.formUnion(["<|eot|>", "<|end_of_text|>"])
+            if let parser = OnyxReasoningStateMachine(tokenizer: context.tokenizer) {
+                let box = OnyxReasoningBox()
+                let tapped = OnyxReasoningTapIterator(base: iterator, parser: parser, box: box)
+                let (stream, task) = generateTask(
+                    promptTokenCount: promptTokenCount, modelConfiguration: config, tokenizer: context.tokenizer,
+                    iterator: tapped, tools: tools, toolCallPolicy: toolCallPolicy)
+                return (stream, task, prefill, box)
+            }
+        }
         let (stream, task) = generateTask(
-            promptTokenCount: promptTokenCount, modelConfiguration: context.configuration, tokenizer: context.tokenizer,
+            promptTokenCount: promptTokenCount, modelConfiguration: config, tokenizer: context.tokenizer,
             iterator: iterator, tools: tools, toolCallPolicy: toolCallPolicy)
-        return (stream, task, prefill)
+        return (stream, task, prefill, nil)
     }
 
     func batchedDecoder(_ container: ModelContainer, epoch: ModelEpoch) async -> BatchedDecoder? {
