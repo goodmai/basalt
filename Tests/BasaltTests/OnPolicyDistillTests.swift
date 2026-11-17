@@ -114,14 +114,15 @@ struct OnPolicyDistillTests {
     @Test("A 16-prompt on-policy run on a tiny model lowers the reverse KL to a different tiny teacher on the base student's held-out samples, sends the student's token ids to /v1/score, saves a loadable adapter and leaves the base weights bit-identical")
     func endToEnd() async throws {
         let directory = try DistillTests.scratch()
-        let host = try Self.teacherHost()
-        let engine = try await TinyModel.engine(.qwen3)
-        let container = try #require(await engine.container)
-        let before = await DistillTests.baseWeights(container)
-        var request = try Self.onPolicy(host, prompts: 16, in: directory)
-        request.iterations = 60
-        let report = try await withRandomState(MLXRandom.RandomState(seed: 42)) {
-            try await engine.distill(request, session: URLSession(configuration: StubURLProtocol.configuration), home: directory, environment: [:])
+        let (host, engine, container, before, request, report) = try await withRandomState(MLXRandom.RandomState(seed: 42)) {
+            let host = try Self.teacherHost()
+            let engine = try await TinyModel.engine(.qwen3)
+            let container = try #require(await engine.container)
+            let before = await DistillTests.baseWeights(container)
+            var request = try Self.onPolicy(host, prompts: 16, in: directory)
+            request.iterations = 60
+            let report = try await engine.distill(request, session: URLSession(configuration: StubURLProtocol.configuration), home: directory, environment: [:])
+            return (host, engine, container, before, request, report)
         }
         #expect(report.kept == 12 && report.heldOut == 4 && report.cached == 0)
         let klBefore = try #require(report.reverseKLBefore), klAfter = try #require(report.reverseKLAfter)

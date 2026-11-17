@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.11.0 — 2026-11-17
+
+### Upgrading from 0.10.0
+- `mlx-swift` is back on upstream `ml-explore/mlx-swift 0.33.0` (`Package.swift`), retiring the `goodmai/mlx-swift` fork via a self-contained `NF4Metal` module (#275, #523). Regex grammar lowering (`RegexToEBNF`) and `ModelContext` slots are also localized inside basalt (#524).
+- Experimental Neural Engine (`--ane-decide`, `--ane-embed`, `--ane-vision-tower`) and SSD MoE streaming (`--expert-streaming`, `--expert-cache-gb`) flags graduated from `--experimental-*`; the legacy `--experimental-*` spellings remain accepted as aliases (#226, #243, #516). `SplitFeedForwardPrefill` was retired after end-to-end benchmarks showed GPU/ANE column-split sync outweighed its gain (#516, #523).
+- `basalt compose` `version: 2` adds multi-machine `variables` and hardware `profiles`, declarative `benchmarks` with 10 leaderboard submission exporters (#492, #505), `adapters` with streaming Hugging Face Nemotron training and zero-reload per-route switching (#510, #511), `pipeline.speak` neural TTS (#493, #525), `pipeline.imagine` native image generation (#517, #519), and **84 hardware-tiered bundled profiles** (`16gb-*` through `256gb-*`, plus `32gb`, `36gb`, `192gb`, and `236gb` aliases, #526, #528). Version 1 files keep working unchanged.
+- `Basalt.app` (`./scripts/bundle_app.swift`, macOS 27 Liquid Glass, English & Russian) ships as a full native desktop client over `SupervisedEngine` with `basalt://run?model=...` one-click Hugging Face launch, `⌥Space` Quick Ask, **Compose Profiles (`⌥⌘C`)** with automatic physical-RAM tier recommendation (#526, #528), full-duplex voice mode (#434, #514), and a 2K RGBA Image Canvas with Before/After comparison (#517, #519).
+
+### Models, Speech, Vision & Image Synthesis
+- **New LLM & MoE architectures (#518, #520, #521, #522):**
+  - **Recursive `Flint` (`flint`):** `Recursive/Flint-40B-A2.5B` hybrid sliding/full attention MoE (`512` routed experts, top-10 + 1 shared) and native `oQ3e` (`groupSize = 32`) checkpoints. Measured on M4 Pro 24 GB (`flint-oQ3e`): `67.02 tok/s` decode, `273.5 tok/s` prefill, `17.61 GB` active memory, `0` swap.
+  - **Ricursive `Ripple-65B` (`ripple`):** gated-attention sparse MoE (`128` experts, top-8, NoPE/partial RoPE).
+  - **NVIDIA `Nemotron-3.5-Lightning` (`nemotron_h` v3.5):** Mamba-2 + Latently-Routed MoE (`lr_moe`) + interleaved GQA (`Nemotron-3.5-Lightning-30B-A3B`).
+- **Neural Text-to-Speech & Full-Duplex Speech (`/v1/audio/speech`, `pipeline.speak`, #493, #506, #513, #525, #527):**
+  - **`Zyphra/ZONOS3-Mini-hf` (`zonos3`):** native Swift MLX 1.6B Llama backbone + 32-codebook FSQ multi-head DAC decoder at `44.1 kHz` across 43 languages and 27 bundled voices, with automatic cross-lingual `192`-d speaker-embedding + Classifier-Free Guidance (`cfg = 1.5`) switching (#525, #527). Measured on M4 Pro 24 GB (`-c release`): loads in `0.47 s` (`2.24 GB` active), synthesizes `en_us` (`Savannah`), `de` (`Liesel`), and `ru` (`Savannah` cross-lingual) at **`RTF 0.228–0.263`** (`3.8–4.4×` faster than real time, peak `3.22–3.52 GB`).
+  - **`Kokoro-82M` (ANE + MLX), `Qwen3-TTS`, `Fun-CosyVoice3`, and `Chatterbox`**, plus `Nemotron 3.5 Transcribe` (`/v1/audio/transcriptions`, #383) and Apple `SpeechAnalyzer` / `AVSpeechSynthesizer` fallback chains (`on_gpu_busy: fallback_ane`).
+- **Native MLX Image Synthesis & Editing (`/v1/images/generations`, `/v1/images/edits`, `pipeline.imagine`, #517, #519):**
+  - Supports `FLUX.2/3-klein`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5`, `Ming-Image`, `Bonsai-4B`, `Step1X-Edit`, and `SonicDiffusion`, with resident LLM text-encoder sharing (`share_encoder`), prompt upsampling (`upsample_via`), TeaCache residual step skipping, TAEF live SSE previews, and best-of-N VLM judging.
+- **Vision OCR (#400, #413, #415, #476):** `DeepSeek-OCR-2` (Qwen2 vision encoder with learned queries and official 768 tiling) and `PaddleOCR-VL-1.5` (with optional ANE vision tower, CER `1.74%` vs `1.90%`).
+
+### Performance, Memory & Swift 6.4 Zero-Hatch Core
+- **SSD MoE Expert Streaming v2 (#225, #477, #478):** per-layer expert slots read in place via batched POSIX AIO with `LIO_NOWAIT` next-layer prefetch and prefill warm-start, accelerating streaming decode `2.3–2.6×`. `goodmai/Qwen3.6-35B-A3B-8bit` (`37.7 GB` checkpoint) decodes on a `24 GB` M4 Pro at **`8.77 tok/s`** in `13.9 GB` active memory with **`0` swap**.
+- **KV Cache Quantization & Batching (#351, #471, #472, #473, #516):** experimental `--kv-bits turbo3|turbo4|turbo8v4` and `polar4` RoPE-pair polar keys in the zoned middle, plus `BatchQuantizedKVCache` for concurrent quantized-KV decode.
+- **Swift 6.4 Zero-Copy & Zero-Hatch Architecture (#490, #496, #497, #499, #502):** `yyjson` over `RawSpan` request parsing, `UniqueArray` / `Span` SSE fast writer, unboxed sampling and KV paths, unified zero-copy Metal memory bridge, and fused confidence/decode/MoE kernels with zero concurrency hatches outside `scripts/concurrency-hatches.allow`.
+
+### Quantization, Distillation & Parameter-Efficient Adapters
+- **Bitshift Trellis Quantization (`QTIP`) & Two-Stage `PV-Tuning` (#409, #410, #486, #494, #515):**
+  - `models convert --experimental-qtip --bits 2.5` packs `Qwen3.8-27B` into `10.00 GB` and beats 3-bit MLX affine and PV-Tuning on 16k perplexity (`4.621` vs `4.702` / `4.652`); `2.0 bpw` (`8.48 GB`) cuts 2-bit perplexity loss by `72.1%` (`5.345` vs `19.146`).
+  - `models convert --experimental-pv-tune` recovers `8.7–29%` of 2–3-bit quantization perplexity loss in under 3 minutes, extended with mixed-rate `QTIP` budget allocation and two-stage `QTIP` PV-Tuning (#515).
+- **Native `.gguf` GSQ-RCO / `i-quant` Metal Kernels (#408, #424, #431, #433, #499, #515):** direct execution of `IQ4_XS`, `IQ3_S`, `IQ3_XXS`, and k-quant layouts via specialized `IQMetalKernels` and `RCOSensitivityAllocator` (`Qwen3.8-27B-GSQ-RCO-IQ3_S` reaches WikiText-2 PPL `4.169` and `300/300` System One decisions).
+- **Distillation, `PHM` / `Compacter` & `OFT` Adapters (#363, #393, #394, #451, #501, #508, #510, #511):** budgeted teacher → student `models distill` (API and `--on-policy` reverse KL), hypercomplex Kronecker `PHM` / `Compacter` adapters, GPU-pure Cayley and matrix-exponential Orthogonal Finetuning (`OFT`), and `basalt compose train` streaming HF `nemotron:*` corpora directly into multi-adapter routes.
+
+### Compose, System One, Epistemic X-Ray & Benchmarks
+- **Compose v2 & 84 Hardware-Tiered Profiles (#412, #423, #481, #485, #489, #526, #528):** live diff/apply without restart (`POST /v1/compose/{diff,apply}`, SSE `/v1/compose/events`), bind-first startup probes (`/v1/health/{live,ready}`), on-demand deciders with `idle_unload`, ordered LAN-before-cloud fallback tiers (#480), `cloud:gemini/gemini-decision-1` multimodal cascade (#449) + `calibrate-decide` (#448, #504), and **84 built-in profiles** across `16 / 24 / 32–36 / 48 / 64 / 128 / 256 GB` × 12 archetypes (#526, #528).
+- **Zero-Token Epistemic Gate & X-Ray Geometry (#360, #361, #362, #365, #450, #452, #498, #500, #503, #507, #509):** four-valued Belnap `(support, refutation, needs_tool)` evidence state and `SIXTEEN_3` trilattice before decoding a single token, multi-head System One decision banks, complex MVN phasor probes with FHRR binding, Fisher–Rao drift and geodesic steering, and OpenMetrics `/api/v1/metrics` + `/metrics` ECE telemetry.
+- **Declarative Benchmarks & Leaderboard Exporters (#492, #505):** `basalt compose bench` and `basalt bench list|compare|submit` with 17 suite adapters and verified submission bundles for `arc-prize`, `terminal-bench`, `swe-bench`, `hf-leaderboard`, `livecodebench`, `bfcl`, `inspect-ai`, `tau-bench`, `gaia`, and `weave-otel`.
+
 ## 0.10.0 — 2026-11-06
 
 ### Upgrading from 0.9.0

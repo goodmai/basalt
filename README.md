@@ -2,7 +2,7 @@
 
 # basalt — your Mac is the AI lab now.
 
-> Serve, train, quantize, compose and dissect open LLMs on Apple Silicon. One Swift 6.4 binary speaks the **OpenAI API, the Anthropic API and MCP**, and a native macOS 27 Liquid Glass app sits on top. No Python at runtime. No cloud unless you ask for it.
+> Serve, train, quantize, compose and dissect open LLMs, neural speech, OCR and image models on Apple Silicon. One Swift 6.4 binary speaks the **OpenAI API, the Anthropic API and MCP**, and a native macOS 27 Liquid Glass app sits on top. No Python at runtime. No cloud unless you ask for it.
 
 [English](README.md) · [Русский](README.ru.md)
 
@@ -48,23 +48,24 @@ Every model card under [`goodmai`](https://huggingface.co/goodmai) carries a **R
 
 ---
 
-## Inference: 27B in 7.4 GB, or 37.7 GB MoE with zero swap — behind the APIs you already use
+## Inference: 40B MoE at 67 tok/s, 27B in 7.4 GB, or 37.7 GB MoE with zero swap — behind the APIs you already use
 
 - **Claude Code on your own GPU in one line.** `ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude` — your real API key is never touched. OpenAI SDKs, OpenCode, Continue, Cline and aider connect over the OpenAI API, Claude Desktop and Cursor over MCP (with per-tool and per-group `--mcp-enable` / `--mcp-disable`, [#488](https://github.com/goodmai/basalt/pull/488)).
-- **Fast on a laptop.** On an M4 Pro with 24 GB: Qwen3-4B decodes at 78–89 tok/s; Ternary Bonsai 2 27B fits in 7.4 GB and runs at 20.9–21.5 tok/s, 27.1 with its MTP head and 31–38 with prompt lookup on code ([#239](https://github.com/goodmai/basalt/pull/239), [#263](https://github.com/goodmai/basalt/pull/263)); `.gguf` GSQ-RCO / `i-quant` checkpoints execute directly on custom Metal kernels ([#433](https://github.com/goodmai/basalt/pull/433)).
-- **Models larger than RAM, zero swap.** `Qwen3.6-35B-A3B-8bit` (37.7 GB) decodes at 8.77 tok/s on a 24 GB Mac with 0 swap via batched POSIX AIO and `LIO_NOWAIT` next-layer SSD expert prefetch (`--experimental-expert-streaming`, [#477](https://github.com/goodmai/basalt/pull/477), [#478](https://github.com/goodmai/basalt/pull/478)).
+- **Fast on a laptop.** On an M4 Pro with 24 GB: Recursive `Flint-40B-A2.5B` (`oQ3e`) decodes at 67.02 tok/s in 17.61 GB ([#522](https://github.com/goodmai/basalt/pull/522)); Qwen3-4B decodes at 78–89 tok/s; Ternary Bonsai 2 27B fits in 7.4 GB and runs at 20.9–21.5 tok/s, 27.1 with its MTP head and 31–38 with prompt lookup on code ([#239](https://github.com/goodmai/basalt/pull/239), [#263](https://github.com/goodmai/basalt/pull/263)); `.gguf` GSQ-RCO / `i-quant` checkpoints execute directly on custom Metal kernels ([#433](https://github.com/goodmai/basalt/pull/433), [#515](https://github.com/goodmai/basalt/pull/515)).
+- **Models larger than RAM, zero swap.** `Qwen3.6-35B-A3B-8bit` (37.7 GB) decodes at 8.77 tok/s on a 24 GB Mac with 0 swap via batched POSIX AIO and `LIO_NOWAIT` next-layer SSD expert prefetch (`--expert-streaming`, [#477](https://github.com/goodmai/basalt/pull/477), [#478](https://github.com/goodmai/basalt/pull/478), [#516](https://github.com/goodmai/basalt/pull/516)).
 - **Speculative decoding that stays exact.** Prompt lookup gives 1.84–2.66× on code edits (Bonsai 2 27B, [#239](https://github.com/goodmai/basalt/pull/239)) and 3.45–3.62× (Gemma 4 12B, [#265](https://github.com/goodmai/basalt/pull/265)), with greedy output unchanged.
 - **The next turn costs only its new tokens.** A prefix-tree prompt cache, even for hybrid models: on Ornith-1.5-9B with a 12.6k-token agent prompt, the second turn takes about 1 s instead of about 36 s ([#82](https://github.com/goodmai/basalt/pull/82)).
 - **Long contexts in less memory.** KV quantization with exact zones (`4|8|k8v4`, plus experimental `turbo3|turbo4|turbo8v4` and `polar4` RoPE-pair keys, [#472](https://github.com/goodmai/basalt/pull/472), [#473](https://github.com/goodmai/basalt/pull/473)): a 16k prompt peaks at 1.03 GB instead of 3.11 GB on Qwen3-4B ([#159](https://github.com/goodmai/basalt/pull/159)).
-- **A whole local stack.** Tool calls, JSON-schema, regex and grammar output (XGrammar), images and `DeepSeek-OCR-2` ([#476](https://github.com/goodmai/basalt/pull/476)), `/v1/embeddings`, `/v1/rerank`, LoRA adapters picked per request, and ordered LAN-before-cloud fallback tiers ([#480](https://github.com/goodmai/basalt/pull/480)).
+- **Neural TTS, full-duplex speech & native MLX image synthesis.** `Zyphra/ZONOS3-Mini-hf` synthesizes `44.1 kHz` speech across 43 languages and 27 voices in 2.24 GB at 3.8–4.4× real time (RTF 0.228–0.263, [#527](https://github.com/goodmai/basalt/pull/527)) alongside `Kokoro-82M` (ANE+MLX), `Qwen3-TTS`, `Fun-CosyVoice3` and `Chatterbox` on `/v1/audio/speech` ([#506](https://github.com/goodmai/basalt/pull/506), [#513](https://github.com/goodmai/basalt/pull/513)), while `FLUX.2/3-klein`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5` and `Step1X-Edit` power `/v1/images/*` ([#519](https://github.com/goodmai/basalt/pull/519)).
+- **A whole local stack.** Tool calls, JSON-schema, regex and grammar output (XGrammar), `Ripple-65B` and `Nemotron-3.5-Lightning` ([#522](https://github.com/goodmai/basalt/pull/522)), `DeepSeek-OCR-2` ([#476](https://github.com/goodmai/basalt/pull/476)), `/v1/embeddings`, `/v1/rerank`, LoRA/PHM/OFT adapters picked per request, and ordered LAN-before-cloud fallback tiers ([#480](https://github.com/goodmai/basalt/pull/480)).
 
 Details: [REST API](docs/rest-api.md) · [integrations](docs/integrations.md) · [commands and flags](docs/commands.md) · [models](docs/models.md) · [benchmarks](docs/benchmarks.md)
 
 ## Training & Quantization: distill from a frontier model, recover sub-3-bit quality
 
-- **Distill a frontier model into a LoRA.** `basalt models distill` sends your prompts to a teacher behind an OpenAI- or Anthropic-format API, caps the spend with `--budget-usd`, can keep only verified answers, and checkpoints so an interrupted run resumes (#393). `--on-policy` trains on the student's own samples with per-token reverse KL from a basalt teacher.
-- **Post-quantization PV-Tuning.** `basalt models convert --experimental-pv-tune` alternates continuous scale/bias updates with discrete integer-code refinement on Apple Silicon, cutting 2–3-bit quantization perplexity loss by 8.7–29% in under 3 minutes ([#486](https://github.com/goodmai/basalt/pull/486)).
-- **Bitshift trellis quantization (QTIP).** `basalt models convert --experimental-qtip --bits 2.5` fits `Qwen3.8-27B` in 10.00 GB and beats 3-bit MLX affine & PV-Tuning on 16k perplexity (4.621 vs 4.702 / 4.652), while 2.0 bpw (8.48 GB) cuts 2-bit perplexity by 72.1% (5.345 vs 19.146, [#494](https://github.com/goodmai/basalt/pull/494)).
+- **Distill a frontier model into a LoRA, PHM or OFT adapter.** `basalt models distill` sends your prompts to a teacher behind an OpenAI- or Anthropic-format API, caps the spend with `--budget-usd`, can keep only verified answers, and checkpoints so an interrupted run resumes (#393). `--on-policy` trains on the student's own samples with per-token reverse KL from a basalt teacher, and `basalt compose train` streams Hugging Face `nemotron:*` corpora into `lora`, hypercomplex `phm` / `Compacter` ([#501](https://github.com/goodmai/basalt/pull/501)) or GPU-pure Cayley / matrix-exp `oft` ([#508](https://github.com/goodmai/basalt/pull/508), [#511](https://github.com/goodmai/basalt/pull/511)) adapters.
+- **Post-quantization PV-Tuning.** `basalt models convert --experimental-pv-tune` alternates continuous scale/bias updates with discrete integer-code refinement on Apple Silicon, cutting 2–3-bit quantization perplexity loss by 8.7–29% in under 3 minutes ([#486](https://github.com/goodmai/basalt/pull/486), [#515](https://github.com/goodmai/basalt/pull/515)).
+- **Bitshift trellis quantization (QTIP).** `basalt models convert --experimental-qtip --bits 2.5` fits `Qwen3.8-27B` in 10.00 GB and beats 3-bit MLX affine & PV-Tuning on 16k perplexity (4.621 vs 4.702 / 4.652), while 2.0 bpw (8.48 GB) cuts 2-bit perplexity by 72.1% (5.345 vs 19.146, [#494](https://github.com/goodmai/basalt/pull/494), [#515](https://github.com/goodmai/basalt/pull/515)).
 - **Train while you serve.** The MCP `distill` tool is time-sliced: the model is held one optimizer step at a time, so `serve` keeps answering.
 - **Self-training that learns nothing unverified.** `train_experts` collects answers to checkable tasks, keeps only the verified ones, trains a LoRA and reports held-out accuracy before and after.
 - **A quality gate before anything sticks.** A gated adapter stays only if KL and perplexity on held-out prompts stay within limits; a failed gate undoes it bit for bit.
@@ -72,24 +73,25 @@ Details: [REST API](docs/rest-api.md) · [integrations](docs/integrations.md) ·
 
 Details: [training commands](docs/commands.md) · [self-training, distillation and the quality gate](docs/research-tools.md#self-training-train_experts)
 
-## Compose: one YAML file for a whole model system
+## Compose: one YAML file — or 84 hardware-calibrated profiles — for a whole model system
 
-- **docker-compose, for models.** Local and cloud models, how each stays in memory (`resident`, `on-demand` with `idle_unload` [#481](https://github.com/goodmai/basalt/pull/481), `sequential`), and a perceive → decide → answer pipeline — OCR, speech, a System One decision cascade and the chat model — in one file.
-- **Refuses what will not fit.** `basalt compose plan` adds up the bytes (including unmerged Jev LoRA adapters [#462](https://github.com/goodmai/basalt/pull/462)), sizing models you have not downloaded from the Hugging Face API, and refuses a system that does not fit before anything loads. `compose pull` fetches and verifies every model ahead of time.
+- **docker-compose, for models.** Local and cloud models, how each stays in memory (`resident`, `on-demand` with `idle_unload` [#481](https://github.com/goodmai/basalt/pull/481), `sequential`), and a perceive → decide → answer → `speak` / `imagine` pipeline — OCR, ASR, a System One + Belnap epistemic cascade, the chat model, `ZONOS3-Mini` 44.1 kHz voice ([#527](https://github.com/goodmai/basalt/pull/527)) and MLX image synthesis ([#519](https://github.com/goodmai/basalt/pull/519)) — in one file.
+- **84 built-in profiles for every Mac (`16 GB` to `256 GB`).** Seven unified-memory tiers (`16gb`, `24gb`, `32-36gb`, `48gb`, `64gb`, `128gb`, `256gb`, plus `32gb`, `36gb` and `236gb` aliases) × 12 workload archetypes (`daily-chat`, `coding-agent`, `voice-zonos`, `multimodal-desk`, `reasoning-lab`, `document-ocr`, `voice-duplex`, `creative-studio`, `rag-knowledge`, `hybrid-cloud`, `moe-frontier`, `research-xray`) launch in one command (`basalt compose up 24gb-voice-zonos`, [#528](https://github.com/goodmai/basalt/pull/528)).
+- **Refuses what will not fit.** `basalt compose plan` adds up the bytes (including unmerged Jev LoRA adapters [#462](https://github.com/goodmai/basalt/pull/462)), sizing models you have not downloaded from the Hugging Face API, and refuses a system that does not fit before anything loads. `compose pull` fetches and verifies every model ahead of time; `compose bench` runs declarative benchmark suites and exports 10 leaderboard submission bundles ([#505](https://github.com/goodmai/basalt/pull/505)).
 - **Change it live.** `compose diff` shows what would change; `compose up` on a running system reloads only the models, experimental flags or MCP toggles that changed ([#489](https://github.com/goodmai/basalt/pull/489)) and swaps pipelines between requests. `compose ps` shows state and spend, `compose down` stops it.
 - **Local judges and cloud budgets.** `OpenJev-Flash-9B-4bit` fits beside Gemma 4 12B in 15.3 GB on a 24 GB Mac, reaching 98.9% triage accuracy while cutting downstream LLM tokens by 77% ([#465](https://github.com/goodmai/basalt/pull/465)), and Laya answers on the Neural Engine in ~11 ms. Answer routes send hard queries to a cloud model while its daily budget lasts: 100% accuracy at $0.035 per 1000 requests, p95 4.8 s vs 10.0 s local only ([#418](https://github.com/goodmai/basalt/pull/418)).
 - **Private by default.** Keys come only from environment variables, and text read from your documents or audio never goes to a cloud model.
-- **Google's Gemini Decision 1 as a decision stage.** `cloud:gemini/gemini-decision-1` answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider ([#449](https://github.com/goodmai/basalt/pull/449)). It is also the calibration teacher for local decision models (#448).
+- **Google's Gemini Decision 1 as a decision stage.** `cloud:gemini/gemini-decision-1` answers yes/no, choice and score questions over text, images, audio, video and PDFs in one pass, in front of a local decider ([#449](https://github.com/goodmai/basalt/pull/449)), and `basalt models calibrate-decide` fits local readout temperatures against it ([#504](https://github.com/goodmai/basalt/pull/504)).
 
 Details: [compose reference and measurements](docs/compose.md) · [pipeline presets and memory modes](docs/pipelines.md) · [cloud decisions with Gemini](docs/cloud-decisions.md)
 
 ## Research: open the model up while it runs
 
-- **Model X-ray and live telemetry.** `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect`, `trace_run` and `telemetry_query` expose layer anatomy, Marchenko–Pastur spectra, the prompt-cache tree, per-head logit lens, MoE routing & expert-cache hit rates, per-token confidence shapes, and OpenMetrics at `/api/v1/metrics` ([#458](https://github.com/goodmai/basalt/pull/458), [#459](https://github.com/goodmai/basalt/pull/459)).
+- **Model X-ray, Belnap epistemic gating and live telemetry.** `model_describe`, `model_tensors`, `model_tensor`, `kv_inspect`, `trace_run` and `telemetry_query` expose layer anatomy, Marchenko–Pastur spectra, the prompt-cache tree, per-head logit lens, four-valued Belnap `(support, refutation, needs_tool)` evidence states on the `SIXTEEN_3` trilattice ([#500](https://github.com/goodmai/basalt/pull/500), [#507](https://github.com/goodmai/basalt/pull/507)), complex MVN phasor probes ([#509](https://github.com/goodmai/basalt/pull/509)), Fisher–Rao geodesic drift ([#503](https://github.com/goodmai/basalt/pull/503)), and OpenMetrics at `/api/v1/metrics` ([#458](https://github.com/goodmai/basalt/pull/458), [#498](https://github.com/goodmai/basalt/pull/498)).
 - **Reversible experiments.** With `serve --research-tools`: steering and head or expert ablation (`intervene`), weight deltas, live re-packing of a layer to 2–8-bit, mxfp4, nf4 or ternary, and `experiment_compare` with KL and perplexity. Every experiment is an undoable overlay with a TTL and a journal; model files on disk are never written.
 - **Find the circuit behind a behaviour.** `trace_tokens` and `activation_contrast` rank heads and experts by Cohen's d and AUROC, then a conditional ablation fires only on the tokens that trigger it (#405). `steer_search` and `steer_commit` turn contrastive directions into gated adapters.
 - **The model studies itself.** `introspect` hands the X-ray tools to the served model and records its hypotheses, tests and outcomes.
-- **Papers and hybrid compute in the engine.** CacheBlend (arXiv:2405.16444), EPIC chunk heads (arXiv:2410.15332), L2-norm KV eviction (arXiv:2406.11430), DuoAttention, Token Recycling, Walsh–Hadamard value rotation, and GPU + Neural Engine column-split FFN prefill ([#468](https://github.com/goodmai/basalt/pull/468)) — each opt-in, with its measured trade-offs next to its flag.
+- **Papers and hybrid compute in the engine.** CacheBlend (arXiv:2405.16444), EPIC chunk heads (arXiv:2410.15332), L2-norm KV eviction (arXiv:2406.11430), DuoAttention, Token Recycling, Walsh–Hadamard value rotation, and Neural Engine System One / embedding / OCR towers ([#512](https://github.com/goodmai/basalt/pull/512), [#516](https://github.com/goodmai/basalt/pull/516)) — each opt-in, with its measured trade-offs next to its flag.
 - **Benchmarks that run the model's code.** A five-rung ladder ending in an Earth-to-Moon mission executes the model's own code against unseen inputs, and ARC-AGI runs under official pass@2 rules.
 
 Details: [research tools](docs/research-tools.md) · [benchmarks](docs/benchmarks.md) · [serve flags](docs/commands.md)
@@ -97,11 +99,10 @@ Details: [research tools](docs/research-tools.md) · [benchmarks](docs/benchmark
 ## Basalt for Mac: macOS 27 Liquid Glass, one keystroke or one click away
 
 - **A native SwiftUI app on a supervised engine.** Built for macOS 27 Liquid Glass ([#479](https://github.com/goodmai/basalt/pull/479)) in English and Russian ([#456](https://github.com/goodmai/basalt/pull/456)): 257 ms warm window, 0 idle wakeups, 7.4 ms p95 per streamed token in a 2,000-message transcript, and 40 ms `⌥Space` quick-ask overhead ([#463](https://github.com/goodmai/basalt/pull/463)).
+- **Compose Profiles (`⌥⌘C`) with automatic RAM recommendation.** Detects your Mac's unified memory (`16 / 24 / 32–36 / 48 / 64 / 128 / 256 GB`), highlights the 4 primary recommended profiles for your machine at the top, lets you inspect YAML and switch any of all 84 profiles live ([#528](https://github.com/goodmai/basalt/pull/528)).
+- **Full-duplex voice & 2K Image Studio.** Hands-free streaming conversation backed by `SpeechAnalyzer` and `ZONOS3-Mini` / `Kokoro-82M` ([#514](https://github.com/goodmai/basalt/pull/514), [#527](https://github.com/goodmai/basalt/pull/527)), plus an interactive 2K RGBA Image Canvas with live TAEF previews and a Before/After slider ([#519](https://github.com/goodmai/basalt/pull/519)).
 - **One-click `basalt://` launch from Hugging Face.** Clicking **Run with Basalt** on any [`goodmai`](https://huggingface.co/goodmai) model card opens `Basalt.app` via `basalt://run?model=...` and switches the supervised engine to that model or pipeline role.
-- **Ask from anywhere.** `⌥Space` opens a floating panel over any app, even a full-screen one, without an Accessibility permission. Conversations live in SwiftData, with a system prompt per conversation.
-- **A model library that knows your Mac.** The Models window lists the Hugging Face cache with a fit verdict for this machine, loads with one click, and resumes interrupted downloads.
-- **Drop in a PDF, image or recording.** Attachments go through the perceive → decide → answer pipeline; the inspector shows the text the engine read, tokens, time to first token, speed and each stage.
-- **Part of macOS & notarized distribution.** Shortcuts and Spotlight (Ask Basalt, Summarize File, Transcribe Audio, Switch Model), Services → Ask Basalt, Dock drop, notifications, menu bar supervision, Monitor with live compose/cloud spend, and signed/notarized `.dmg` + Homebrew cask packaging ([#457](https://github.com/goodmai/basalt/pull/457)).
+- **Ask from anywhere & drop in files.** `⌥Space` opens a floating panel over any app without an Accessibility permission; PDF, image and audio attachments run through `perceive → decide → answer` with full stage receipts, alongside Shortcuts, Spotlight, Monitor and notarized `.dmg` + Homebrew cask packaging ([#457](https://github.com/goodmai/basalt/pull/457)).
 
 Details: [Basalt for Mac](docs/mac-app.md)
 
@@ -126,10 +127,10 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 Stream a 37.7 GB MoE model on a 24 GB Mac, or run a full multi-model compose system:
 
 ```bash
-basalt serve --model goodmai/Qwen3.6-35B-A3B-8bit --experimental-expert-streaming --rest
+basalt serve --model goodmai/Qwen3.6-35B-A3B-8bit --expert-streaming --rest
 
-basalt compose plan -f docs/examples/compose/document-qa-cloud.yaml
-basalt compose up voice-agent               # bundled: document-qa, voice-agent
+basalt compose plan 24gb-voice-zonos
+basalt compose up 24gb-voice-zonos          # 84 profiles across 16–256 GB Macs
 ```
 
 The Mac app, from a checkout (registers `basalt://` 1-click links automatically on first open):

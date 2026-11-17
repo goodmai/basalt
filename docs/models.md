@@ -9,6 +9,19 @@ basalt models download goodmai/gemma-4-12B-it-qat-4bit
 basalt models download goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native
 ```
 
+### Measured for 0.11
+
+M4 Pro, 24 GB, release build, November 2026.
+
+| Model | Role / Architecture | Active memory | Throughput / Latency | Notes |
+|---|---|---|---|---|
+| `Recursive/Flint-40B-A2.5B` (`flint-oQ3e`) | 40B-A2.5B hybrid sliding/full MoE (`512` routed, top-10 + 1 shared) | 17.61 GB | 67.02 tok/s decode · 273.5 tok/s prefill | native `oQ3e` (`groupSize = 32`) loader (#518, #522), 0 swap on 24 GB |
+| `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + 32-codebook FSQ multi-head DAC TTS (`44.1 kHz`) | 2.24 GB | RTF 0.228–0.263 (3.8–4.4× RT) | 43 languages, 27 voices, cross-lingual `embedding` + CFG `1.5` (#525, #527) |
+| `hexgrad/Kokoro-82M` | 82M neural TTS (ANE + MLX) | ~0.35 GB | sub-80 ms TTFA | sentence-streaming fallback stage in `pipeline.speak` (#493, #513) |
+| `Tongyi-MAI/Z-Image-Turbo` | DiT image synthesis | ~6.4 GB | 4–8 steps (`1024×1024`) | `pipeline.imagine` with TeaCache & shared text encoder (#517, #519) |
+| `Ricursive/Ripple-65B-4bit` | 65B gated-attention sparse MoE (`128` experts, top-8) | ~35 GB (64 GB+ resident, or SSD streaming) | architecture verified | NoPE / partial RoPE (#520, #522) |
+| `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + Latently-Routed MoE (`lr_moe`) | ~17 GB (4-bit) | architecture verified | interleaved GQA + Mamba-2 (#521, #522) |
+
 ### Measured for 0.8
 
 M4 Pro, 24 GB, on a 68 W adapter, release build, greedy decoding, November 2026.
