@@ -129,15 +129,17 @@ A system that does not fit is refused with the numbers before anything loads. A 
 - **Order of tries:** the rule's `model` first, then its `fallback`, then the pipeline's default local model.
 - **Skips:** a cloud model is skipped for perceived text, without budget, after a refused key, or while rate limited. Each skip is named in the receipt.
 
-### Speak (`#493`)
-A pipeline may declare an optional `speak` stage to synthesize audio with deterministic GPU → Neural Engine → system-voice fallback:
+### Speak (`#493`, `#525`)
+A pipeline may declare an optional `speak` stage to synthesize audio (`Kokoro-82M`, `Qwen3-TTS`, `Fun-CosyVoice3`, `Chatterbox`, `Zyphra/ZONOS3-Mini-hf`) with deterministic GPU → Neural Engine → system-voice fallback:
 
 ```yaml
 pipeline:
   answer: chat
   speak:
-    chain: [tts_qwen, tts_ane, apple-speech]
-    voice: af_heart
+    chain: [tts_zonos, tts_ane, apple-speech]
+    voice: Savannah
+    language: en_us
+    reference_audio: ./speaker.wav
     on_gpu_busy: fallback_ane
     sentence_streaming: true
     format: wav
@@ -145,9 +147,11 @@ pipeline:
     max_ttfa_ms: 80
 ```
 
-- **`speak`:** accepts a single name (`speak: apple-speech`), a fallback list (`speak: [tts_qwen, tts_ane, apple-speech]`), or the full mapping.
+- **`speak`:** accepts a single name (`speak: apple-speech`), a fallback list (`speak: [tts_zonos, tts_ane, apple-speech]`), or the full mapping.
 - **`chain`:** ordered local TTS models ending optionally with the zero-weight `apple-speech` system synthesizer.
-- **`voice`:** default voice identifier (`alloy`, `af_heart`, or an `AVSpeechSynthesisVoice` identifier).
+- **`voice`:** default voice identifier (`Savannah`, `alloy`, `af_heart`, or an `AVSpeechSynthesisVoice` identifier).
+- **`language`:** default language or locale code (`en_us`, `ru`, `de`, `cmn`, etc.).
+- **`reference_audio`:** optional local reference `.wav` / `.pcm` / `.caf` / `.aiff` / `.flac` clip for zero-shot voice cloning.
 - **`on_gpu_busy`:** `keep`, `fallback_ane`, or `fallback_apple_speech` when Metal is busy decoding.
 - **`sentence_streaming`:** streams full-duplex sentence chunks into TTS as tokens arrive.
 - **`format`:** output container or sample encoding (`wav`, `pcm`, `pcm_24k`, `mp3`, `opus`, `aac`, `flac`).
