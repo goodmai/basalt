@@ -99,6 +99,9 @@ enum ImageRunnerCore {
             .filter { $0.pathExtension == "safetensors" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         guard !files.isEmpty else { return }
+        if let manifest = MACaQNativeLoader.manifest(in: directory) {
+            try MACaQNativeLoader.install(manifest.modules, in: module)
+        }
         let existing = Dictionary(uniqueKeysWithValues: module.parameters().flattened())
         var matched: [(String, MLXArray)] = []
         do {

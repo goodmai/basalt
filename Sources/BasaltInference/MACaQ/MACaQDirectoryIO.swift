@@ -203,8 +203,6 @@ extension MACaQRefiner {
         let shards = try writer.finish()
         let cfgURL = source.appending(component: "config.json")
         var cfg = try JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL)) as? [String: Any] ?? [:]
-        cfg["quantization"] = nil
-        cfg["quantization_config"] = nil
         let manifestObj = MACaQNativeLoader.Manifest(version: 1, alpha: alpha, modules: manifest)
         cfg[MACaQNativeLoader.configKey] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifestObj))
         try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted, .sortedKeys])
