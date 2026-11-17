@@ -58,7 +58,8 @@ public enum ComposeSchema {
             Field("profiles", .names, since: 2),
         ],
         "speak": [
-            Field("chain", .names), Field("voice", .string),
+            Field("chain", .names), Field("voice", .string), Field("language", .string),
+            Field("reference_audio", .string),
             Field("on_gpu_busy", .choice(SpeechOnGPUBusy.allCases.map(\.rawValue))),
             Field("sentence_streaming", .boolean),
             Field("format", .choice(SpeechAudioFormat.allCases.map(\.rawValue))),

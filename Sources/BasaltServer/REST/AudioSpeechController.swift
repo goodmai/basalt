@@ -183,7 +183,7 @@ extension AudioSpeechController {
         if request.responseFormat == .wav {
             return try await wavResponse(stream: stream, decision: decision, started: started)
         }
-        return pcmResponse(stream: stream, decision: decision)
+        return pcmResponse(stream: stream, request: request, decision: decision)
     }
 
     private static func wavResponse(
@@ -213,14 +213,22 @@ extension AudioSpeechController {
 
     private static func pcmResponse(
         stream: AsyncThrowingStream<AudioChunk, any Error>,
+        request: SpeechRequest,
         decision: SpeechRouteDecision
     ) -> Response {
+        let forces24k = request.responseFormat == .pcm24k
+        let declaredRate = forces24k
+            ? SpeechRequest.defaultSampleRate
+            : (TTSModelFamily.detect(identifier: decision.selected.model)?.defaultSampleRate ?? SpeechRequest.defaultSampleRate)
         let body = AsyncStream<ByteBuffer> { continuation in
             let task = Task {
                 do {
                     for try await chunk in stream where !chunk.samples.isEmpty {
+                        let outChunk = forces24k && chunk.sampleRate != SpeechRequest.defaultSampleRate
+                            ? chunk.resampled(to: SpeechRequest.defaultSampleRate)
+                            : chunk
                         var buffer = ByteBuffer()
-                        buffer.writeBytes(chunk.encodePCM16LE())
+                        buffer.writeBytes(outChunk.encodePCM16LE())
                         continuation.yield(buffer)
                     }
                 } catch {}
@@ -232,7 +240,7 @@ extension AudioSpeechController {
             .contentType: SpeechAudioFormat.pcm.contentType,
             modelHeader: decision.selected.model,
             computeHeader: decision.selected.compute.rawValue,
-            sampleRateHeader: String(SpeechRequest.defaultSampleRate),
+            sampleRateHeader: String(declaredRate),
         ]
         if let fallback = decision.fallbackFrom { headers[fallbackHeader] = fallback }
         return Response(status: .ok, headers: headers, body: ResponseBody(asyncSequence: body))

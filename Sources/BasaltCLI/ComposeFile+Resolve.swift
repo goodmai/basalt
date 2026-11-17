@@ -123,6 +123,20 @@ extension ComposeFile {
         }
         spec.adapters = relativeAdapters(spec.adapters, base: base)
         spec.mcp.imageDirs = spec.mcp.imageDirs.map { resolvedPath($0, base: base) }
+        return relativeSpeak(spec, base: base)
+    }
+
+    private static func relativeSpeak(_ spec: ComposeSpec, base: URL?) -> ComposeSpec {
+        var spec = spec
+        if let ref = spec.speak?.referenceAudio, !ref.contains("..") {
+            spec.speak?.referenceAudio = resolvedPath(ref, base: base)
+        }
+        for (name, var sub) in spec.pipelines {
+            if let ref = sub.speak?.referenceAudio, !ref.contains("..") {
+                sub.speak?.referenceAudio = resolvedPath(ref, base: base)
+                spec.pipelines[name] = sub
+            }
+        }
         return spec
     }
 }

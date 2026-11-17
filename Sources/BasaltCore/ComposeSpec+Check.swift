@@ -205,6 +205,14 @@ extension ComposeSpec {
         if let voice = speak.voice, voice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             issues.append(Issue("pipeline.speak.voice", "cannot be blank"))
         }
+        if let language = speak.language, language.wholeMatch(of: /[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?/) == nil {
+            issues.append(Issue("pipeline.speak.language", "must be a BCP-47 / ISO-639 code such as en, en_us or ru-RU"))
+        }
+        if let referenceAudio = speak.referenceAudio {
+            do { try SpeechRequest.validateReferenceAudio(referenceAudio) } catch {
+                issues.append(Issue("pipeline.speak.reference_audio", error.localizedDescription))
+            }
+        }
         if let exaggeration = speak.exaggeration, !exaggeration.isFinite || !(0 ... 2).contains(exaggeration) {
             issues.append(Issue("pipeline.speak.exaggeration", "must lie between 0 and 2"))
         }

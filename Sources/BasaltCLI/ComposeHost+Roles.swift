@@ -84,6 +84,7 @@ extension ComposeHost {
             tiers: tiers,
             onGPUBusy: speak.onGPUBusy ?? .fallbackANE,
             maxTTFAMs: speak.maxTTFAMs,
+            defaults: speak,
             gpuBusyProbe: gpuBusyProbe,
             memoryPressureProbe: services.memoryPressure
         )

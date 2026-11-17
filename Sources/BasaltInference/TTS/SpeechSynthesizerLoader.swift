@@ -30,6 +30,17 @@ public enum SpeechSynthesizerLoader {
             return LoadedSynthesizer(synthesizer: ane, candidate: candidate, family: family)
         }
         let resolvedVocoder: ANEAcousticVocoder? = if let aneVocoder { aneVocoder } else { try? await loadBundledVocoderIfPresent(in: directory) }
+        return try await loadMLXSynthesizer(
+            family: family, identifier: identifier, directory: directory, aneVocoder: resolvedVocoder
+        )
+    }
+
+    private static func loadMLXSynthesizer(
+        family: TTSModelFamily,
+        identifier: String,
+        directory: URL,
+        aneVocoder: ANEAcousticVocoder?
+    ) async throws(BasaltError) -> LoadedSynthesizer {
         switch family {
         case .kokoro82M:
             let synth = try KokoroMLXSynthesizer(directory: directory, modelID: identifier)
@@ -39,25 +50,32 @@ public enum SpeechSynthesizerLoader {
                 family: .kokoro82M
             )
         case .qwen3TTS:
-            let synth = try Qwen3TTSSynthesizer(directory: directory, modelID: identifier, aneVocoder: resolvedVocoder)
+            let synth = try Qwen3TTSSynthesizer(directory: directory, modelID: identifier, aneVocoder: aneVocoder)
             return LoadedSynthesizer(
                 synthesizer: synth,
                 candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 95),
                 family: .qwen3TTS
             )
         case .chatterbox:
-            let synth = try ChatterboxSynthesizer(directory: directory, modelID: identifier, aneVocoder: resolvedVocoder)
+            let synth = try ChatterboxSynthesizer(directory: directory, modelID: identifier, aneVocoder: aneVocoder)
             return LoadedSynthesizer(
                 synthesizer: synth,
                 candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 130),
                 family: .chatterbox
             )
         case .cosyVoice3:
-            let synth = try CosyVoice3Synthesizer(directory: directory, modelID: identifier, aneVocoder: resolvedVocoder)
+            let synth = try CosyVoice3Synthesizer(directory: directory, modelID: identifier, aneVocoder: aneVocoder)
             return LoadedSynthesizer(
                 synthesizer: synth,
                 candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 110),
                 family: .cosyVoice3
+            )
+        case .zonos3Mini:
+            let synth = try await Zonos3MiniSynthesizer(directory: directory, modelID: identifier, aneVocoder: aneVocoder)
+            return LoadedSynthesizer(
+                synthesizer: synth,
+                candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 85),
+                family: .zonos3Mini
             )
         case .appleSpeech:
             throw .modelConfigurationInvalid(
@@ -95,6 +113,7 @@ public enum SpeechSynthesizerLoader {
         case .qwen3TTS: TTSVoiceCatalog.qwen3Voices(model: identifier, compute: .mlx)
         case .chatterbox: TTSVoiceCatalog.chatterboxVoices(model: identifier, compute: .mlx)
         case .cosyVoice3: TTSVoiceCatalog.cosyVoice3Voices(model: identifier, compute: .mlx)
+        case .zonos3Mini: TTSVoiceCatalog.zonos3Voices(model: identifier, compute: .mlx)
         case .appleSpeech: []
         }
         return (candidate, voices)

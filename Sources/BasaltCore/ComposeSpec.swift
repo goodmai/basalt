@@ -44,6 +44,8 @@ public struct ComposeSpec: Sendable, Equatable {
     public struct Speak: Sendable, Codable, Equatable {
         public var chain: [String]
         public var voice: String?
+        public var language: String?
+        public var referenceAudio: String?
         public var onGPUBusy: SpeechOnGPUBusy?
         public var sentenceStreaming: Bool?
         public var format: SpeechAudioFormat?
@@ -63,7 +65,8 @@ public struct ComposeSpec: Sendable, Equatable {
         }
 
         enum CodingKeys: String, CodingKey {
-            case chain, voice, format, exaggeration
+            case chain, voice, language, format, exaggeration
+            case referenceAudio = "reference_audio"
             case onGPUBusy = "on_gpu_busy"
             case sentenceStreaming = "sentence_streaming"
             case maxTTFAMs = "max_ttfa_ms"
