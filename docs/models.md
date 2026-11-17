@@ -2,7 +2,7 @@
 
 ## Verified Models
 
-Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Over 35 verified chat, MoE, GSQ-RCO, OCR, speech, embedding, rerank and System One decision checkpoints are published with one-click **Run with Basalt** (`basalt://run?model=...`) buttons in the [`goodmai` Hugging Face collection](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc).
+Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Over 42 verified chat, MoE, QTIP, PV-Tuned, GSQ-RCO, OCR, neural TTS, embedding, rerank and System One decision checkpoints are published with one-click **Run with Basalt** ([`goodmai-run-with-basalt.static.hf.space`](https://goodmai-run-with-basalt.static.hf.space/?lang=en) → `basalt://run?model=...`) buttons in the [`goodmai` Hugging Face collection](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc).
 
 ```bash
 basalt models download goodmai/gemma-4-12B-it-qat-4bit

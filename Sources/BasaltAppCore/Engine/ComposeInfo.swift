@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 
 public struct ComposeInfo: Sendable, Equatable, Decodable {
@@ -44,17 +45,22 @@ public enum EngineChoice {
     ]
     private static let sidecarFlags = [
         "rerank": "--rerank-model", "embed": "--embedding-model",
-        "ocr": "--pipeline-ocr-model", "asr": "--pipeline-audio-model", "decide": "--decision-model",
+        "ocr": "--pipeline-ocr-model", "asr": "--pipeline-audio-model",
+        "tts": "--tts-model", "image": "--image-model", "decide": "--decision-model",
     ]
 
     public static func launchURL(_ url: URL, fallbackChatModel: String = defaultChatModel) -> (model: String, arguments: [String])? {
         guard url.scheme?.lowercased() == "basalt", url.host(percentEncoded: false)?.lowercased() == "run" else { return nil }
         let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let chat = LibraryReducer.isRepoID(fallbackChatModel) ? fallbackChatModel : defaultChatModel
+        if let profile = items.first(where: { $0.name == "profile" })?.value?.trimmingCharacters(in: .whitespaces).lowercased(),
+           ComposeProfileCatalog.bundledYAML[profile] != nil {
+            return (chat, ["serve", "--compose", profile])
+        }
         guard let repo = items.first(where: { $0.name == "model" })?.value, LibraryReducer.isRepoID(repo) else { return nil }
         let role = items.first(where: { $0.name == "role" })?.value?.lowercased() ?? "chat"
         if let extras = chatFlags[role] { return (repo, ["serve", "--model", repo] + extras) }
         guard let flag = sidecarFlags[role] else { return nil }
-        let chat = LibraryReducer.isRepoID(fallbackChatModel) ? fallbackChatModel : defaultChatModel
         return (chat, ["serve", "--model", chat, flag, repo])
     }
 }
