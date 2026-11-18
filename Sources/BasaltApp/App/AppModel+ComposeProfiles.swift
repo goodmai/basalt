@@ -31,8 +31,12 @@ extension AppModel {
                                     await send(.activated(id))
                                     return
                                 }
+                            } catch let EngineError.refused(status, message) where status != 404 {
+                                await send(.failed(message))
+                                return
                             } catch {}
                         }
+                        guard !Task.isCancelled else { return }
                         let current = await supervisor.launch
                         UserDefaults.standard.set(id, forKey: EngineChoice.composeKey)
                         await supervisor.relaunch(

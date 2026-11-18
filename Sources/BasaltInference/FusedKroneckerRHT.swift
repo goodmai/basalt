@@ -18,7 +18,8 @@ package enum FusedKroneckerRHT {
 
         package static func decompose(_ d: Int) -> (outer: Int, hadamardWidth: Int)? {
             guard d >= 2, d.isMultiple(of: 2) else { return nil }
-            let tz = d.trailingZeroBitCount
+            let rawTZ = d.trailingZeroBitCount
+            let tz = (rawTZ > 12 && (d >> 12) <= maxMetalOuter) ? 12 : rawTZ
             return (d >> tz, 1 << tz)
         }
 

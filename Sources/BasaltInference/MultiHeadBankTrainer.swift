@@ -117,7 +117,7 @@ public enum MultiHeadBankTrainer {
             throw .invalidRequestStructure(details: "bank_train: states cannot be empty")
         }
         do {
-            return try await container.perform { context in
+            return try await container.performEvaluating(nonSendable: ()) { context, _ in
                 var flat: [Float] = []
                 var dim = 0
                 for state in states {

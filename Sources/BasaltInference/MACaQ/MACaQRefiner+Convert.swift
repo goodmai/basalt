@@ -72,7 +72,7 @@ extension MACaQRefiner {
                 let (outF, inF) = nf4.shape
                 let gKey = QTIPQuantizer.sharedInputGroupKey(path: path, inFeatures: inF, sharedMoERHT: false)
                 linears.append(LinearEntry(path: path, groupKey: gKey, module: nf4, outFeatures: outF, inFeatures: inF))
-            } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil,
+            } else if let ql = mod as? QuantizedLinear, !(mod is MACaQQuantizedLinear), ql.globalScale == nil,
                       ([2, 3, 4].contains(ql.bits) && ql.mode == .affine) || (ql.bits == 4 && ql.mode == .mxfp4) {
                 let outF = ql.weight.dim(0)
                 let inF = (ql.weight.dim(1) * 32) / ql.bits
@@ -293,7 +293,7 @@ extension MACaQRefiner {
             guard let bIdx = PVTuner.textBlockIndex(path), blocks.contains(bIdx),
                   !path.contains("router"), !path.hasSuffix("in_proj_b"), !path.hasSuffix("in_proj_a")
             else { continue }
-            if let ql = mod as? QuantizedLinear, ql.globalScale == nil {
+            if let ql = mod as? QuantizedLinear, !(mod is MACaQQuantizedLinear), ql.globalScale == nil {
                 let outF = ql.weight.dim(0)
                 let inF = (ql.weight.dim(1) * 32) / ql.bits
                 guard inF.isMultiple(of: align) else { continue }

@@ -447,8 +447,8 @@ public enum EpistemicGateCore {
         includeTools: Bool = true
     ) -> [String: SystemOneQuestion] {
         guard let spec, spec.enabled else { return userQuestions }
-        var merged = probes(includeTools: includeTools)
-        for (key, value) in userQuestions { merged[key] = value }
+        var merged = userQuestions
+        for (key, value) in probes(includeTools: includeTools) { merged[key] = value }
         return merged
     }
 

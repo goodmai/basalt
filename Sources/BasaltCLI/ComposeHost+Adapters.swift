@@ -15,9 +15,7 @@ extension ComposeHost {
             case .resident(let orchestrator):
                 try await orchestrator.loadAdapters(directories)
             case .onDemand(let onDemand):
-                if await onDemand.model.isLoaded {
-                    try await onDemand.model.loadAdapters(directories)
-                }
+                try await onDemand.setAdapters(directories)
             case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, .imageDecoder:
                 break
             }

@@ -136,9 +136,15 @@ package enum PVCodeGrid {
         }
         let gain = maximum(Float(0), -(g * dw)).reshaped(-1)
         let total = gain.size
-        let k = max(1, min(total - 1, Int(Float(total) * fraction)))
-        let part = partitioned(gain, kth: total - k)
-        let threshold = part[total - k]
+        guard total > 0 else { return (codes, 0) }
+        let threshold: MLXArray
+        if total == 1 {
+            threshold = gain[0]
+        } else {
+            let k = max(1, min(total - 1, Int(Float(total) * fraction)))
+            let part = partitioned(gain, kth: total - k)
+            threshold = part[total - k]
+        }
         let mask = (gain .>= threshold) .&& (gain .> Float(1e-11))
         let updated = which(mask, candInt.asType(.uint8).reshaped(-1), codes.reshaped(-1)).reshaped(shape)
         let count = mask.asType(.int32).sum()
@@ -249,7 +255,7 @@ package enum PVTuner {
     package static func collectTeacherBatches(
         _ container: ModelContainer, texts: String, count: Int, seqLen: Int, topK: Int = 64
     ) async -> [PVTeacherBatch] {
-        await container.perform { context in
+        await container.performEvaluating(nonSendable: ()) { context, _ in
             let encoded = context.tokenizer.encode(text: texts, addSpecialTokens: false)
             let usable = min(count, encoded.count / (seqLen + 1))
             var batches: [PVTeacherBatch] = []

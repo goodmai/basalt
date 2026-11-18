@@ -225,8 +225,9 @@ actor ComposeHost {
         case .onDemandDecision(let decider): await decider.unload()
         case .speaker(let loaded): await loaded.synthesizer.unload()
         case .onDemandSpeaker(let speaker): await speaker.unload()
+        case .imageGenerator(let generator): await generator.unload()
         case .onDemandImageGenerator(let generator): await generator.unload()
-        case .imageGenerator, .imageDecoder, .cloud, nil: break
+        case .imageDecoder, .cloud, nil: break
         }
     }
 }

@@ -69,6 +69,8 @@ extension ConvertSubcommand {
         let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
         let calibrationText = try readCalibrationText()
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let existedBefore = FileManager.default.fileExists(atPath: outURL.path)
+        var createdOutput = false
         var config = MACaQConfig()
         if let block = macaqBlock { config.hadamardBlock = block }
         if let alpha = macaqAlpha { config.alpha = alpha }
@@ -78,6 +80,7 @@ extension ConvertSubcommand {
                 source: sourceURL, output: outURL, targetMode: mode,
                 calibrationText: calibrationText, config: config
             ) { print("  [macaq] \($0)") }
+            createdOutput = true
             let pvSummary = experimentalPvTune
                 ? try await PVTuner.tuneConvertedDirectory(
                     output: outURL, teacher: teacherURL, calibrationText: calibrationText
@@ -97,7 +100,10 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
+            if createdOutput, experimentalPvTune,
+               Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
+                try? FileManager.default.removeItem(at: outURL)
+            }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }

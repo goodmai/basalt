@@ -115,7 +115,9 @@ enum ImageRunnerCore {
             patchSize: patch
         )
         cfg.vaeScale = descriptor.family == .linearSana ? 32 : (descriptor.usesVAE ? 8 : 1)
-        let macaqBits = (raw?["macaq_quantization"] as? [String: Any])?["bits"] as? Int
+        let macaqDict = raw?["macaq_quantization"] as? [String: Any]
+        let moduleBits = (macaqDict?["modules"] as? [String: [String: Any]])?.values.compactMap { $0["bits"] as? Int }.min()
+        let macaqBits = (macaqDict?["bits"] as? Int) ?? moduleBits
         cfg.quantizationBits = raw?["bits"] as? Int ?? macaqBits ?? (descriptor.family == .ternaryBitNet ? 2 : 8)
         let idHash = identifier.unicodeScalars.reduce(UInt64(517)) { ($0 &* 131) &+ UInt64($1.value) }
         cfg.initSeed = raw?["seed"] as? UInt64 ?? (idHash == 0 ? 517 : idHash)
@@ -123,11 +125,17 @@ enum ImageRunnerCore {
     }
 
     static func loadSafetensorsIfPresent(in directory: URL, into module: Module) throws(BasaltError) {
-        let topFiles = safetensorsFiles(in: directory)
-        let weightDir = topFiles.isEmpty ? directory.appending(component: "transformer") : directory
-        let files = topFiles.isEmpty ? safetensorsFiles(in: weightDir) : topFiles
-        guard !files.isEmpty else { return }
-        if let manifest = MACaQNativeLoader.manifest(in: weightDir) ?? MACaQNativeLoader.manifest(in: directory) {
+        let candidates = [directory, directory.appending(component: "transformer"), directory.appending(component: "vae")]
+        guard let weightDir = candidates.first(where: { !safetensorsFiles(in: $0).isEmpty }) else { return }
+        let files = safetensorsFiles(in: weightDir)
+        let localManifest = try MACaQNativeLoader.manifest(in: weightDir)
+        let resolvedManifest: MACaQNativeLoader.Manifest?
+        if let localManifest {
+            resolvedManifest = localManifest
+        } else {
+            resolvedManifest = try MACaQNativeLoader.manifest(in: directory)
+        }
+        if let manifest = resolvedManifest {
             try MACaQNativeLoader.install(manifest.modules, in: module)
         }
         let existing = Dictionary(uniqueKeysWithValues: module.parameters().flattened())

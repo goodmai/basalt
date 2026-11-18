@@ -41,6 +41,15 @@ public actor MultiHeadDecisionEngine: DecisionEngine {
     public nonisolated let modelID: String
     public nonisolated let manifest: SystemOneBankManifest
 
+    public nonisolated var sharesPerceived: Bool {
+        fallback?.sharesPerceived ?? true
+    }
+
+    public nonisolated var onDevice: (any DecisionEngine)? {
+        guard let fallback else { return self }
+        return fallback.onDevice != nil ? self : nil
+    }
+
     private var backbone: Backbone?
     private var generation: UInt64 = 0
     private let snapshot: BankSnapshot
@@ -263,7 +272,7 @@ extension MultiHeadDecisionEngine {
         snapshot: BankSnapshot
     ) async throws(BasaltError) -> (logits: [Float], prefixTokens: Int) {
         do {
-            return try await container.perform { context in
+            return try await container.performEvaluating(nonSendable: ()) { context, _ in
                 try Self.evaluateBank(state: state, snapshot: snapshot, context: context)
             }
         } catch let error as BasaltError {

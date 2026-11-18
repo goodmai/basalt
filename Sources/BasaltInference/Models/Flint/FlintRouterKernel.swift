@@ -23,6 +23,17 @@ package enum FlintRouterKernel {
         weightDType: DType = .float32
     ) -> FusedMoERouterOutput {
         if scoreFunction != "sigmoid" {
+            if let expertBias {
+                let probs = softmax(logits.asType(.float32), axis: -1)
+                let biased = probs + expertBias.asType(.float32)
+                let clampedK = min(max(0, k), logits.ndim > 0 ? logits.dim(-1) : 0)
+                let indices = stopGradient(argSort(-biased, axis: -1)[.ellipsis, ..<clampedK]).asType(.int32)
+                var selected = takeAlong(probs, indices, axis: -1)
+                if normTopkProb {
+                    selected = selected / (sum(selected, axis: -1, keepDims: true) + MLXArray(Float(1e-20)))
+                }
+                return FusedMoERouterOutput(indices: indices, weights: selected.asType(weightDType))
+            }
             return FusedMoERouterKernel.route(
                 logits, k: k, normTopkProb: normTopkProb, softmaxBeforeTopK: true, weightDType: weightDType)
         }
@@ -116,8 +127,9 @@ private enum FlintSigmoidRouterMetal {
             if (col < V) {
                 const float raw = float(logits[base + size_t(col)]);
                 const float s = isnan(raw) ? 0.0f : (1.0f / (1.0f + metal::precise::exp(-raw)));
+                const float b = float(expert_bias[col]);
                 raw_scores[slot] = s;
-                choice_vals[slot] = s + float(expert_bias[col]);
+                choice_vals[slot] = s + ((isnan(b) || isinf(b)) ? 0.0f : b);
                 idxs[slot] = col;
             } else {
                 raw_scores[slot] = 0.0f;

@@ -23,6 +23,11 @@ public struct GPULockLease: ~Copyable, Sendable {
     }
 
     public consuming func release() {
+        var copy = self
+        copy.close()
+    }
+
+    deinit {
         guard fd >= 0 else { return }
         let descriptor = fd
         withTaskCancellationShield {
@@ -43,7 +48,7 @@ public enum GPULock {
         } else {
             actualPath = path
         }
-        let descriptor = Darwin.open(actualPath, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+        let descriptor = Darwin.open(actualPath, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o666)
         guard descriptor >= 0 else {
             throw .gpuLockIO("cannot open \(actualPath): errno \(errno)")
         }

@@ -60,7 +60,7 @@ public actor OnDemandModel {
     public nonisolated let model: any ModelOrchestrating
     public nonisolated let path: String
     public nonisolated let idle: Duration
-    public nonisolated let adapters: [String: URL]
+    public private(set) var adapters: [String: URL]
     public nonisolated let phases: AsyncStream<OnDemandCore.Phase>
     private let announce: AsyncStream<OnDemandCore.Phase>.Continuation
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -82,6 +82,13 @@ public actor OnDemandModel {
     deinit { announce.finish() }
 
     public var phase: OnDemandCore.Phase { core.phase }
+
+    public func setAdapters(_ next: [String: URL]) async throws {
+        adapters = next
+        if core.phase == .loaded {
+            try await model.loadAdapters(next)
+        }
+    }
 
     public func unload() async {
         unloadEpoch &+= 1

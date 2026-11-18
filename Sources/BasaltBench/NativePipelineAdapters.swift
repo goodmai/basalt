@@ -73,7 +73,7 @@ public struct BasaltMoMAdapter: BenchmarkAdapter {
         ]
         let (json, reply) = try await context.endpoint.postJSON(context.resolvedPipelinePath, payload: payload)
         let answers = json["answers"] as? [String: [String: Any]] ?? [:]
-        let label = (answers["route"]?["label"] as? String) ?? ""
+        let label = (answers["route"]?["choice"] as? String) ?? (answers["route"]?["label"] as? String) ?? ""
         let receipt = json["receipt"] as? [String: Any] ?? [:]
         let stages = receipt["stages"] as? [[String: Any]] ?? []
         let cost = stages.reduce(0.0) { $0 + (($1["cost"] as? Double) ?? 0.0) }

@@ -26,7 +26,7 @@ extension PipelineRunner {
                 request.questions, context: context, by: engine, origin: origin, sessionId: sessionId)
             return DecidedStage(decision: decision, receipt: deciding, epistemic: nil)
         }
-        let merged = EpistemicGateCore.mergedQuestions(request.questions, spec: spec, includeTools: true)
+        let merged = EpistemicGateCore.mergedQuestions(request.questions, spec: spec, includeTools: stages.hasTools)
         let (raw, deciding) = try await decide(
             merged, context: context, by: engine, origin: origin, sessionId: sessionId)
         guard let raw else { return DecidedStage(decision: nil, receipt: deciding, epistemic: nil) }

@@ -246,10 +246,12 @@ struct FusedKroneckerRHTTests {
                 #expect(rt.item(Float.self) <= Self.roundtripMaxTol(for: dtype))
             }
         }
-        let fallbackSpec = try #require(FusedKroneckerRHT.Spec(dimension: 8192, seed: 55))
+        let metal8kSpec = try #require(FusedKroneckerRHT.Spec(dimension: 8192, seed: 55))
+        #expect(FusedKroneckerRHT.Buffers(spec: metal8kSpec).usesMetalKernel)
+        let fallbackSpec = try #require(FusedKroneckerRHT.Spec(dimension: 130, seed: 55))
         let fallbackBuf = FusedKroneckerRHT.Buffers(spec: fallbackSpec)
         #expect(!fallbackBuf.usesMetalKernel)
-        let xf = withRandomState(MLXRandom.RandomState(seed: 55)) { MLXRandom.normal([2, 8192]) }
+        let xf = withRandomState(MLXRandom.RandomState(seed: 55)) { MLXRandom.normal([2, 130]) }
         let yf = FusedKroneckerRHT.forward(xf, buffers: fallbackBuf)
         let zf = FusedKroneckerRHT.inverse(yf, buffers: fallbackBuf)
         let err = abs(zf - xf).max()

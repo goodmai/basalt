@@ -294,7 +294,12 @@ public actor OnDemandImageSynthesizer: ImageSynthesizer {
     private var current: (any ImageSynthesizer)?
     private var transition: Task<Result<Void, BasaltError>, Never>?
     private var timer: Task<Void, Never>?
+    private var unloadEpoch = 0
     public private(set) var lastUsed: Date?
+
+    deinit {
+        announce.finish()
+    }
 
     public init(
         modelIdentifier: String,
@@ -357,18 +362,38 @@ public actor OnDemandImageSynthesizer: ImageSynthesizer {
     }
 
     public func unload() async {
-        timer?.cancel()
-        timer = nil
-        _ = await transition?.value
-        current = nil
-        core.unloaded()
-        announce.yield(core.phase)
+        unloadEpoch &+= 1
+        while true {
+            timer?.cancel()
+            timer = nil
+            if let transition {
+                _ = await transition.value
+                continue
+            }
+            guard core.beginUnload() else { return }
+            announce.yield(core.phase)
+            let engine = current
+            current = nil
+            let task = Task { () async -> Result<Void, BasaltError> in
+                if let engine {
+                    await withTaskCancellationShield { await engine.unload() }
+                }
+                return .success(())
+            }
+            transition = task
+            _ = await task.value
+            transition = nil
+            core.unloaded()
+            announce.yield(core.phase)
+            return
+        }
     }
 }
 
 extension OnDemandImageSynthesizer {
     private func acquire() async throws(BasaltError) -> any ImageSynthesizer {
         while true {
+            if Task.isCancelled { throw .cancelled }
             timer?.cancel()
             timer = nil
             switch core.enter() {
@@ -387,37 +412,46 @@ extension OnDemandImageSynthesizer {
     }
 
     private func performLoad() async throws(BasaltError) {
+        let epoch = unloadEpoch
         let loader = self.loader
-        let loadTask = Task { () async -> Result<any ImageSynthesizer, BasaltError> in
+        let task = Task { () async -> Result<Void, BasaltError> in
+            let outcome: Result<any ImageSynthesizer, BasaltError>
             do {
-                return .success(try await loader())
+                outcome = .success(try await loader())
             } catch let error as BasaltError {
-                return .failure(error)
+                outcome = .failure(error)
             } catch {
-                return .failure(.modelInferenceError(details: error.localizedDescription))
+                outcome = .failure(.modelInferenceError(details: error.localizedDescription))
             }
+            await self.finishLoad(outcome, epoch: epoch)
+            return outcome.map { _ in () }
         }
-        let gateTask = Task { () async -> Result<Void, BasaltError> in
-            (await loadTask.value).map { _ in () }
+        transition = task
+        let result = await task.value
+        try result.get()
+        if epoch != unloadEpoch || Task.isCancelled {
+            if core.phase == .loaded, core.users == 0 { schedule(core.generation) }
+            throw .cancelled
         }
-        transition = gateTask
-        let outcome = await loadTask.value
-        _ = await gateTask.value
+    }
+
+    private func finishLoad(_ outcome: Result<any ImageSynthesizer, BasaltError>, epoch: Int) async {
+        if case .success(let engine) = outcome, epoch != unloadEpoch {
+            await withTaskCancellationShield { await engine.unload() }
+            transition = nil
+            core.loaded(false)
+            announce.yield(core.phase)
+            return
+        }
         transition = nil
         switch outcome {
         case .success(let engine):
             current = engine
             core.loaded(true)
-            announce.yield(core.phase)
-        case .failure(let error):
+        case .failure:
             core.loaded(false)
-            announce.yield(core.phase)
-            throw error
         }
-        if Task.isCancelled {
-            schedule(core.generation)
-            throw .cancelled
-        }
+        announce.yield(core.phase)
     }
 
     private func release() {
@@ -436,7 +470,18 @@ extension OnDemandImageSynthesizer {
 
     private func expire(_ generation: Int) async {
         guard core.expire(generation) else { return }
+        announce.yield(core.phase)
+        let engine = current
         current = nil
+        let task = Task { () async -> Result<Void, BasaltError> in
+            if let engine {
+                await withTaskCancellationShield { await engine.unload() }
+            }
+            return .success(())
+        }
+        transition = task
+        _ = await task.value
+        transition = nil
         core.unloaded()
         announce.yield(core.phase)
     }

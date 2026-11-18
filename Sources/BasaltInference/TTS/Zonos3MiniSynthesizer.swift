@@ -308,6 +308,7 @@ extension Zonos3MiniSynthesizer {
         guard let module, epoch == plan.epoch else { throw .modelNotLoaded }
         let built = Zonos3PromptBuilder.build(plan: plan, config: config)
         let (rows, eosFrame) = decodeRows(module: module, built: built, plan: plan)
+        if Task.isCancelled || epoch != plan.epoch { throw .cancelled }
         return renderAudio(module: module, rows: rows, eosFrame: eosFrame, silenceRows: built.silenceRows, plan: plan)
     }
 
@@ -353,19 +354,11 @@ extension Zonos3MiniSynthesizer {
         let hasAudioPrefix = built.rows.last?.prefix(n).contains(where: { $0 != pad }) ?? false
         let promptTensor = MLXArray(built.rows.flatMap { $0 }).reshaped(built.rows.count, n + 1)
         let initialTwin = built.twinRows.flatMap { tRows in
-            twinCache.map { tc in
-                TwinStep(
-                    input: MLXArray(tRows.flatMap { $0 }).reshaped(tRows.count, n + 1),
-                    cache: tc,
-                    conditioning: built.twinConditioning ?? Zonos3Conditioning(),
-                    scale: plan.cfgScale
-                )
+            twinCache.map {
+                TwinStep(input: MLXArray(tRows.flatMap { $0 }).reshaped(tRows.count, n + 1), cache: $0, conditioning: built.twinConditioning ?? Zonos3Conditioning(), scale: plan.cfgScale)
             }
         }
-        var logits = stepLogits(
-            module: module, condInput: promptTensor, condCache: cache,
-            conditioning: built.conditioning, twin: initialTwin
-        )
+        var logits = stepLogits(module: module, condInput: promptTensor, condCache: cache, conditioning: built.conditioning, twin: initialTwin)
         var history = built.rows.map { Array($0.prefix(n)) }
         var generatedRows: [[Int32]] = []
         var rng = plan.seed == 0 ? 0x9E37_79B9_7F4A_7C15 : plan.seed
@@ -373,6 +366,7 @@ extension Zonos3MiniSynthesizer {
         var countdown = -1
         var remain = plan.maxNewFrames
         while true {
+            guard !Task.isCancelled, epoch == plan.epoch else { break }
             var row = Zonos3Sampler.sampleRow(
                 logits: logits, history: history, generated: generatedRows.count,
                 config: config, temperature: plan.temperature, rng: &rng

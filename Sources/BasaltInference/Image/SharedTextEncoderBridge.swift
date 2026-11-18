@@ -15,7 +15,7 @@ extension MLXInferenceEngine {
         guard let container else {
             return FourierTextEmbedder.embed(prompt, dimension: targetDim)
         }
-        let rawFeatures: [Float]? = await container.perform { context in
+        let rawFeatures: [Float]? = await container.performEvaluating(nonSendable: ()) { context, _ in
             let tokenIds = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
             guard !tokenIds.isEmpty else { return nil }
             let leaves = context.model.leafModules().flattened()
@@ -24,7 +24,10 @@ extension MLXInferenceEngine {
             }
             let fallback = leaves.first { _, mod in mod is Embedding }
             guard let chosen = (preferred ?? fallback)?.1 as? Embedding else { return nil }
-            let clipped = Array(tokenIds.prefix(512)).map(Int32.init)
+            let vocab = chosen.weight.dim(0)
+            guard vocab > 0 else { return nil }
+            let clipped = tokenIds.prefix(512).compactMap { (0 ..< vocab).contains($0) ? Int32($0) : nil }
+            guard !clipped.isEmpty else { return nil }
             let hidden = chosen(MLXArray(clipped)).asType(.float32)
             let rms = rsqrt(mean(hidden * hidden, axis: -1, keepDims: true) + 1e-6)
             let normed = hidden * rms

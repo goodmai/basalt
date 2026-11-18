@@ -35,16 +35,20 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
         case (nil, _?): added.append(name)
         case (_?, nil): removed.append(name)
         case (let before?, let after?):
-            let roleChanged = old.deciderModels.contains(name) != new.deciderModels.contains(name)
-                || old.speakerModels.contains(name) != new.speakerModels.contains(name)
-                || old.imageGeneratorModels.contains(name) != new.imageGeneratorModels.contains(name)
-                || old.imagineDecoderModels.contains(name) != new.imagineDecoderModels.contains(name)
-            Self.needsReload(before, after) || roleChanged ? reloaded.append(name) : kept.append(name)
+            Self.needsReload(before, after) || Self.roleChanged(name, from: old, to: new) ? reloaded.append(name) : kept.append(name)
             if after.isCloud, before.budget != after.budget { budgets.append(name) }
             if after.isCloud, before.apiKeyEnv != after.apiKeyEnv { rekeyed.append(name) }
         case (nil, nil):
             if name == new.answer, chat == nil { kept.append(name) }
         }
+    }
+
+    static func roleChanged(_ name: String, from old: ComposeSpec, to new: ComposeSpec) -> Bool {
+        old.deciderModels.contains(name) != new.deciderModels.contains(name)
+            || old.speakerModels.contains(name) != new.speakerModels.contains(name)
+            || old.imageGeneratorModels.contains(name) != new.imageGeneratorModels.contains(name)
+            || old.imagineDecoderModels.contains(name) != new.imagineDecoderModels.contains(name)
+            || imagineDependencies(name, in: old) != imagineDependencies(name, in: new)
     }
 
     static func reloads(_ old: ComposeSpec, _ new: ComposeSpec, _ name: String) -> Bool {
@@ -54,6 +58,15 @@ public struct ComposeDiff: Sendable, Equatable, Codable {
 
     static func needsReload(_ before: ComposeSpec.Model, _ after: ComposeSpec.Model) -> Bool {
         before.source != after.source || before.keep != after.keep || before.idleUnload != after.idleUnload
+    }
+
+    static func imagineDependencies(_ name: String, in spec: ComposeSpec) -> [String: ComposeSpec.Model?] {
+        var deps: [String: ComposeSpec.Model?] = [:]
+        for view in spec.views where view.spec.imagine?.chain.contains(name) == true {
+            if let dec = view.spec.imagine?.decoderVia { deps["dec:\(dec)"] = spec.models[dec] }
+            if let enc = view.spec.imagine?.shareEncoder { deps["enc:\(enc)"] = spec.models[enc] }
+        }
+        return deps
     }
 
     static func restartReason(_ old: ComposeSpec, _ new: ComposeSpec, touched: [String]) -> String? {

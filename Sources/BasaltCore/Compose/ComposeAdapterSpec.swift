@@ -108,6 +108,13 @@ extension ComposeSpec {
         if name.isEmpty || !name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }) {
             issues.append(Issue(path, "an adapter name uses lowercase letters, digits, - and _"))
         }
+        if let output = spec.output {
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+            if trimmed.isEmpty || trimmed.hasPrefix("/") || trimmed.hasPrefix("~") || parts.contains("..") {
+                issues.append(Issue("\(path).output", "output must be a relative path without '..' or '~'"))
+            }
+        }
         if let baseModel = models[spec.base] {
             if baseModel.isCloud {
                 issues.append(Issue("\(path).base", "\(spec.base) is a cloud model; adapters train and run on local models only"))

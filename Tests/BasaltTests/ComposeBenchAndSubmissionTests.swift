@@ -414,10 +414,10 @@ struct NativeAdapterAndGPULockTests {
     static func makeMockEndpoint() -> BenchmarkEndpoint {
         BenchmarkEndpoint.mock { request in
             switch request.path {
-            case "/v1/telemetry":
-                let body = try JSONSerialization.data(withJSONObject: ["gpuPeakBytes": 12_500_000_000.0])
+            case "/v1/stats", "/v1/telemetry":
+                let body = try JSONSerialization.data(withJSONObject: ["memory": ["gpu_peak_bytes": 12_500_000_000.0], "gpuPeakBytes": 12_500_000_000.0])
                 return BenchmarkHTTPResponse(body: body, totalMs: 1.0)
-            case "/v1/decide":
+            case "/v1/systemone", "/v1/decide":
                 let reqJSON = (request.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
                 let state = (reqJSON["state"] as? String) ?? ""
                 let choice = state.contains("Swift 6") ? "code" : "chat"

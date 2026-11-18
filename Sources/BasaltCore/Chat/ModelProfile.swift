@@ -1,33 +1,14 @@
 import Foundation
 
-// MARK: — Per-family model behaviour
-//
-// Everything that differs between model families lives behind this protocol, so
-// the transport adapters and the engine stay family-agnostic. Adding a family is
-// one new conformance plus one registry line — no edits to request handling.
-
 public protocol ModelProfile: Sendable {
-    /// Human-readable family name, for logs and benchmark reports.
     var name: String { get }
 
-    /// Extra variables handed to the tokenizer's chat template. This is the ONLY
-    /// sanctioned way to influence prompt construction: no adapter may build
-    /// prompt syntax by hand.
     func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable]
 
-    /// Markers that delimit a thinking span *in the generated stream*.
-    ///
-    /// Note these describe generation, not the prompt. Qwen's template opens
-    /// `<think>` in the prompt itself and only ever emits the closing tag, which
-    /// is why a parser that keys off the raw prompt gets it backwards.
     var thinkingMarkers: ThinkingMarkers { get }
 
-    /// Ceiling used when the caller does not name one.
     var defaultMaxTokens: Int { get }
 
-    /// Sampling floor applied when the caller does not set one: tokens below this
-    /// fraction of the top token's probability are dropped. nil leaves sampling
-    /// untouched. Measured per family — see the conformances for the evidence.
     var defaultMinP: Float? { get }
 
     func turns(_ turns: [ChatMessageInput], for reasoning: ReasoningPolicy) -> [ChatMessageInput]
@@ -42,9 +23,7 @@ extension ModelProfile {
 }
 
 public struct ThinkingMarkers: Sendable {
-    /// Tokens that open a thinking span mid-stream.
     public let open: [String]
-    /// Tokens that close it.
     public let close: [String]
 
     public init(open: [String], close: [String]) {
@@ -55,10 +34,6 @@ public struct ThinkingMarkers: Sendable {
     public static let none = ThinkingMarkers(open: [], close: [])
 }
 
-// MARK: — Qwen 3.x (dense and MoE)
-
-/// Covers Qwen3.5 / 3.6 / 3.8, dense and MoE, including the abliterated and
-/// heretic derivatives — they all ship the same chat template.
 public struct QwenProfile: ModelProfile {
     public let name = "qwen3.x"
 
@@ -67,18 +42,10 @@ public struct QwenProfile: ModelProfile {
     public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
         switch reasoning {
         case .modelDefault:
-            // Template defaults reasoning_effort to `xhigh`.
             return [:]
         case .disabled:
-            // Makes the template emit `<think>\n\n</think>` — an already-closed
-            // span — so the model answers immediately. Verified: "127 + 458"
-            // drops from 800 tokens of repetition to 3 tokens ("585").
             return ["enable_thinking": false]
         case .effort(let level):
-            // The template raises on anything outside this set, which would surface
-            // as an opaque 500. Fail closed to the default instead.
-            // OpenAI/Anthropic clients name levels low|medium|high (Codex also minimal); the
-            // Qwen template knows low|medium|xhigh and raises on anything else.
             let mapped = ["minimal": "low", "high": "xhigh"][level] ?? level
             guard ["xhigh", "medium", "low"].contains(mapped) else { return [:] }
             return ["reasoning_effort": mapped]
@@ -91,11 +58,8 @@ public struct QwenProfile: ModelProfile {
 
     public var defaultMaxTokens: Int { 8192 }
 
-    /// Not measured for this family; leave sampling as the caller set it.
     public var defaultMinP: Float? { nil }
 }
-
-// MARK: — Gemma 3 / 4
 
 public struct GemmaProfile: ModelProfile {
     public let name = "gemma"
@@ -114,21 +78,6 @@ public struct GemmaProfile: ModelProfile {
 
     public var defaultMaxTokens: Int { 4096 }
 
-    /// Measured on Gemma4 26B-A4B over a 110-cell temperature x min-p grid
-    /// (0.1…1.0 x 0.0…1.0, one draw per cell) on a task requiring an exactly
-    /// recalled constant. Success by min-p row:
-    ///
-    ///     0.0  40%   0.3  60%   0.6  80%   0.9  100%
-    ///     0.1  20%   0.4  50%   0.7  80%   1.0  100%
-    ///     0.2  60%   0.5  70%   0.8  90%
-    ///
-    /// At 0.9 the model answered correctly in 20 of 20 cells at every
-    /// temperature up to 1.0 — truncating the tail buys the reliability of
-    /// greedy decoding while leaving temperature free.
-    ///
-    /// Caveat: measured on one precision-recall task. It suppresses the
-    /// low-probability tail, which is where wording variety lives, so a caller
-    /// doing open-ended generation should override it.
     public var defaultMinP: Float? { 0.9 }
 }
 
@@ -253,9 +202,6 @@ public struct GenericProfile: ModelProfile {
 
     public init() {}
 
-    /// Unknown templates get the request's own words: `enable_thinking: false` to disable, the
-    /// level name as `reasoning_effort` (what gpt-oss-style templates read). A template that
-    /// does not use a key ignores it.
     public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
         switch reasoning {
         case .modelDefault:        return [:]
@@ -290,15 +236,7 @@ public struct SamplingDefaults: Sendable, Equatable {
     }
 }
 
-// MARK: — Selection
-
 public enum ModelProfileRegistry {
-    /// Picks a profile from the `model_type` in the model's own config.json.
-    ///
-    /// Matching is on prefix because the family covers several ids: `qwen3_5`,
-    /// `qwen3_5_moe`, `qwen3_6`, `qwen3_8`… all share one template. Note that
-    /// Qwen3.6 and 3.8 checkpoints both declare `model_type: qwen3_5` upstream —
-    /// the id names the architecture family, not the release.
     public static func profile(forModelType modelType: String?, chatTemplate: String? = nil) -> any ModelProfile {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
         if t.hasPrefix("qwen3") { return QwenProfile() }
@@ -307,14 +245,12 @@ public enum ModelProfileRegistry {
         if t == "flint" { return FlintProfile() }
         if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
         if t.hasPrefix("muse_glimmer") || t == "muse-glimmer" { return MuseGlimmerProfile() }
-        if t == "nemotron_h" {
+        if t == "nemotron_h" || t == "nemotron_lightning" || t == "nemotron-lightning" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }
         return GenericProfile()
     }
 
-    /// Reads `model_type` out of a model directory, tolerating a missing or
-    /// unreadable config rather than failing the load.
     public static func profile(forModelAt path: String) -> any ModelProfile {
         let directory = URL(fileURLWithPath: path)
         guard let json = ModelCache.config(at: directory) else { return GenericProfile() }

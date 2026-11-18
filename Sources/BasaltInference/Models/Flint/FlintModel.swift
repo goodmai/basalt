@@ -272,6 +272,7 @@ extension FlintModel {
             let bits = totalBits / origInCols
             guard [2, 3, 4, 5, 6, 8].contains(bits) else { return nil }
             let mode: QuantizationMode = weights["\(path).biases"] != nil ? .affine : .mxfp4
+            guard mode == .affine || (bits == 4 && groupSize == 32) else { return nil }
             return (groupSize, bits, mode)
         }
     }

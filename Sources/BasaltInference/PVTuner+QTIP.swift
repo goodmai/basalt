@@ -192,7 +192,9 @@ extension PVTuner {
         let tRows = layer.outFeatures / 16
         let tCols = layer.inFeatures / 16
         let wRot = layer.decodedRotatedWeight(dtype: .float32) - stepSize * rotatedGrad
-        let scales = maximum(abs(layer.rowScales.asType(.float32)), Float(1e-6)).reshaped(tRows, 1, 1, 1)
+        let rawScales = layer.rowScales.asType(.float32)
+        let mag = maximum(abs(rawScales), Float(1e-6))
+        let scales = which(rawScales .< Float(0), -mag, mag).reshaped(tRows, 1, 1, 1)
         let normTiles = (wRot.reshaped(tRows, 16, tCols, 16) / scales)
             .transposed(0, 2, 1, 3)
             .reshaped(tRows * tCols, 256)
