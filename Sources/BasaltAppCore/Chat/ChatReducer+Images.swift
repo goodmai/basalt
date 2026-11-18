@@ -192,6 +192,10 @@ extension ChatReducer {
         let data = (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? part.previewPNG ?? ImageTurnPlanner.pngHeader
         guard let attachment = ChatAttachment(name: validName, data: data, sourcePath: path) else { return }
         state.attachments.removeAll { $0.sourcePath == path }
+        let imageCount = state.attachments.filter { $0.kind == "image" }.count
+        if imageCount >= 10, let oldestIdx = state.attachments.firstIndex(where: { $0.kind == "image" }) {
+            state.attachments.remove(at: oldestIdx)
+        }
         state.attachments.append(attachment)
         state.beforeFilePath = path
         state.imageMode = true

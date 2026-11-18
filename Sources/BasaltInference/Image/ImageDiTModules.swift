@@ -229,13 +229,14 @@ final class JointDiTBlock: Module {
     func callAsFunction(
         img: MLXArray,
         txt: MLXArray,
-        stepCtx: DiTStepContext
+        stepCtx: DiTStepContext,
+        refKV: CachedReferenceLayerKV? = nil
     ) -> (img: MLXArray, txt: MLXArray) {
         let gImg = imgAdaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
         let gTxt = txtAdaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
         let mImg = imgNorm1(img) * (1.0 + gImg.scaleMSA) + gImg.shiftMSA
         let mTxt = txtNorm1(txt) * (1.0 + gTxt.scaleMSA) + gTxt.shiftMSA
-        let (attnImg, attnTxt) = jointAttention(mImg: mImg, mTxt: mTxt, stepCtx: stepCtx)
+        let (attnImg, attnTxt) = jointAttention(mImg: mImg, mTxt: mTxt, stepCtx: stepCtx, refKV: refKV)
         let hImg = img + gImg.gateMSA * imgOut(attnImg)
         let hTxt = txt + gTxt.gateMSA * txtOut(attnTxt)
         let fImg = imgNorm2(hImg) * (1.0 + gImg.scaleMLP) + gImg.shiftMLP
@@ -245,10 +246,33 @@ final class JointDiTBlock: Module {
         return (nextImg, nextTxt)
     }
 
+    func projectReferenceTower(
+        refImg: MLXArray,
+        stepCtx: DiTStepContext
+    ) -> (updatedRef: MLXArray, kv: CachedReferenceLayerKV) {
+        let gImg = imgAdaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
+        let mRef = imgNorm1(refImg) * (1.0 + gImg.scaleMSA) + gImg.shiftMSA
+        let b = mRef.dim(0)
+        let nRef = mRef.dim(1)
+        let headDim = dimensions / heads
+        let parts = imgQKV(mRef).reshaped(b, nRef, 3, heads, headDim).transposed(2, 0, 3, 1, 4)
+        let qRef = RoPE2D.apply(parts[0], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
+        let kRef = RoPE2D.apply(parts[1], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
+        let vRef = parts[2]
+        let attended = MLXFast.scaledDotProductAttention(queries: qRef, keys: kRef, values: vRef, scale: scale, mask: .none)
+            .transposed(0, 2, 1, 3)
+            .reshaped(b, nRef, dimensions)
+        let hRef = refImg + gImg.gateMSA * imgOut(attended)
+        let fRef = imgNorm2(hRef) * (1.0 + gImg.scaleMLP) + gImg.shiftMLP
+        let nextRef = hRef + gImg.gateMLP * imgMLP2(geluApproximate(imgMLP1(fRef)))
+        return (nextRef, CachedReferenceLayerKV(keys: kRef, values: vRef))
+    }
+
     private func jointAttention(
         mImg: MLXArray,
         mTxt: MLXArray,
-        stepCtx: DiTStepContext
+        stepCtx: DiTStepContext,
+        refKV: CachedReferenceLayerKV?
     ) -> (MLXArray, MLXArray) {
         let b = mImg.dim(0)
         let nImg = mImg.dim(1)
@@ -259,8 +283,16 @@ final class JointDiTBlock: Module {
         let qImg = RoPE2D.apply(iParts[0], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
         let kImg = RoPE2D.apply(iParts[1], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
         let q = concatenated([tParts[0], qImg], axis: 2)
-        let k = concatenated([tParts[1], kImg], axis: 2)
-        let v = concatenated([tParts[2], iParts[2]], axis: 2)
+        let k = if let refKV {
+            concatenated([refKV.keys, tParts[1], kImg], axis: 2)
+        } else {
+            concatenated([tParts[1], kImg], axis: 2)
+        }
+        let v = if let refKV {
+            concatenated([refKV.values, tParts[2], iParts[2]], axis: 2)
+        } else {
+            concatenated([tParts[2], iParts[2]], axis: 2)
+        }
         let attended = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none)
             .transposed(0, 2, 1, 3)
             .reshaped(b, nTxt + nImg, dimensions)
@@ -296,7 +328,8 @@ final class SingleStreamS3DiTBlock: Module {
     func callAsFunction(
         condTokens: MLXArray,
         imgTokens: MLXArray,
-        stepCtx: DiTStepContext
+        stepCtx: DiTStepContext,
+        refKV: CachedReferenceLayerKV? = nil
     ) -> (cond: MLXArray, img: MLXArray) {
         let nCond = condTokens.dim(1)
         let nImg = imgTokens.dim(1)
@@ -312,13 +345,43 @@ final class SingleStreamS3DiTBlock: Module {
         let qImg = RoPE2D.apply(parts[0][0..., 0..., nCond..., 0...], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
         let kImg = RoPE2D.apply(parts[1][0..., 0..., nCond..., 0...], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
         let q = concatenated([qCond, qImg], axis: 2)
-        let k = concatenated([kCond, kImg], axis: 2)
-        let attn = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: parts[2], scale: scale, mask: .none)
+        let k = if let refKV {
+            concatenated([refKV.keys, kCond, kImg], axis: 2)
+        } else {
+            concatenated([kCond, kImg], axis: 2)
+        }
+        let v = if let refKV {
+            concatenated([refKV.values, parts[2]], axis: 2)
+        } else {
+            parts[2]
+        }
+        let attn = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none)
             .transposed(0, 2, 1, 3)
             .reshaped(b, total, dimensions)
         let swiglu = MLXNN.silu(mlpGate(mod)) * mlpUp(mod)
         let updated = unified + gates.gateMSA * fusedOut(concatenated([attn, swiglu], axis: -1))
         return (updated[0..., ..<nCond, 0...], updated[0..., nCond..., 0...])
+    }
+
+    func projectReferenceTower(
+        refTokens: MLXArray,
+        stepCtx: DiTStepContext
+    ) -> (updatedRef: MLXArray, kv: CachedReferenceLayerKV) {
+        let b = refTokens.dim(0)
+        let nRef = refTokens.dim(1)
+        let gates = adaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
+        let mod = norm(refTokens) * (1.0 + gates.scaleMSA) + gates.shiftMSA
+        let headDim = dimensions / heads
+        let parts = qkv(mod).reshaped(b, nRef, 3, heads, headDim).transposed(2, 0, 3, 1, 4)
+        let qRef = RoPE2D.apply(parts[0], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
+        let kRef = RoPE2D.apply(parts[1], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)
+        let vRef = parts[2]
+        let attn = MLXFast.scaledDotProductAttention(queries: qRef, keys: kRef, values: vRef, scale: scale, mask: .none)
+            .transposed(0, 2, 1, 3)
+            .reshaped(b, nRef, dimensions)
+        let swiglu = MLXNN.silu(mlpGate(mod)) * mlpUp(mod)
+        let updated = refTokens + gates.gateMSA * fusedOut(concatenated([attn, swiglu], axis: -1))
+        return (updated, CachedReferenceLayerKV(keys: kRef, values: vRef))
     }
 }
 

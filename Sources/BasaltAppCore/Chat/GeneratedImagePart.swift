@@ -30,6 +30,8 @@ public struct GeneratedImagePart: Sendable, Equatable, Codable {
     public var currentStep = 0
     public var totalSteps: Int
     public var teacacheSkipped = 0
+    public var referenceKVReused = false
+    public var upscaledBy = 1
     public var licenseTier: String?
     public var boxes: [ChatImageBox] = []
     public var previewPNG: Data?
@@ -71,12 +73,16 @@ public struct ImageGenerationCall: Sendable, Equatable, Codable {
         var outputFormat: String
         var previewEverySteps: Int
         var images: [String]?
+        var reuseReferenceKV: Bool
+        var upscaleFactor: Int?
         var stream = true
 
         enum CodingKeys: String, CodingKey {
             case model, prompt, size, steps, background, images, stream
             case outputFormat = "output_format"
             case previewEverySteps = "preview_every_steps"
+            case reuseReferenceKV = "reuse_reference_kv"
+            case upscaleFactor = "upscale_factor"
         }
     }
 
@@ -87,6 +93,8 @@ public struct ImageGenerationCall: Sendable, Equatable, Codable {
     public var background = "auto"
     public var outputFormat = "png"
     public var previewEverySteps = 2
+    public var reuseReferenceKV = true
+    public var upscaleFactor: Int?
     public var referenceImages: [Data]
     public var beforeFilePath: String?
 
@@ -120,7 +128,9 @@ public struct ImageGenerationCall: Sendable, Equatable, Codable {
             background: background,
             outputFormat: outputFormat,
             previewEverySteps: previewEverySteps,
-            images: encodedImages
+            images: encodedImages,
+            reuseReferenceKV: reuseReferenceKV,
+            upscaleFactor: upscaleFactor
         )
         return try JSONEncoder().encode(payload)
     }

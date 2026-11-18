@@ -205,6 +205,7 @@ extension UniversalModelConverter {
         teacherURL: URL,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionPVSummary? {
+        if DiTBlockQuantizer.isDiTCheckpoint(outputURL) { return nil }
         if request.macaqRefine {
             onProgress(.init(phase: "macaq_refine", completed: 3, total: 4, message: "Running MACaQ-R Hessian flip-refinement"))
             _ = try await MACaQRefiner.refineConvertedDirectory(
@@ -270,7 +271,16 @@ extension UniversalModelConverter {
         workingSource: URL,
         outputURL: URL
     ) async throws -> (shards: Int, bytesAfter: Int64) {
-        let recipe = SINQRecipe(rawValue: (request.recipe ?? "rtn").lowercased()) ?? .rtn
+        let rawRecipe = SINQRecipe(rawValue: (request.recipe ?? "rtn").lowercased()) ?? .rtn
+        let isDiT = DiTBlockQuantizer.isDiTCheckpoint(workingSource)
+        let recipe: SINQRecipe = (isDiT && rawRecipe == .asinq) ? .sinq : rawRecipe
+        let sinqSource: URL = if isDiT,
+            !FileManager.default.fileExists(atPath: workingSource.appending(component: "config.json").path),
+            FileManager.default.fileExists(atPath: workingSource.appending(path: "transformer/config.json").path) {
+            workingSource.appending(component: "transformer")
+        } else {
+            workingSource
+        }
         let adapterURL = request.adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         let prec: WeightConverter.Precision
         switch request.target {
@@ -289,7 +299,7 @@ extension UniversalModelConverter {
             return (1, 0)
         }
         let conv = WeightConverter(precision: prec, adapter: adapterURL, recipe: recipe)
-        let sum = try await conv.runWithSINQ(source: workingSource, output: outputURL, calibrationText: request.calibrationText)
+        let sum = try await conv.runWithSINQ(source: sinqSource, output: outputURL, calibrationText: request.calibrationText)
         return (sum.shards, Int64(sum.bytesAfter))
     }
 
@@ -299,33 +309,15 @@ extension UniversalModelConverter {
         outputURL: URL,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> (shards: Int, bytesAfter: Int64) {
-        var cfg = MACaQConfig()
-        if let blk = request.hadamardBlock { cfg.hadamardBlock = blk }
-        if let alpha = request.alpha { cfg.alpha = alpha }
-        let isMoERW = request.recipe?.lowercased() == SINQRecipe.moeRW.rawValue
         switch request.target {
         case .macaqAffine(let b, let g):
-            if isMoERW {
-                return try await encodeMACaQWithMoERWDirectory(
-                    request: request, workingSource: workingSource, outputURL: outputURL,
-                    targetMode: .affine(bits: b, groupSize: g), onProgress: onProgress)
-            }
-            let res = try await MACaQRefiner.convertDirectory(
-                source: workingSource, output: outputURL, targetMode: .affine(bits: b, groupSize: g),
-                calibrationText: request.calibrationText, config: cfg
-            ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
-            return (res.shards, Int64(res.bytesAfter))
+            return try await encodeMACaQTarget(
+                request: request, workingSource: workingSource, outputURL: outputURL,
+                targetMode: .affine(bits: b, groupSize: g), onProgress: onProgress)
         case .macaqMXFP4:
-            if isMoERW {
-                return try await encodeMACaQWithMoERWDirectory(
-                    request: request, workingSource: workingSource, outputURL: outputURL,
-                    targetMode: .mxfp4, onProgress: onProgress)
-            }
-            let res = try await MACaQRefiner.convertDirectory(
-                source: workingSource, output: outputURL, targetMode: .mxfp4,
-                calibrationText: request.calibrationText, config: cfg
-            ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
-            return (res.shards, Int64(res.bytesAfter))
+            return try await encodeMACaQTarget(
+                request: request, workingSource: workingSource, outputURL: outputURL,
+                targetMode: .mxfp4, onProgress: onProgress)
         case .flatQuant, .lirQuant:
             let res = try await BasisTransformConverter.convertDirectory(
                 source: workingSource, output: outputURL, target: request.target,
@@ -340,6 +332,38 @@ extension UniversalModelConverter {
             return try await encodeTrellisOrGSQTarget(
                 request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
         }
+    }
+}
+
+extension UniversalModelConverter {
+    private static func encodeMACaQTarget(
+        request: ModelConversionRequest,
+        workingSource: URL,
+        outputURL: URL,
+        targetMode: MACaQTargetMode,
+        onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
+    ) async throws -> (shards: Int, bytesAfter: Int64) {
+        var cfg = MACaQConfig()
+        if let blk = request.hadamardBlock { cfg.hadamardBlock = blk }
+        if let alpha = request.alpha { cfg.alpha = alpha }
+        if DiTBlockQuantizer.isDiTCheckpoint(workingSource) {
+            return try DiTBlockQuantizer.convertMACaQDirectory(
+                source: workingSource, output: outputURL,
+                targetMode: targetMode,
+                hadamardBlock: request.hadamardBlock ?? 32,
+                alpha: cfg.alpha
+            ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
+        }
+        if request.recipe?.lowercased() == SINQRecipe.moeRW.rawValue {
+            return try await encodeMACaQWithMoERWDirectory(
+                request: request, workingSource: workingSource, outputURL: outputURL,
+                targetMode: targetMode, onProgress: onProgress)
+        }
+        let res = try await MACaQRefiner.convertDirectory(
+            source: workingSource, output: outputURL, targetMode: targetMode,
+            calibrationText: request.calibrationText, config: cfg
+        ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
+        return (res.shards, Int64(res.bytesAfter))
     }
 
     private static func encodeTrellisOrGSQTarget(

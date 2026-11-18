@@ -77,6 +77,8 @@ struct FluxForwardInput {
     let timestep: Float
     let guidance: Float
     let bboxGrid: (mask: MLXArray, bias: MLXArray)?
+    var dualRefKV: [CachedReferenceLayerKV] = []
+    var singleRefKV: [CachedReferenceLayerKV] = []
 }
 
 final class FluxKleinDiTModule: Module {
@@ -144,11 +146,13 @@ final class FluxKleinDiTModule: Module {
         var txt = input.condTokens
         let rope = RoPE2D.frequencies(gridH: tokH, gridW: tokW, headDim: config.headDim)
         let stepCtx = DiTStepContext(condVec: input.condVec, rope: rope, timestep: input.timestep, guidance: input.guidance)
-        for block in dualBlocks {
-            (img, txt) = block(img: img, txt: txt, stepCtx: stepCtx)
+        for (idx, block) in dualBlocks.enumerated() {
+            let refKV = idx < input.dualRefKV.count ? input.dualRefKV[idx] : nil
+            (img, txt) = block(img: img, txt: txt, stepCtx: stepCtx, refKV: refKV)
         }
-        for block in singleBlocks {
-            (txt, img) = block(condTokens: txt, imgTokens: img, stepCtx: stepCtx)
+        for (idx, block) in singleBlocks.enumerated() {
+            let refKV = idx < input.singleRefKV.count ? input.singleRefKV[idx] : nil
+            (txt, img) = block(condTokens: txt, imgTokens: img, stepCtx: stepCtx, refKV: refKV)
         }
         var normedOut = finalNorm(img)
         if let bbox = input.bboxGrid {
@@ -185,6 +189,10 @@ public actor FluxKleinSynthesizer: ImageStepRunner {
         let uncondTokens: MLXArray?
         let uncondVec: MLXArray?
         let bboxGrid: (mask: MLXArray, bias: MLXArray)?
+        let dualRefKV: [CachedReferenceLayerKV]
+        let singleRefKV: [CachedReferenceLayerKV]
+        let uncachedRefTokens: MLXArray?
+        let referenceKVReused: Bool
         var teaCache: TeaCacheState
     }
 
@@ -192,7 +200,8 @@ public actor FluxKleinSynthesizer: ImageStepRunner {
     public nonisolated let descriptor: ImageModelDescriptor
     nonisolated let config: ImageDiTConfig
     private let sharedTextEmbedder: (@Sendable (String) async throws -> [Float])?
-    private var module: FluxKleinDiTModule?
+    private(set) var module: FluxKleinDiTModule?
+    private var referenceKVCache = ReferenceImageKVCache(capacity: 8)
     private var sessions: [Int: ActiveSession] = [:]
     private var nextSessionID = 0
     private var epoch = 0
@@ -244,8 +253,13 @@ public actor FluxKleinSynthesizer: ImageStepRunner {
     public func unload() async {
         epoch &+= 1
         sessions.removeAll()
+        referenceKVCache.clear()
         module = nil
         Memory.clearCache()
+    }
+
+    package func referenceCacheStats() -> (hits: Int, misses: Int, entries: Int) {
+        (referenceKVCache.hits, referenceKVCache.misses, referenceKVCache.count)
     }
 
     public func generate(_ request: ImageGenerationRequest) async throws -> AsyncThrowingStream<ImageGenerationEvent, any Error> {
@@ -268,6 +282,15 @@ public actor FluxKleinSynthesizer: ImageStepRunner {
 }
 
 extension FluxKleinSynthesizer {
+    fileprivate struct ResolvedRefState {
+        let primaryImage: MLXArray?
+        let primaryLatent: MLXArray?
+        let dualKV: [CachedReferenceLayerKV]
+        let singleKV: [CachedReferenceLayerKV]
+        let uncachedRefTokens: MLXArray?
+        let cacheHit: Bool
+    }
+
     func beginCandidateSession(
         request: ImageGenerationRequest,
         promptVectors: PromptVectorPair,
@@ -278,82 +301,103 @@ extension FluxKleinSynthesizer {
         let hLat = max(config.patchSize, request.height / 8)
         let wLat = max(config.patchSize, request.width / 8)
         let noise = MLXRandom.normal([1, hLat, wLat, config.latentChannels], dtype: .float32, key: MLXRandom.key(seed))
-        let (refs, pixelMask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
-        let refLatents = refs.map { module.vae.encode($0) }
-        let startState = refLatents.first.map { 0.55 * $0 + 0.45 * noise } ?? noise
+        let (refState, pixelMask) = try resolveReferenceState(module: module, request: request)
+        let startState = refState.primaryLatent.map { 0.55 * $0 + 0.45 * noise } ?? noise
+        let mergedBoxes = request.config.bboxLayout + FourierTextEmbedder.parseInlineJSONBoundingBoxes(request.effectivePrompt)
         let (condTokens, condVec) = buildPositiveConditioning(
-            module: module,
-            request: request,
-            positiveVector: promptVectors.positive,
-            refLatents: refLatents
+            module: module, request: request, boxes: mergedBoxes, positiveVector: promptVectors.positive
         )
         let (uncondTokens, uncondVec) = buildNegativeConditioning(
-            module: module,
-            negativePrompt: request.negativePrompt,
-            negativeVector: promptVectors.negative
+            module: module, negativePrompt: request.negativePrompt, negativeVector: promptVectors.negative
         )
         let latentMask = pixelMask.map { TinyAutoencoderPreview.upsampleBilinearGrid($0[0], height: hLat, width: wLat)[.newAxis] }
         let bboxGrid = ImageRunnerCore.spatialBBoxModulation(
-            boxes: request.config.bboxLayout,
-            gridH: hLat / config.patchSize,
-            gridW: wLat / config.patchSize,
-            hiddenDim: config.hiddenSize
+            boxes: mergedBoxes, gridH: hLat / config.patchSize, gridW: wLat / config.patchSize, hiddenDim: config.hiddenSize
         )
         eval(startState, condTokens, condVec)
         nextSessionID += 1
         sessions[nextSessionID] = ActiveSession(
-            request: request,
-            promptVector: promptVectors.positive,
-            seed: seed,
-            epoch: expectedEpoch,
+            request: request, promptVector: promptVectors.positive, seed: seed, epoch: expectedEpoch,
             wantsAlpha: ImageRunnerCore.wantsNativeAlpha(request: request, descriptor: descriptor),
-            state: startState,
-            initialNoise: noise,
-            primaryRefLatent: refLatents.first,
-            primaryRefImage: refs.first,
-            pixelMask: pixelMask,
-            latentMask: latentMask,
-            condTokens: condTokens,
-            condVec: condVec,
-            uncondTokens: uncondTokens,
-            uncondVec: uncondVec,
-            bboxGrid: bboxGrid,
+            state: startState, initialNoise: noise,
+            primaryRefLatent: refState.primaryLatent, primaryRefImage: refState.primaryImage,
+            pixelMask: pixelMask, latentMask: latentMask,
+            condTokens: condTokens, condVec: condVec, uncondTokens: uncondTokens, uncondVec: uncondVec,
+            bboxGrid: bboxGrid, dualRefKV: refState.dualKV, singleRefKV: refState.singleKV,
+            uncachedRefTokens: refState.uncachedRefTokens, referenceKVReused: refState.cacheHit,
             teaCache: TeaCacheState(totalSteps: request.steps, threshold: request.config.teacacheThreshold)
         )
         return nextSessionID
     }
+}
 
-    private func buildPositiveConditioning(
+extension FluxKleinSynthesizer {
+    fileprivate func resolveReferenceState(
+        module: FluxKleinDiTModule,
+        request: ImageGenerationRequest
+    ) throws(BasaltError) -> (ResolvedRefState, MLXArray?) {
+        guard !request.config.referenceImages.isEmpty else {
+            let mask = try request.config.maskImage != nil ? ImageRunnerCore.decodeReferencesAndMask(request: request).mask : nil
+            return (ResolvedRefState(primaryImage: nil, primaryLatent: nil, dualKV: [], singleKV: [], uncachedRefTokens: nil, cacheHit: false), mask)
+        }
+        if request.config.reuseReferenceKV {
+            return try lookupOrBuildCachedReference(module: module, request: request)
+        }
+        let (refs, decodedMask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
+        let refLatents = refs.map { module.vae.encode($0) }
+        let refTok = ReferenceKVProjector.encodeRefPatchTokens(
+            refLatents: refLatents, refPatchIn: module.refPatchIn, hiddenSize: config.hiddenSize
+        )
+        return (ResolvedRefState(
+            primaryImage: refs.first, primaryLatent: refLatents.first,
+            dualKV: [], singleKV: [], uncachedRefTokens: refTok, cacheHit: false
+        ), decodedMask)
+    }
+
+    private func lookupOrBuildCachedReference(
+        module: FluxKleinDiTModule,
+        request: ImageGenerationRequest
+    ) throws(BasaltError) -> (ResolvedRefState, MLXArray?) {
+        let cacheKey = ReferenceKVCacheKey(
+            modelID: modelIdentifier, width: request.width, height: request.height,
+            hiddenSize: config.hiddenSize, patchSize: config.patchSize,
+            referenceImages: request.config.referenceImages
+        )
+        if let hit = referenceKVCache.lookup(cacheKey) {
+            let mask = try request.config.maskImage != nil ? ImageRunnerCore.decodeReferencesAndMask(request: request).mask : nil
+            return (ResolvedRefState(
+                primaryImage: hit.primaryImage, primaryLatent: hit.primaryLatent,
+                dualKV: hit.dualLayerKV, singleKV: hit.singleLayerKV, uncachedRefTokens: nil, cacheHit: true
+            ), mask)
+        }
+        let (refs, decodedMask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
+        let snapshot = ReferenceKVProjector.buildFluxSnapshot(key: cacheKey, refImages: refs, module: module)
+        referenceKVCache.insert(snapshot)
+        return (ResolvedRefState(
+            primaryImage: snapshot.primaryImage, primaryLatent: snapshot.primaryLatent,
+            dualKV: snapshot.dualLayerKV, singleKV: snapshot.singleLayerKV, uncachedRefTokens: nil, cacheHit: false
+        ), decodedMask)
+    }
+
+    fileprivate func buildPositiveConditioning(
         module: FluxKleinDiTModule,
         request: ImageGenerationRequest,
-        positiveVector: [Float],
-        refLatents: [MLXArray]
+        boxes: [ImageBoundingBox],
+        positiveVector: [Float]
     ) -> (MLXArray, MLXArray) {
         let posInput = TextConditioningInput(
-            prompt: request.effectivePrompt,
-            sharedVector: positiveVector,
-            bboxLayout: request.config.bboxLayout,
-            vglSceneJSON: request.config.vglSceneJSON
+            prompt: request.effectivePrompt, sharedVector: positiveVector,
+            bboxLayout: boxes, vglSceneJSON: request.config.vglSceneJSON
         )
         var (condTokens, condVec) = module.textEncoder.encode(posInput)
         if module.usePerceiver {
             condTokens = module.perceiver(condTokens)
             condVec = mean(condTokens, axis: 1)
         }
-        if !refLatents.isEmpty {
-            let refTokens = concatenated(
-                refLatents.map { rLat in
-                    let p = module.refPatchIn(rLat)
-                    return p.reshaped(1, p.dim(1) * p.dim(2), config.hiddenSize)
-                },
-                axis: 1
-            )
-            condTokens = concatenated([condTokens, refTokens], axis: 1)
-        }
         return (condTokens, condVec)
     }
 
-    private func buildNegativeConditioning(
+    fileprivate func buildNegativeConditioning(
         module: FluxKleinDiTModule,
         negativePrompt: String?,
         negativeVector: [Float]?
@@ -382,31 +426,12 @@ extension FluxKleinSynthesizer {
         let total = Float(max(1, session.request.steps))
         let t0 = Float(step) / total
         let t1 = Float(step + 1) / total
-        let dt = t1 - t0
         let guidance = Float(max(0.0, session.request.config.guidanceScale))
         let probe = module.modulatedProbe(
-            latent: session.state,
-            condVec: session.condVec,
-            timestep: t0,
-            guidance: guidance
+            latent: session.state, condVec: session.condVec, timestep: t0, guidance: guidance
         )
-        let curState = session.state
-        let cTok = session.condTokens
-        let cVec = session.condVec
-        let uTok = session.uncondTokens
-        let uVec = session.uncondVec
-        let bGrid = session.bboxGrid
-        let velocity = session.teaCache.resolveVelocity(step: step, modulatedInput: probe) {
-            let vPos = module.predictVelocity(
-                FluxForwardInput(latent: curState, condTokens: cTok, condVec: cVec, timestep: t0, guidance: guidance, bboxGrid: bGrid)
-            )
-            guard let uTok, let uVec, guidance > 1.0 else { return vPos }
-            let vNeg = module.predictVelocity(
-                FluxForwardInput(latent: curState, condTokens: uTok, condVec: uVec, timestep: t0, guidance: 1.0, bboxGrid: nil)
-            )
-            return vNeg + guidance * (vPos - vNeg)
-        }
-        var nextLatent = session.state + dt * velocity
+        let stepVel = evaluateStepVelocity(module: module, session: &session, step: step, t0: t0, guidance: guidance, probe: probe)
+        var nextLatent = session.state + (t1 - t0) * stepVel
         if let refLat = session.primaryRefLatent, let lMask = session.latentMask {
             let refAtT = (1.0 - t1) * session.initialNoise + t1 * refLat
             nextLatent = lMask * nextLatent + (1.0 - lMask) * refAtT
@@ -416,12 +441,59 @@ extension FluxKleinSynthesizer {
         sessions[sessionID] = session
         guard emitPreview else { return nil }
         return try TinyAutoencoderPreview.makePartialFrame(
-            state: nextLatent,
-            step: step,
-            request: session.request,
-            isLatent: true,
-            includeAlpha: session.wantsAlpha
+            state: nextLatent, step: step, request: session.request, isLatent: true, includeAlpha: session.wantsAlpha
         )
+    }
+
+    private func evaluateStepVelocity(
+        module: FluxKleinDiTModule,
+        session: inout ActiveSession,
+        step: Int,
+        t0: Float,
+        guidance: Float,
+        probe: MLXArray
+    ) -> MLXArray {
+        let curState = session.state
+        let (cTok, cVec, uTok, uVec, bGrid) = (session.condTokens, session.condVec, session.uncondTokens, session.uncondVec, session.bboxGrid)
+        let (dualKV, singleKV) = resolveStepRefKV(module: module, session: session)
+        return session.teaCache.resolveVelocity(step: step, modulatedInput: probe) {
+            let vPos = module.predictVelocity(
+                FluxForwardInput(
+                    latent: curState, condTokens: cTok, condVec: cVec,
+                    timestep: t0, guidance: guidance, bboxGrid: bGrid,
+                    dualRefKV: dualKV, singleRefKV: singleKV
+                )
+            )
+            guard let uTok, let uVec, guidance > 1.0 else { return vPos }
+            let vNeg = module.predictVelocity(
+                FluxForwardInput(
+                    latent: curState, condTokens: uTok, condVec: uVec,
+                    timestep: t0, guidance: 1.0, bboxGrid: nil,
+                    dualRefKV: dualKV, singleRefKV: singleKV
+                )
+            )
+            return vNeg + guidance * (vPos - vNeg)
+        }
+    }
+
+    private func resolveStepRefKV(
+        module: FluxKleinDiTModule,
+        session: ActiveSession
+    ) -> ([CachedReferenceLayerKV], [CachedReferenceLayerKV]) {
+        guard let rawRef = session.uncachedRefTokens else {
+            return (session.dualRefKV, session.singleRefKV)
+        }
+        let (midRef, dualKV) = ReferenceKVProjector.projectDualBlocks(
+            refTokens: rawRef,
+            blocks: module.dualBlocks,
+            headDim: config.headDim
+        )
+        let singleKV = ReferenceKVProjector.projectSingleBlocks(
+            refTokens: midRef,
+            blocks: module.singleBlocks,
+            headDim: config.headDim
+        )
+        return (dualKV, singleKV)
     }
 
     func finalizeCandidateSession(_ sessionID: Int) async throws(BasaltError) -> CandidateOutcome {
@@ -452,119 +524,19 @@ extension FluxKleinSynthesizer {
             channels: channels,
             promptVector: session.promptVector
         )
-        return CandidateOutcome(
+        var outcome = CandidateOutcome(
             encoded: encoded,
             seed: session.seed,
             stepsExecuted: session.teaCache.executedSteps,
             teacacheSkippedSteps: session.teaCache.skippedSteps,
             alignmentScore: score
         )
+        outcome.dimensions = dims
+        outcome.referenceKVReused = session.referenceKVReused
+        return outcome
     }
 
     func releaseCandidateSession(_ sessionID: Int) async {
         sessions.removeValue(forKey: sessionID)
-    }
-}
-
-extension FluxKleinSynthesizer {
-    package func debugVelocityParity(seed: UInt64 = 42) throws(BasaltError) -> (mlxVelocity: [Float], referenceVelocity: [Float]) {
-        guard let module else { throw .modelNotLoaded }
-        let latent = MLXRandom.normal([1, 8, 8, config.latentChannels], dtype: .float32, key: MLXRandom.key(seed))
-        let pVec = FourierTextEmbedder.embed("FLUX parity verification fixture", dimension: config.textEmbedDim)
-        let (condTokens, condVec) = module.textEncoder.encode(
-            TextConditioningInput(prompt: "FLUX parity verification fixture", sharedVector: pVec)
-        )
-        let input = FluxForwardInput(
-            latent: latent,
-            condTokens: condTokens,
-            condVec: condVec,
-            timestep: 0.35,
-            guidance: 3.5,
-            bboxGrid: nil
-        )
-        let fastVel = module.predictVelocity(input)
-        let refVel = Self.referenceExplicitVelocity(module: module, input: input)
-        eval(fastVel, refVel)
-        return (
-            fastVel.asType(.float32).reshaped(-1).asArray(Float.self),
-            refVel.asType(.float32).reshaped(-1).asArray(Float.self)
-        )
-    }
-
-    private static func referenceExplicitVelocity(
-        module: FluxKleinDiTModule,
-        input: FluxForwardInput
-    ) -> MLXArray {
-        let cfg = module.config
-        let patched = module.patchIn(input.latent)
-        let tokH = patched.dim(1)
-        let tokW = patched.dim(2)
-        var img = patched.reshaped(1, tokH * tokW, cfg.hiddenSize)
-        var txt = input.condTokens
-        let rope = RoPE2D.frequencies(gridH: tokH, gridW: tokW, headDim: cfg.headDim)
-        let stepCtx = DiTStepContext(condVec: input.condVec, rope: rope, timestep: input.timestep, guidance: input.guidance)
-        for block in module.dualBlocks {
-            (img, txt) = explicitDualBlock(block, img: img, txt: txt, stepCtx: stepCtx)
-        }
-        for block in module.singleBlocks {
-            (txt, img) = explicitSingleBlock(block, cond: txt, img: img, stepCtx: stepCtx)
-        }
-        var normedOut = module.finalNorm(img)
-        if let bbox = input.bboxGrid {
-            normedOut = normedOut + 0.65 * bbox.bias
-        }
-        return module.unpatchify(module.velocityHead(normedOut), tokH: tokH, tokW: tokW)
-    }
-
-    private static func explicitDualBlock(
-        _ block: JointDiTBlock,
-        img: MLXArray,
-        txt: MLXArray,
-        stepCtx: DiTStepContext
-    ) -> (MLXArray, MLXArray) {
-        let gI = block.imgAdaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
-        let gT = block.txtAdaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
-        let mImg = block.imgNorm1(img) * (1.0 + gI.scaleMSA) + gI.shiftMSA
-        let mTxt = block.txtNorm1(txt) * (1.0 + gT.scaleMSA) + gT.shiftMSA
-        let nImg = mImg.dim(1)
-        let nTxt = mTxt.dim(1)
-        let headDim = block.dimensions / block.heads
-        let iP = block.imgQKV(mImg).reshaped(1, nImg, 3, block.heads, headDim).transposed(2, 0, 3, 1, 4)
-        let tP = block.txtQKV(mTxt).reshaped(1, nTxt, 3, block.heads, headDim).transposed(2, 0, 3, 1, 4)
-        let q = concatenated([tP[0], RoPE2D.apply(iP[0], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)], axis: 2)
-        let k = concatenated([tP[1], RoPE2D.apply(iP[1], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)], axis: 2)
-        let v = concatenated([tP[2], iP[2]], axis: 2)
-        let weights = softmax(matmul(q, k.transposed(0, 1, 3, 2)) * block.scale, axis: -1)
-        let attn = matmul(weights, v).transposed(0, 2, 1, 3).reshaped(1, nTxt + nImg, block.dimensions)
-        let hI = img + gI.gateMSA * block.imgOut(attn[0..., nTxt..., 0...])
-        let hT = txt + gT.gateMSA * block.txtOut(attn[0..., ..<nTxt, 0...])
-        let fI = block.imgNorm2(hI) * (1.0 + gI.scaleMLP) + gI.shiftMLP
-        let fT = block.txtNorm2(hT) * (1.0 + gT.scaleMLP) + gT.shiftMLP
-        return (
-            hI + gI.gateMLP * block.imgMLP2(geluApproximate(block.imgMLP1(fI))),
-            hT + gT.gateMLP * block.txtMLP2(geluApproximate(block.txtMLP1(fT)))
-        )
-    }
-
-    private static func explicitSingleBlock(
-        _ block: SingleStreamS3DiTBlock,
-        cond: MLXArray,
-        img: MLXArray,
-        stepCtx: DiTStepContext
-    ) -> (MLXArray, MLXArray) {
-        let nC = cond.dim(1)
-        let nI = img.dim(1)
-        let unified = concatenated([cond, img], axis: 1)
-        let gates = block.adaLN.gates(timestep: stepCtx.timestep, guidance: stepCtx.guidance, condVec: stepCtx.condVec)
-        let mod = block.norm(unified) * (1.0 + gates.scaleMSA) + gates.shiftMSA
-        let headDim = block.dimensions / block.heads
-        let p = block.qkv(mod).reshaped(1, nC + nI, 3, block.heads, headDim).transposed(2, 0, 3, 1, 4)
-        let q = concatenated([p[0][0..., 0..., ..<nC, 0...], RoPE2D.apply(p[0][0..., 0..., nC..., 0...], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)], axis: 2)
-        let k = concatenated([p[1][0..., 0..., ..<nC, 0...], RoPE2D.apply(p[1][0..., 0..., nC..., 0...], cos: stepCtx.ropeCos, sin: stepCtx.ropeSin)], axis: 2)
-        let weights = softmax(matmul(q, k.transposed(0, 1, 3, 2)) * block.scale, axis: -1)
-        let attn = matmul(weights, p[2]).transposed(0, 2, 1, 3).reshaped(1, nC + nI, block.dimensions)
-        let swiglu = MLXNN.silu(block.mlpGate(mod)) * block.mlpUp(mod)
-        let out = unified + gates.gateMSA * block.fusedOut(concatenated([attn, swiglu], axis: -1))
-        return (out[0..., ..<nC, 0...], out[0..., nC..., 0...])
     }
 }

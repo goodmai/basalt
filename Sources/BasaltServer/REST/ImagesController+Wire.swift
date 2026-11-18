@@ -23,6 +23,8 @@ extension ImagesController {
         let seed: UInt64
         let steps: Int
         let teacacheSkipped: Int
+        let referenceKVReused: Bool
+        let upscaledBy: Int
         let model: String
         let licenseTier: String
         let elapsedMs: Int
@@ -43,6 +45,8 @@ extension ImagesController {
             self.seed = artifact.seed
             self.steps = artifact.stepsExecuted
             self.teacacheSkipped = artifact.teacacheSkippedSteps
+            self.referenceKVReused = artifact.referenceKVReused
+            self.upscaledBy = artifact.upscaledBy
             self.model = artifact.model
             self.licenseTier = artifact.licenseTier.rawValue
             self.elapsedMs = elapsedMs
@@ -55,6 +59,8 @@ extension ImagesController {
             case revisedPrompt = "revised_prompt"
             case hasAlpha = "has_alpha"
             case teacacheSkipped = "teacache_skipped"
+            case referenceKVReused = "reference_kv_reused"
+            case upscaledBy = "upscaled_by"
             case licenseTier = "license_tier"
             case elapsedMs = "elapsed_ms"
         }
@@ -99,6 +105,8 @@ extension ImagesController {
         let seed: UInt64
         let steps: Int
         let teacacheSkipped: Int
+        let referenceKVReused: Bool
+        let upscaledBy: Int
         let model: String
         let licenseTier: String
         let elapsedMs: Int
@@ -120,6 +128,8 @@ extension ImagesController {
             self.seed = artifact.seed
             self.steps = artifact.stepsExecuted
             self.teacacheSkipped = artifact.teacacheSkippedSteps
+            self.referenceKVReused = artifact.referenceKVReused
+            self.upscaledBy = artifact.upscaledBy
             self.model = artifact.model
             self.licenseTier = artifact.licenseTier.rawValue
             self.elapsedMs = elapsedMs
@@ -132,6 +142,8 @@ extension ImagesController {
             case revisedPrompt = "revised_prompt"
             case hasAlpha = "has_alpha"
             case teacacheSkipped = "teacache_skipped"
+            case referenceKVReused = "reference_kv_reused"
+            case upscaledBy = "upscaled_by"
             case licenseTier = "license_tier"
             case elapsedMs = "elapsed_ms"
         }
@@ -165,6 +177,8 @@ struct WireImageRequest: Decodable {
     var mask: String?
     var audio: String?
     var audioStrength: Double?
+    var reuseReferenceKV: Bool?
+    var upscaleFactor: Int?
 
     enum CodingKeys: String, CodingKey {
         case model, prompt, size, width, height, steps, format, stream, seed
@@ -179,6 +193,8 @@ struct WireImageRequest: Decodable {
         case vglSceneJSON = "vgl_scene_json"
         case referenceImages = "reference_images"
         case audioStrength = "audio_strength"
+        case reuseReferenceKV = "reuse_reference_kv"
+        case upscaleFactor = "upscale_factor"
     }
 }
 
@@ -231,6 +247,8 @@ extension WireImageRequest {
             config.audioConditioning = try ImageArtifactStore.decodeBase64Payload(audio, field: "audio")
         }
         config.audioStrength = audioStrength
+        config.reuseReferenceKV = reuseReferenceKV ?? true
+        config.upscaleFactor = upscaleFactor
         var request = try ImageGenerationRequest(
             model: (model?.isEmpty == false ? model : nil) ?? defaultModel,
             prompt: prompt ?? "",

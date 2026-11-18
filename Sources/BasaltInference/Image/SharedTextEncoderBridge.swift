@@ -40,6 +40,47 @@ extension MLXInferenceEngine {
         }
         return FourierTextEmbedder.projectAndNormalize(rawFeatures, to: targetDim, salt: prompt.count)
     }
+
+    public func encodeTokenSequenceForImage(
+        _ prompt: String,
+        maxTokens: Int = 16,
+        dimension: Int = 64
+    ) async throws -> [Float] {
+        let count = max(1, maxTokens)
+        let targetDim = max(16, dimension)
+        try Task.checkCancellation()
+        guard let container else {
+            return FourierTextEmbedder.embedTokenSequence(prompt, maxTokens: count, dimension: targetDim)
+        }
+        let rawSeq: [[Float]]? = await container.performEvaluating(nonSendable: ()) { context, _ in
+            let tokenIds = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
+            guard !tokenIds.isEmpty else { return nil }
+            let leaves = context.model.leafModules().flattened()
+            let preferred = leaves.first { path, mod in
+                mod is Embedding && (path.contains("embed") || path.contains("tok") || path.contains("wte"))
+            }
+            let fallback = leaves.first { _, mod in mod is Embedding }
+            guard let chosen = (preferred ?? fallback)?.1 as? Embedding else { return nil }
+            let vocab = chosen.weight.dim(0)
+            guard vocab > 0 else { return nil }
+            var padded: [Int32] = []
+            padded.reserveCapacity(count)
+            let valid = tokenIds.compactMap { (0 ..< vocab).contains($0) ? Int32($0) : nil }
+            guard !valid.isEmpty else { return nil }
+            for slot in 0 ..< count {
+                padded.append(valid[slot % valid.count])
+            }
+            let hidden = chosen(MLXArray(padded)).asType(.float32)
+            eval(hidden)
+            return (0 ..< count).map { idx in hidden[idx].asArray(Float.self) }
+        }
+        guard let rawSeq, rawSeq.count == count else {
+            return FourierTextEmbedder.embedTokenSequence(prompt, maxTokens: count, dimension: targetDim)
+        }
+        return rawSeq.enumerated().flatMap { slot, vec in
+            FourierTextEmbedder.projectAndNormalize(vec, to: targetDim, salt: slot + 1)
+        }
+    }
 }
 
 package enum FourierTextEmbedder {
