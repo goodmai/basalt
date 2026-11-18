@@ -5,7 +5,7 @@ import BasaltCore
 
 enum SmallMQuantizedMatmul {
     static let environmentKey = "BASALT_SMALLM_KERNEL"
-    static let rows = 4 ... 8
+    static let rows = 2 ... 16
     static let groupSizes: Set<Int> = [32, 64, 128]
     static let chunk = 64
     static let splitK = 4
@@ -30,13 +30,14 @@ enum SmallMQuantizedMatmul {
     static func matmul(_ x: MLXArray, weight: MLXArray, scales: MLXArray, biases: MLXArray, groupSize: Int) -> MLXArray {
         let inputs = x.dim(-1)
         let outputs = weight.dim(0)
-        let rows = x.size / inputs
+        let rowCount = x.size / inputs
+        let mTiles = (rowCount + 7) / 8
         let result = kernel(
-            [x.reshaped(rows, inputs), weight, scales, biases],
-            template: [("T", x.dtype), ("M", rows), ("G", groupSize), ("S", splitK), ("NT", tilesPerSimdgroup)],
+            [x.reshaped(rowCount, inputs), weight, scales, biases],
+            template: [("T", x.dtype), ("M", rowCount), ("MT", mTiles), ("G", groupSize), ("S", splitK), ("NT", tilesPerSimdgroup)],
             grid: (32, splitK * outputs / (8 * tilesPerSimdgroup), 1),
             threadGroup: (32, splitK, 1),
-            outputShapes: [[rows, outputs]],
+            outputShapes: [[rowCount, outputs]],
             outputDTypes: [x.dtype])[0]
         return result.reshaped(Array(x.shape.dropLast()) + [outputs])
     }
@@ -54,18 +55,23 @@ enum SmallMQuantizedMatmul {
         const int sm = (qid & 4) + (lane / 2) % 4;
         const int sn = (qid & 2) * 2 + (lane % 2) * 2;
         const device uint8_t* wb = (const device uint8_t*)w;
-        simdgroup_float8x8 acc[NT];
-        for (int j = 0; j < NT; j++) {
-            acc[j] = simdgroup_float8x8(0.0f);
+        simdgroup_float8x8 acc[MT][NT];
+        for (int mt = 0; mt < MT; mt++) {
+            for (int j = 0; j < NT; j++) {
+                acc[mt][j] = simdgroup_float8x8(0.0f);
+            }
         }
         for (int c = sg * CH; c < K; c += S * CH) {
             const int kx = c + 16 * (sm / 2) + (sm % 2);
             const int kw = c + 16 * (sn / 2);
-            float xa[8];
-            float xb[8];
-            for (int t = 0; t < 8; t++) {
-                xa[t] = sn < M ? float(x[sn * K + kx + 2 * t]) : 0.0f;
-                xb[t] = sn + 1 < M ? float(x[(sn + 1) * K + kx + 2 * t]) : 0.0f;
+            float xa[MT][8];
+            float xb[MT][8];
+            for (int mt = 0; mt < MT; mt++) {
+                const int r0 = mt * 8 + sn;
+                for (int t = 0; t < 8; t++) {
+                    xa[mt][t] = r0 < M ? float(x[r0 * K + kx + 2 * t]) : 0.0f;
+                    xb[mt][t] = (r0 + 1) < M ? float(x[(r0 + 1) * K + kx + 2 * t]) : 0.0f;
+                }
             }
             for (int j = 0; j < NT; j++) {
                 const int n = n0 + 8 * j + sm;
@@ -78,28 +84,36 @@ enum SmallMQuantizedMatmul {
                     simdgroup_float8x8 wt;
                     wt.thread_elements()[0] = s * float((word >> shift) & 15u) + b;
                     wt.thread_elements()[1] = s * float((word >> (shift + 4u)) & 15u) + b;
-                    simdgroup_float8x8 xt;
-                    xt.thread_elements()[0] = xa[t];
-                    xt.thread_elements()[1] = xb[t];
-                    simdgroup_multiply_accumulate(acc[j], wt, xt, acc[j]);
+                    for (int mt = 0; mt < MT; mt++) {
+                        simdgroup_float8x8 xt;
+                        xt.thread_elements()[0] = xa[mt][t];
+                        xt.thread_elements()[1] = xb[mt][t];
+                        simdgroup_multiply_accumulate(acc[mt][j], wt, xt, acc[mt][j]);
+                    }
                 }
             }
         }
-        threadgroup float partial[S * NT * 64];
-        for (int j = 0; j < NT; j++) {
-            partial[(sg * NT + j) * 64 + sm * 8 + sn] = acc[j].thread_elements()[0];
-            partial[(sg * NT + j) * 64 + sm * 8 + sn + 1] = acc[j].thread_elements()[1];
+        threadgroup float partial[S * MT * NT * 64];
+        for (int mt = 0; mt < MT; mt++) {
+            for (int j = 0; j < NT; j++) {
+                const int base = ((sg * MT + mt) * NT + j) * 64 + sm * 8 + sn;
+                partial[base] = acc[mt][j].thread_elements()[0];
+                partial[base + 1] = acc[mt][j].thread_elements()[1];
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (sg == 0) {
-            for (int j = 0; j < NT; j++) {
-                for (int e = 0; e < 2; e++) {
-                    float v = 0.0f;
-                    for (int p = 0; p < S; p++) {
-                        v += partial[(p * NT + j) * 64 + sm * 8 + sn + e];
-                    }
-                    if (sn + e < M) {
-                        out[(sn + e) * N + n0 + 8 * j + sm] = static_cast<T>(v);
+            for (int mt = 0; mt < MT; mt++) {
+                for (int j = 0; j < NT; j++) {
+                    for (int e = 0; e < 2; e++) {
+                        float v = 0.0f;
+                        for (int p = 0; p < S; p++) {
+                            v += partial[((p * MT + mt) * NT + j) * 64 + sm * 8 + sn + e];
+                        }
+                        const int row = mt * 8 + sn + e;
+                        if (row < M) {
+                            out[row * N + n0 + 8 * j + sm] = static_cast<T>(v);
+                        }
                     }
                 }
             }
@@ -130,7 +144,7 @@ final class SmallMQuantizedLinear: QuantizedLinear {
 
     static func installIfEnabled(in model: Module, enabled: Bool = false) {
         guard enabled || SmallMQuantizedMatmul.enabled else { return }
-        logger.info("Experimental small-M kernel (#208): \(install(in: model)) 4-bit affine linear layers run 4-8 rows through it, the rest stay on stock quantizedMatmul")
+        logger.info("Experimental small-M kernel (#208): \(install(in: model)) 4-bit affine linear layers run 2-16 rows through it, the rest stay on stock quantizedMatmul")
     }
 
     @discardableResult
