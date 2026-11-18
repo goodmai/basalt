@@ -79,6 +79,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             OCRCommand.self,
             SessionsCommand.self,
             CloudCommand.self,
+            ClusterCommand.self,
             HarnessCommand.self,
             BenchCommand.self,
             ReviewCommand.self,

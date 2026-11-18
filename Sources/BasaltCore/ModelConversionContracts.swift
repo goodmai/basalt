@@ -14,6 +14,7 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
     public var pvPreset: PVTunePreset = .balanced
     public var pvTeacher: String? = nil
     public var calibrationText: String? = nil
+    public var clusterPeers: [String] = []
     public var stream: Bool = true
 
     public init(
@@ -43,6 +44,7 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
         case pvPreset = "pv_preset"
         case pvTeacher = "pv_teacher"
         case calibrationText = "calibration_text"
+        case clusterPeers = "cluster_peers"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -60,6 +62,7 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
         pvPreset = try c.decodeIfPresent(PVTunePreset.self, forKey: .pvPreset) ?? .balanced
         pvTeacher = try c.decodeIfPresent(String.self, forKey: .pvTeacher)
         calibrationText = try c.decodeIfPresent(String.self, forKey: .calibrationText)
+        clusterPeers = try c.decodeIfPresent([String].self, forKey: .clusterPeers) ?? []
         stream = try c.decodeIfPresent(Bool.self, forKey: .stream) ?? true
     }
 }

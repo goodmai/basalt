@@ -6,6 +6,19 @@ import Foundation
 extension ConvertSubcommand {
     var usesPVTune: Bool { pvTune || experimentalPvTune }
 
+    func resolvedClusterPeers() throws -> [String] {
+        guard !clusterPeers.isEmpty else { return [] }
+        do {
+            return try ClusterPeerEndpoint.parseList(clusterPeers).map(\.urlString)
+        } catch {
+            throw ValidationError(error.localizedDescription)
+        }
+    }
+
+    func validateClusterPeers() throws {
+        _ = try resolvedClusterPeers()
+    }
+
     func validateDestinationOptions() throws {
         if out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, registerCache == nil {
             throw ValidationError("specify --out <directory> or --register-cache <org/repo>")
@@ -64,6 +77,7 @@ extension ConvertSubcommand {
         req.pvPreset = pvPreset
         req.pvTeacher = pvTeacher
         req.calibrationText = calText
+        req.clusterPeers = (try? resolvedClusterPeers()) ?? []
         return req
     }
 
