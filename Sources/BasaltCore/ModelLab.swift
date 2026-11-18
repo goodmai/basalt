@@ -298,6 +298,8 @@ public struct TrainRequest: Sendable, Codable, Equatable {
     public var method: AdapterMethod?
     public var iterations = 200
     public var learningRate: Float = 1e-5
+    public var adpo: ADPOConfig?
+    public var emaDecay: Float?
     public var gate: GateRequest
     public var output: String?
 
@@ -315,6 +317,15 @@ public struct TrainReport: Sendable, Codable {
     public var losses: [Float]
     public var accuracyBefore: Float
     public var accuracyAfter: Float
+    public var preferenceMarginBefore: Float?
+    public var preferenceMarginAfter: Float?
+    public var entropyBefore: Float?
+    public var entropyAfter: Float?
+    public var sharpeningTax: Float?
+    public var passAtKDiversity: Float?
+    public var sharpeningGuardTriggered: Bool?
+    public var earlyStoppedStep: Int?
+    public var emaApplied: Bool?
     public var adapterDirectory: String?
     public var verdict: AdapterVerdict
 

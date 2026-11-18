@@ -9,6 +9,7 @@ import BasaltCore
 struct TrainingRun: Sendable {
     var losses: [Float]
     var accuracyAfter: Float
+    var emaApplied: Bool?
 }
 
 extension MLXInferenceEngine {
@@ -20,6 +21,7 @@ extension MLXInferenceEngine {
     public func train(_ request: TrainRequest) async throws(BasaltError) -> TrainReport {
         guard let container else { throw .modelNotLoaded }
         try Self.validate(request)
+        if let adpo = request.adpo { return try await trainADPO(request, adpo: adpo, container: container) }
         let tasks = try TrainingTask.load(request.tasks)
         let heldOut = Array(tasks.suffix(max(1, tasks.count / 5)))
         let practice = Array(tasks.dropLast(heldOut.count))
@@ -48,6 +50,7 @@ extension MLXInferenceEngine {
         guard self.container === container else { throw .inferenceError("the model changed during training; the adapter in \(directory.path) was not applied") }
         report.losses = run.losses
         report.accuracyAfter = run.accuracyAfter
+        report.emaApplied = run.emaApplied
         report.adapterDirectory = directory.path
         do {
             report.verdict = try await applyAdapter(.directory(directory.path), gate: request.gate)
@@ -69,6 +72,10 @@ extension MLXInferenceEngine {
         }
         guard trainingIterations.contains(request.iterations) else { throw refused("iterations must be in \(trainingIterations)") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
+        if let adpo = request.adpo { try adpo.validate(prefix: "train") }
+        if let ema = request.emaDecay {
+            guard ema.isFinite, ema > 0, ema < 1 else { throw refused("emaDecay must lie in (0, 1)") }
+        }
     }
 
     func adapterDirectory(_ output: String?) throws(BasaltError) -> URL {
@@ -136,18 +143,27 @@ extension MLXInferenceEngine {
         let texts = try pairs.map { try trainingText($0, context) }
         let parameters = LoRATrain.Parameters(
             batchSize: min(4, texts.count), iterations: request.iterations, stepsPerReport: 1, stepsPerEval: Int.max, validationBatches: 1)
+        var ema = request.emaDecay.map { EMAWeightShadow(decay: $0, model: context.model) }
         var losses: [Float] = []
         try LoRATrain.train(
             model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: Adam(learningRate: request.learningRate),
             loss: { _, inputs, targets, lengths in labLoss(context.model, inputs, targets, lengths) }, tokenizer: context.tokenizer, parameters: parameters
         ) { progress in
-            if case .train(_, let loss, _, _) = progress { losses.append(loss) }
+            if case .train(_, let loss, _, _) = progress {
+                losses.append(loss)
+                ema?.update(from: context.model)
+            }
             return Task.isCancelled ? .stop : .more
         }
         try Task.checkCancellation()
+        var emaApplied: Bool?
+        if let ema, ema.updates > 0 {
+            ema.apply(to: context.model)
+            emaApplied = true
+        }
         try saveConfiguredAdapter(configuration, model: context.model, to: directory)
         let after = accuracy(heldOut, try heldOut.map { try labAnswer($0.prompt, context) })
-        return TrainingRun(losses: reported(losses), accuracyAfter: after)
+        return TrainingRun(losses: reported(losses), accuracyAfter: after, emaApplied: emaApplied)
     }
 
     static func loraBlocks(of model: Module) -> [Module] {
@@ -248,5 +264,191 @@ extension MLXInferenceEngine {
             let chunk = losses[start ..< min(start + size, losses.count)]
             return chunk.reduce(0, +) / Float(chunk.count)
         }
+    }
+}
+
+extension MLXInferenceEngine {
+    func trainADPO(
+        _ request: TrainRequest,
+        adpo: ADPOConfig,
+        container: ModelContainer
+    ) async throws(BasaltError) -> TrainReport {
+        let epoch = modelEpoch
+        let tasks = try TrainingTask.load(request.tasks)
+        let heldOut = Array(tasks.suffix(max(1, tasks.count / 5)))
+        let practice = Array(tasks.dropLast(heldOut.count))
+        let directory = try adapterDirectory(request.output)
+        var teacher: TeacherClient?
+        if let url = request.teacher { teacher = try TeacherClient(url, model: request.teacherModel) }
+        let generations = try await Self.labRun(container) { context in
+            let greedyAnswers = try tasks.map { try Self.labAnswer($0.prompt, context) }
+            let sampledAnswers = try zip(practice, greedyAnswers).enumerated().map { index, item -> String? in
+                guard item.0.accepts(item.1) else { return nil }
+                return try Self.labSampledAnswer(item.0.prompt, seed: UInt64(0xAD90_0000 + index), context)
+            }
+            return (greedyAnswers, sampledAnswers)
+        }
+        let before = Self.accuracy(heldOut, Array(generations.0.suffix(heldOut.count)))
+        let collected = try await Self.collectADPOPairs(
+            practice: practice,
+            own: Array(generations.0.prefix(practice.count)),
+            sampled: generations.1,
+            teacher: teacher,
+            adpo: adpo
+        )
+        var report = TrainReport(
+            collected: collected.collected,
+            verified: collected.pairs.count,
+            losses: [],
+            accuracyBefore: before,
+            accuracyAfter: before,
+            verdict: AdapterVerdict(overlay: nil, report: nil)
+        )
+        guard !collected.pairs.isEmpty else { return report }
+        guard self.container === container, modelEpoch == epoch else {
+            throw .inferenceError("the model changed while preference pairs were collected; nothing was trained")
+        }
+        let pairs = collected.pairs
+        let session = try await Self.labRun(container) { context in
+            try Self.runADPOSession(pairs, heldOut: heldOut, request: request, adpo: adpo, directory: directory, context: context)
+        }
+        guard self.container === container, modelEpoch == epoch else {
+            throw .inferenceError("the model changed during training; the adapter in \(directory.path) was not applied")
+        }
+        Self.populateADPOReport(&report, outcome: session.0, accuracyAfter: session.1, directory: directory)
+        do {
+            report.verdict = try await applyAdapter(.directory(directory.path), gate: request.gate)
+        } catch {
+            throw .inferenceError("the adapter was trained and saved in \(directory.path) but not applied: \(Self.briefly(error))")
+        }
+        return report
+    }
+
+    static func labSampledAnswer(_ prompt: String, seed: UInt64, _ context: ModelContext) throws -> String {
+        try Task.checkCancellation()
+        let stops = stopTokenIds(context)
+        let promptIds = try labPrompt(prompt, context)
+        let tokens = try withRandomState(MLXRandom.RandomState(seed: seed)) {
+            let params = GenerateParameters(maxTokens: answerTokens, temperature: 0.9)
+            var iterator = try TokenIterator(
+                input: LMInput(tokens: MLXArray(promptIds.map(Int32.init))),
+                model: context.model,
+                parameters: params
+            )
+            var out: [Int] = []
+            while let token = iterator.next() {
+                if stops.contains(token) { break }
+                out.append(token)
+            }
+            return out
+        }
+        return context.tokenizer.decode(tokenIds: tokens, skipSpecialTokens: true)
+    }
+
+    private static func populateADPOReport(
+        _ report: inout TrainReport,
+        outcome: ADPOTrainOutcome,
+        accuracyAfter: Float,
+        directory: URL
+    ) {
+        report.losses = reported(outcome.losses)
+        report.accuracyAfter = accuracyAfter
+        report.preferenceMarginBefore = outcome.marginBefore
+        report.preferenceMarginAfter = outcome.marginAfter
+        report.entropyBefore = outcome.entropyBefore
+        report.entropyAfter = outcome.entropyAfter
+        report.sharpeningTax = outcome.sharpeningTax
+        report.passAtKDiversity = outcome.passAtKDiversity
+        report.sharpeningGuardTriggered = outcome.sharpeningGuardTriggered
+        report.earlyStoppedStep = outcome.earlyStoppedStep
+        report.emaApplied = outcome.emaApplied
+        report.adapterDirectory = directory.path
+    }
+}
+
+extension MLXInferenceEngine {
+    static func collectADPOPairs(
+        practice: [TrainingTask],
+        own: [String],
+        sampled: [String?],
+        teacher: TeacherClient?,
+        adpo: ADPOConfig
+    ) async throws(BasaltError) -> (pairs: [ADPOPair], collected: Int) {
+        var pairs = adpo.pairs
+        var count = practice.count + adpo.pairs.count
+        for (index, (task, ownAnswer)) in zip(practice, own).enumerated() {
+            if task.accepts(ownAnswer) {
+                if let alt = sampled[index], !alt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !task.accepts(alt), alt != ownAnswer {
+                    count += 1
+                    pairs.append(ADPOPair(prompt: task.prompt, chosen: ownAnswer, rejected: alt))
+                }
+                continue
+            }
+            var chosen: String?
+            if let teacher {
+                let candidate = try await teacher.answer(task.prompt)
+                count += 1
+                if task.accepts(candidate) { chosen = candidate }
+            }
+            if chosen == nil, adpo.useGroundTruthChosen {
+                chosen = task.answer
+            }
+            let rejected = ownAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let chosen, !rejected.isEmpty, chosen != ownAnswer {
+                pairs.append(ADPOPair(prompt: task.prompt, chosen: chosen, rejected: ownAnswer))
+            }
+        }
+        return (pairs, count)
+    }
+
+    static func runADPOSession(
+        _ pairs: [ADPOPair],
+        heldOut: [TrainingTask],
+        request: TrainRequest,
+        adpo: ADPOConfig,
+        directory: URL,
+        context: ModelContext
+    ) throws -> (ADPOTrainOutcome, Float) {
+        let tokenized = try tokenizeADPOPairs(pairs, context: context)
+        guard !tokenized.isEmpty else {
+            throw BasaltError.invalidRequestStructure(details: "train: no valid tokenized preference pairs after vocabulary filtering")
+        }
+        let method = configuredMethod(explicit: request.method, fallbackRank: request.rank)
+        let configuration = try attachConfiguredAdapter(to: context.model, layers: request.layers, method: method)
+        defer { _ = PHMAdapterApplicator.revert(in: context.model) }
+        let options = ADPOOptimizeOptions(
+            iterations: request.iterations,
+            learningRate: request.learningRate,
+            batchSize: min(4, tokenized.count),
+            emaDecay: request.emaDecay ?? adpo.emaDecay
+        )
+        let outcome = try ADPOTrainer.optimize(
+            model: context.model,
+            pairs: tokenized,
+            config: adpo,
+            options: options,
+            stops: stopTokenIds(context)
+        )
+        try Task.checkCancellation()
+        try saveConfiguredAdapter(configuration, model: context.model, to: directory)
+        let after = accuracy(heldOut, try heldOut.map { try labAnswer($0.prompt, context) })
+        return (outcome, after)
+    }
+
+    static func tokenizeADPOPairs(_ pairs: [ADPOPair], context: ModelContext) throws -> [TokenizedPreferencePair] {
+        let vocab = vocabularySize(context.model)
+        let eos = context.tokenizer.eosTokenId.map { [$0] } ?? []
+        func valid(_ ids: [Int]) -> Bool { !ids.isEmpty && ids.allSatisfy { $0 >= 0 && $0 < vocab } }
+        var tokenized: [TokenizedPreferencePair] = []
+        for pair in pairs {
+            let promptIds = try labPrompt(pair.prompt, context)
+            let chosenIds = context.tokenizer.encode(text: pair.chosen, addSpecialTokens: false) + eos
+            let rejectedIds = context.tokenizer.encode(text: pair.rejected, addSpecialTokens: false) + eos
+            if valid(promptIds), valid(chosenIds), valid(rejectedIds), chosenIds != rejectedIds {
+                tokenized.append(TokenizedPreferencePair(promptIds: promptIds, chosenIds: chosenIds, rejectedIds: rejectedIds))
+            }
+        }
+        return tokenized
     }
 }
