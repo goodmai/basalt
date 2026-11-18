@@ -62,14 +62,20 @@ struct AnatomyScan: Sendable {
         var groupSizes: [String: Int] = [:]
         var heads: [Int: Heads] = [:]
         for (path, module) in model.namedModules() {
-            if let quantized = module as? any Quantized { groupSizes[path] = quantized.groupSize }
+            if let quantized = module as? any Quantized {
+                groupSizes[path] = quantized.groupSize
+            } else if let nf4 = module as? NF4Linear {
+                groupSizes[path] = nf4.groupSize
+            } else if let nf4Switch = module as? NF4SwitchLinear {
+                groupSizes[path] = nf4Switch.groupSize
+            }
             if let index = Self.layerIndex(path) {
                 let name = String(describing: type(of: module)).lowercased()
                 modules[index, default: ""] += name + " "
                 if name.contains("attention"), heads[index] == nil { heads[index] = Self.reflectedHeads(module) }
             }
             if hiddenSize == nil, let embedding = module as? Embedding, path.hasSuffix("embed_tokens") {
-                hiddenSize = embedding.weight.dim(-1) * ((embedding as? QuantizedEmbedding).map { 32 / $0.bits } ?? 1)
+                hiddenSize = (embedding as? QuantizedEmbedding).map { (embedding.weight.dim(-1) * 32) / $0.bits } ?? embedding.weight.dim(-1)
             }
         }
         var experts: [Int: Int] = [:]

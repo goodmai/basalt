@@ -88,7 +88,7 @@ extension WeightConverter {
                 guard let tensor = arrays.removeValue(forKey: key) else { continue }
                 let packed = try layout.packed(key, taking: &arrays)
                 guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, groupSize: mixed.groupSize) else {
-                    fixedBytes += packed.map { $0.scales.size * $0.quantization.groupSize * $0.scales.dtype.size } ?? tensor.nbytes
+                    fixedBytes += tensor.nbytes + (packed?.scales.nbytes ?? 0) + (packed?.biases?.nbytes ?? 0)
                     continue
                 }
                 let weight = Self.dense(tensor, packed)

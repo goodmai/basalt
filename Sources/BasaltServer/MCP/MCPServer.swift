@@ -11,6 +11,7 @@ public final class MCPServer: Service, Sendable {
         var imageDirectories: [URL] = []
         var decisions: (any DecisionEngine)?
         var pipeline = PipelineStages()
+        var pipelines: PipelineRegistry?
         var imageSynthesizer: (any ImageSynthesizer)?
         var imageStoreDirectory: URL?
     }
@@ -29,6 +30,7 @@ public final class MCPServer: Service, Sendable {
     var imageDirectories: [URL] { options.imageDirectories }
     var decisions: (any DecisionEngine)? { options.decisions }
     var pipeline: PipelineStages { options.pipeline }
+    var pipelines: PipelineRegistry? { options.pipelines }
     var imageSynthesizer: (any ImageSynthesizer)? { options.imageSynthesizer }
     var imageStoreDirectory: URL? { options.imageStoreDirectory }
 
@@ -101,6 +103,12 @@ public final class MCPServer: Service, Sendable {
         return MCPServer(self, options: next)
     }
 
+    package func withPipelines(_ registry: PipelineRegistry?) -> MCPServer {
+        var next = options
+        next.pipelines = registry
+        return MCPServer(self, options: next)
+    }
+
     public func withDecisions(_ engine: (any DecisionEngine)?) -> MCPServer {
         var next = options
         next.decisions = GatedDecisionEngine.serving(engine, gate: orchestrator.gate)
@@ -164,6 +172,7 @@ extension MCPServer {
         switch MCPRoute(line: line) {
         case .failed(let id, let failure): writer(MCPWire.error(id: id, failure))
         case .ignored: break
+        case .ping(let id): writer(MCPWire.result(id: id, [String: String]()))
         case .initialize(let id): writer(MCPWire.result(id: id, MCPInitializeResult.current))
         case .toolsList(let id):
             let catalog = MCPToolCatalog.catalog(

@@ -29,6 +29,7 @@ public struct EngineConfiguration: Sendable {
     public var probesModel = false
     public var recordConfidence = false
     public var visionTowerBundle: String? = nil
+    public var smallMKernel = false
 }
 
 extension EngineConfiguration {

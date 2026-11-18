@@ -11,12 +11,23 @@ public struct VisionDocumentTranscriber: DocumentTranscriber {
               let page = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw .invalidRequestStructure(details: "the page image cannot be decoded")
         }
-        let regions = (try? await RecognizeDocumentsRequest().perform(on: page).flatMap { Self.regions(of: $0.document) }) ?? []
+        if Task.isCancelled { throw .cancelled }
+        let regions: [DocumentRegion]
+        do {
+            regions = try await RecognizeDocumentsRequest().perform(on: page).flatMap { Self.regions(of: $0.document) }
+        } catch is CancellationError {
+            throw .cancelled
+        } catch {
+            if Task.isCancelled { throw .cancelled }
+            regions = []
+        }
         guard regions.isEmpty else { return DocumentMarkdown(regions) }
         do {
             return DocumentMarkdown(try await Self.lineRegions(in: page))
+        } catch is CancellationError {
+            throw .cancelled
         } catch {
-            throw .inferenceError("Vision could not read the image: \(error.localizedDescription)")
+            throw Task.isCancelled ? .cancelled : .inferenceError("Vision could not read the image: \(error.localizedDescription)")
         }
     }
 

@@ -13,10 +13,11 @@ enum FreshCache: Equatable {
     static func plan(
         kvBitsSet: Bool, headMask: KVHeadMask?, questTopK: Int?, zones: KVZones?, precision: KVPrecision?
     ) -> FreshCache {
+        if let zones, zones.middleStaysFullPrecision, precision != nil { return .evicting(zones) }
         let zoning = zones.flatMap { zones in precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
         if let headMask, !kvBitsSet || zoning != nil { return .headSplit(headMask, zoning) }
         if !kvBitsSet, let questTopK { return .quest(topK: questTopK) }
-        if let zones, let precision { return zones.middleStaysFullPrecision ? .evicting(zones) : .zoned(zones, precision) }
+        if let zones, let precision { return .zoned(zones, precision) }
         return .stock
     }
 }

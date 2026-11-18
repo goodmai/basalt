@@ -128,7 +128,11 @@ extension MCPServer {
     }
 
     private func telemetryQuery(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        let requested = (args?["sections"] as? [String]) ?? TelemetryQuery.sections
+        let raw = MCPArguments.present("sections", in: args)
+        guard raw == nil || raw is [String] else {
+            throw .invalidParams("sections must be an array of strings")
+        }
+        let requested = (raw as? [String]) ?? TelemetryQuery.sections
         guard let sections = TelemetryQuery.validated(requested) else {
             throw .invalidParams("telemetry_query sections are \(TelemetryQuery.sections.joined(separator: ", "))")
         }

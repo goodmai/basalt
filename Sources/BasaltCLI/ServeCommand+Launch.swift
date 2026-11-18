@@ -88,6 +88,7 @@ extension ServeCommand {
         configuration.disableExpertStreaming = expertStreaming.disabled
         configuration.probesModel = modelProbe
         configuration.visionTowerBundle = experimental.aneVisionTower
+        configuration.smallMKernel = experimental.smallMKernel
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 

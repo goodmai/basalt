@@ -153,7 +153,6 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         let spec = try prepareCompose()
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
-        if experimental.smallMKernel { MLXInferenceEngine.enablesSmallMKernel() }
         await applyPipelinePreset()
         if dryRun { return await assessMemory() }
 
@@ -198,6 +197,7 @@ extension ServeCommand {
         resolvedPath: String,
         decisions: (any DecisionEngine)?,
         stages: PipelineStages,
+        pipelines: PipelineRegistry? = nil,
         imageSynthesizer: (any ImageSynthesizer)? = nil
     ) throws -> MCPServer {
         MCPServer(
@@ -210,6 +210,7 @@ extension ServeCommand {
         .withImageDirectories(imageDirs.map { URL(fileURLWithPath: $0) })
         .withDecisions(decisions)
         .withPipeline(stages)
+        .withPipelines(pipelines)
         .withImageSynthesizer(imageSynthesizer)
     }
 

@@ -40,12 +40,16 @@ actor ChatController {
     }
     
     func start() async {
-        // Start queue processor
-        Task {
+        defer {
+            await withTaskCancellationShield {
+                await terminal.disableRawMode()
+            }
+        }
+        let queueTask = Task {
             await processQueue()
         }
-        
-        // Setup initial model info
+        defer { queueTask.cancel() }
+
         let modelInfo = await orchestrator.modelInfo
         await terminal.updateInfo(model: modelInfo)
         
@@ -123,7 +127,7 @@ actor ChatController {
                             }
                             
                             switch chunk {
-                            case .toolCall:  // this path declares no tools, so a call has no client to go to
+                            case .toolCall:
                                 break
                             case .text(let t):
                                 reply += t

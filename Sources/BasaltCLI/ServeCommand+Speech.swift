@@ -91,6 +91,10 @@ extension ServeCommand {
         let host = try await spec.asyncMap {
             try await composeHost($0, start: start, engine: boot.engine, chatPath: boot.resolvedPath, memory: memory)
         }
+        if let spec, let host {
+            await host.probe(spec.models.keys.sorted(), in: spec)
+            for (name, failure) in await host.failures.sorted(by: { $0.key < $1.key }) { log("\(red("[error]")) \(name): \(failure)") }
+        }
         var activeSpeech = try await loadSpeechSynthesizer(gate: boot.orchestrator.gate, memory: memory)
         var activeImage = try await loadImageSynthesizer(gate: boot.orchestrator.gate)
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) {
@@ -98,15 +102,16 @@ extension ServeCommand {
             if activeSpeech == nil { activeSpeech = system.speech }
             if activeImage == nil { activeImage = system.image }
         }
-        let record = try spec.flatMap { host == nil ? nil : try ComposeRecord.write(name: $0.name, port: boot.port, file: pipeline.compose ?? "") }
+        let (startREST, startMCP) = (!mcp || rest, mcp)
+        let record = try spec.flatMap { (!startREST || host == nil) ? nil : try ComposeRecord.write(name: $0.name, port: boot.port, file: pipeline.compose ?? "") }
         defer { record.map(ComposeRecord.remove) }
         try await prepare(boot.orchestrator, virtualKeys: boot.config.virtualKeys, memory: memory)
 
-        let (startREST, startMCP) = (!mcp || rest, mcp)
         if startREST { log("REST → http://\(boot.config.host):\(boot.config.restPort)") }
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
         let mcpServer = startMCP ? try makeMCPServer(
-            orchestrator: boot.orchestrator, resolvedPath: boot.resolvedPath, decisions: decisions, stages: stages, imageSynthesizer: activeImage) : nil
+            orchestrator: boot.orchestrator, resolvedPath: boot.resolvedPath, decisions: decisions, stages: stages,
+            pipelines: host?.registry, imageSynthesizer: activeImage) : nil
 
         try await Self.runServers(
             ServerLaunch(

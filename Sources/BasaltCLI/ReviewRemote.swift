@@ -32,6 +32,12 @@ struct ReviewRemote: Sendable {
             throw Failure(description: "Instance URL must be https:// (http:// only for loopback): \(instance)")
         }
         guard number > 0, !repo.isEmpty else { throw Failure(description: "Need a repository and a positive MR/PR number") }
+        if forge == .gitea {
+            let parts = repo.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+                throw Failure(description: "Gitea repository must have the form owner/repo: \(repo)")
+            }
+        }
         self.forge = forge
         self.instance = url
         self.repo = repo
@@ -70,9 +76,12 @@ struct ReviewRemote: Sendable {
         }
     }
 
-    func request(_ path: String) -> URLRequest {
+    func request(_ path: String) throws(Failure) -> URLRequest {
         let base = instance.absoluteString.hasSuffix("/") ? instance.absoluteString : instance.absoluteString + "/"
-        var request = URLRequest(url: URL(string: base + path)!)
+        guard let url = URL(string: base + path) else {
+            throw Failure(description: "Invalid forge endpoint URL: \(base + path)")
+        }
+        var request = URLRequest(url: url)
         if let token {
             switch forge {
             case .gitlab: request.setValue(token, forHTTPHeaderField: "PRIVATE-TOKEN")
@@ -83,11 +92,11 @@ struct ReviewRemote: Sendable {
     }
 
     func fetchDiff(session: URLSession) async throws -> String {
-        guard forge == .gitlab else { return String(decoding: try await send(request(diffPath), session: session), as: UTF8.self) }
+        guard forge == .gitlab else { return String(decoding: try await send(try request(diffPath), session: session), as: UTF8.self) }
         var files: [GitLabFile] = []
         var bytes = 0
         for page in 1... {
-            let data = try await send(request(diffPath + "&page=\(page)"), session: session)
+            let data = try await send(try request(diffPath + "&page=\(page)"), session: session)
             bytes += data.count
             guard bytes <= Self.maxDiffBytes else { throw Failure(description: "Diffs of \(repo) !\(number) exceed \(Self.maxDiffBytes) bytes") }
             let batch = try Self.files(gitlab: data)
@@ -98,7 +107,7 @@ struct ReviewRemote: Sendable {
     }
 
     func post(_ body: String, session: URLSession) async throws {
-        var request = request(commentPath)
+        var request = try request(commentPath)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["body": SecretRedactor.redact(body)])

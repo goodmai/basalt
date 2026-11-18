@@ -142,8 +142,14 @@ enum LeJEPABackbone {
             guard let hiddenStates = output.hiddenStates else {
                 return (output.pooledOutput ?? MLXArray.zeros([1, 1])).asType(.float32)
             }
-            let maskArray = (mask ?? MLXArray.ones([hiddenStates.dim(0), hiddenStates.dim(1)], type: Float.self)).asType(hiddenStates.dtype)
-            return MLX.max(hiddenStates * maskArray.expandedDimensions(axes: [-1]), axis: 1).asType(.float32)
+            let h = hiddenStates.asType(.float32)
+            guard let mask else {
+                return MLX.max(h, axis: 1)
+            }
+            let keep = mask.asType(.float32).expandedDimensions(axes: [-1]) .> MLXArray(Float(0))
+            let anyKeep = MLX.any(keep, axis: 1)
+            let masked = MLX.where(keep, h, MLXArray(-Float.infinity))
+            return MLX.where(anyKeep, MLX.max(masked, axis: 1), MLXArray(Float(0)))
         case .none:
             return (output.pooledOutput ?? output.hiddenStates ?? MLXArray.zeros([1, 1])).asType(.float32)
         }

@@ -240,8 +240,16 @@ public enum ChatReducer {
 
     static func apply(_ delta: ChatDelta, to message: inout MessageSnapshot) {
         switch (delta, message.parts.last) {
-        case (.text(let piece), .text(let text)?): message.parts[message.parts.count - 1] = .text(text + piece)
-        case (.reasoning(let piece), .reasoning(let text)?): message.parts[message.parts.count - 1] = .reasoning(text + piece)
+        case (.text(let piece), .text(var text)?):
+            let index = message.parts.count - 1
+            message.parts[index] = .text("")
+            text.append(piece)
+            message.parts[index] = .text(text)
+        case (.reasoning(let piece), .reasoning(var text)?):
+            let index = message.parts.count - 1
+            message.parts[index] = .reasoning("")
+            text.append(piece)
+            message.parts[index] = .reasoning(text)
         case (.text(let piece), _): message.parts.append(.text(piece))
         case (.reasoning(let piece), _): message.parts.append(.reasoning(piece))
         case (.toolCall(let call), _): message.parts.append(.toolCall(call))

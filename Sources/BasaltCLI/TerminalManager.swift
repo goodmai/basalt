@@ -14,7 +14,6 @@ public enum TerminalEvent: Sendable {
     case EOF
 }
 
-/// Epic 17: Stable Layout Implementation
 public actor TerminalManager {
     private var originalTermios: termios
     private var isRawMode = false
@@ -44,8 +43,6 @@ public actor TerminalManager {
         if let m = model { self.currentModel = m }
         if let d = debug { self.debugInfo = d }
         
-        // Refresh git only if it's the first time or every few updates
-        // to avoid too many process spawns.
         Task {
             await refreshGitAsync()
         }
@@ -59,23 +56,20 @@ public actor TerminalManager {
         process.arguments = ["branch", "--show-current"]
         let pipe = Pipe()
         process.standardOutput = pipe
-        
+        process.standardError = FileHandle.nullDevice
+        defer { try? pipe.fileHandleForReading.close() }
         do {
             try process.run()
             let data = try pipe.fileHandleForReading.readToEnd()
+            process.waitUntilExit()
             if let b = data.flatMap({ String(data: $0, encoding: .utf8) })?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !b.isEmpty {
                 if self.gitBranch != b {
                     self.gitBranch = b
-                    // Trigger a refresh only if branch changed
                     if isRawMode { refreshLine() }
                 }
             }
         } catch {}
-    }
-    
-    private func refreshGit() {
-        // Obsolete synchronous version, replaced by refreshGitAsync
     }
 
     public func enableRawMode() {
@@ -91,14 +85,12 @@ public actor TerminalManager {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw)
         isRawMode = true
         
-        // Ensure space at the bottom. We might need more if prompt wraps.
         fputs("\n\n\n\n\n", stdout)
         refreshLine()
     }
 
     public func disableRawMode() {
         guard isRawMode else { return }
-        // Move to the very bottom and clear the UI
         fputs("\r", stdout)
         let linesToClear = calculateTotalFooterLines()
         for _ in 0..<linesToClear {
@@ -124,14 +116,10 @@ public actor TerminalManager {
     
     public func printOutput(_ text: String) {
         let linesToMove = calculateTotalFooterLines()
-        // 1. Move up to start of footer
         fputs("\u{1B}[\(linesToMove)A\r", stdout)
-        // 2. Clear from current cursor to bottom
         fputs("\u{1B}[J", stdout)
-        // 3. Print the text
         fputs(text, stdout)
         fflush(stdout)
-        // 4. Redraw footer
         renderFooter()
     }
     
@@ -142,7 +130,6 @@ public actor TerminalManager {
         let shortPath = workspacePath.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
         
-        // Construct the block
         var ui = "\r"
         ui += "\(divider)\n"
         ui += "\u{1B}[2K \(TerminalUI.dim("info:")) \(debugInfo)\n"
@@ -151,9 +138,6 @@ public actor TerminalManager {
         ui += "\u{1B}[2K \(TerminalUI.dim("chip:")) \(TerminalUI.info(chipModel))    \(TerminalUI.dim("model:")) \(TerminalUI.code(currentModel))"
         
         fputs(ui, stdout)
-        
-        // Position cursor back to prompt line
-        // L5=0A, L4=1A, L3(prompt)=2A
         fputs("\u{1B}[2A\r", stdout)
         
         let promptLen = isBusy ? 15 : 8
@@ -174,68 +158,64 @@ public actor TerminalManager {
     
     private func getTerminalWidth() -> Int {
         var w = winsize()
-        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0 { return Int(w.ws_col) }
+        if ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0, w.ws_col > 0 { return Int(w.ws_col) }
         return 80
     }
     
     nonisolated public func readEvents() -> AsyncStream<TerminalEvent> {
-        return AsyncStream { continuation in
-            Task {
+        AsyncStream { continuation in
+            let reader = Task {
                 await self.enableRawMode()
-                let handle = FileHandle.standardInput
-                var utf8Buffer = Data()
-                
-                while !Task.isCancelled {
-                    guard let data = try? handle.read(upToCount: 1), !data.isEmpty else {
-                        continuation.yield(.EOF); break
-                    }
-                    let byte = data[0]
-                    
-                    if byte == 3 {
-                        if await self.isBusy { continuation.yield(.interrupt) }
-                        else { continuation.yield(.exit) }
-                        utf8Buffer.removeAll(); continue
-                    }
-                    
-                    if byte == 27 {
-                        continuation.yield(.interrupt)
-                        utf8Buffer.removeAll(); continue
-                    }
-                    
-                    if byte == 10 || byte == 13 {
-                        let currentBuffer = await self.inputBuffer
-                        if !currentBuffer.isEmpty {
-                            await self.finalizeInputLine()
-                            continuation.yield(.lineSubmitted(currentBuffer))
-                            await self.clearBuffer()
-                        } else {
-                            await self.refreshLine()
-                        }
-                        utf8Buffer.removeAll(); continue
-                    }
-                    
-                    if byte == 127 || byte == 8 {
-                        await self.removeLastCharacter()
-                        await self.refreshLine()
-                        utf8Buffer.removeAll(); continue
-                    }
-                    
-                    utf8Buffer.append(byte)
-                    if let str = String(data: utf8Buffer, encoding: .utf8) {
-                        await self.appendCharacter(str)
-                        await self.refreshLine()
-                        utf8Buffer.removeAll()
-                    }
+                defer {
+                    Task { await self.disableRawMode() }
                 }
+                var utf8Buffer = Data()
+                do {
+                    for try await byte in FileHandle.standardInput.bytes {
+                        guard !Task.isCancelled else { break }
+                        if byte == 3 {
+                            if await self.isBusy { continuation.yield(.interrupt) }
+                            else { continuation.yield(.exit) }
+                            utf8Buffer.removeAll(); continue
+                        }
+                        if byte == 27 {
+                            continuation.yield(.interrupt)
+                            utf8Buffer.removeAll(); continue
+                        }
+                        if byte == 10 || byte == 13 {
+                            let currentBuffer = await self.inputBuffer
+                            if !currentBuffer.isEmpty {
+                                await self.finalizeInputLine()
+                                continuation.yield(.lineSubmitted(currentBuffer))
+                                await self.clearBuffer()
+                            } else {
+                                await self.refreshLine()
+                            }
+                            utf8Buffer.removeAll(); continue
+                        }
+                        if byte == 127 || byte == 8 {
+                            await self.removeLastCharacter()
+                            await self.refreshLine()
+                            utf8Buffer.removeAll(); continue
+                        }
+                        utf8Buffer.append(byte)
+                        if let str = String(data: utf8Buffer, encoding: .utf8) {
+                            await self.appendCharacter(str)
+                            await self.refreshLine()
+                            utf8Buffer.removeAll()
+                        }
+                    }
+                    if !Task.isCancelled { continuation.yield(.EOF) }
+                } catch {}
                 await self.disableRawMode()
                 continuation.finish()
             }
+            continuation.onTermination = { _ in reader.cancel() }
         }
     }
     
     private func finalizeInputLine() {
-        // Move to prompt line, print the prompt + buffer as permanent history, move down
-        fputs("\u{1B}[2A\r", stdout) // Move up 2 lines (to prompt line)
+        fputs("\u{1B}[2A\r", stdout)
         let colorPrompt = isBusy ? TerminalUI.warning(promptText) : TerminalUI.success(promptText)
         fputs("\(colorPrompt)\(inputBuffer)\n\n\n\n\n", stdout) 
         fflush(stdout)

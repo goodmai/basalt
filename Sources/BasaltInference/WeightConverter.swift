@@ -260,6 +260,7 @@ extension WeightConverter {
             try fileManager.copyItem(at: file, to: output.appending(component: name))
         }
         var config = config
+        let disabledLayers = Self.disabledQuantizationEntries(in: config)
         switch precision {
         case .source:
             break
@@ -267,25 +268,45 @@ extension WeightConverter {
             config["quantization"] = nil
             config["quantization_config"] = nil
         case .affine(let bits, let groupSize):
-            let block: [String: Any] = ["bits": bits, "group_size": groupSize, "mode": "affine"]
+            let block = Self.mergingDisabled(disabledLayers, into: ["bits": bits, "group_size": groupSize, "mode": "affine"])
             config["quantization"] = block
             config["quantization_config"] = block
         case .mixed(let mixed):
-            config["quantization"] = mixed.configBlock
-            config["quantization_config"] = mixed.configBlock
+            let block = Self.mergingDisabled(disabledLayers, into: mixed.configBlock)
+            config["quantization"] = block
+            config["quantization_config"] = block
         case .nf4(let groupSize):
             var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
             block["mode"] = "nf4"
             block["quant_method"] = nil
-            config["quantization"] = block
-            config["quantization_config"] = block
+            let merged = Self.mergingDisabled(disabledLayers, into: block)
+            config["quantization"] = merged
+            config["quantization_config"] = merged
         case .mxfp4:
-            let block: [String: Any] = ["bits": 4, "group_size": 32, "mode": "mxfp4"]
+            let block = Self.mergingDisabled(disabledLayers, into: ["bits": 4, "group_size": 32, "mode": "mxfp4"])
             config["quantization"] = block
             config["quantization_config"] = block
         }
         try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appending(component: "config.json"))
+    }
+
+    static func disabledQuantizationEntries(in config: [String: Any]) -> [String: Bool] {
+        var disabled: [String: Bool] = [:]
+        for section in [config["quantization"] as? [String: Any], config["quantization_config"] as? [String: Any]].compactMap({ $0 }) {
+            for (key, value) in section where !["bits", "group_size", "mode"].contains(key) {
+                if let num = value as? NSNumber, CFGetTypeID(num) == CFBooleanGetTypeID(), !num.boolValue {
+                    disabled[key] = false
+                }
+            }
+        }
+        return disabled
+    }
+
+    static func mergingDisabled(_ disabled: [String: Bool], into block: [String: Any]) -> [String: Any] {
+        var merged = block
+        for (key, value) in disabled where merged[key] == nil { merged[key] = value }
+        return merged
     }
 }
 

@@ -22,7 +22,9 @@ struct MultipartForm: Sendable {
         }
         let body = body.startIndex == 0 ? body : Data(body)
         let delimiter = Data("\r\n--\(boundary)".utf8)
-        guard let first = body.range(of: delimiter.dropFirst(2)) else { throw Self.malformed("the body holds no multipart boundary") }
+        guard let first = Self.firstBoundary(boundary: boundary, in: body) else {
+            throw Self.malformed("the body holds no multipart boundary")
+        }
         var cursor = first.upperBound
         var parts: [String: Part] = [:]
         var ordered: [Part] = []
@@ -33,7 +35,7 @@ struct MultipartForm: Sendable {
             guard let headerEnd = body.range(of: Data("\r\n\r\n".utf8), in: headerWindow) else {
                 throw Self.malformed("a multipart part has no header end within \(Self.maxHeaderBytes) bytes")
             }
-            guard let next = body.range(of: delimiter, in: headerEnd.upperBound ..< body.endIndex) else {
+            guard let next = Self.nextBoundary(delimiter, in: body, from: headerEnd.upperBound) else {
                 throw Self.malformed("a multipart part is not closed by the boundary")
             }
             let part = try Self.part(headers: String(decoding: body[headerStart ..< headerEnd.lowerBound], as: UTF8.self),
@@ -95,6 +97,28 @@ struct MultipartForm: Sendable {
             parameters[field[..<equals].trimmingCharacters(in: .whitespaces).lowercased()] = value
         }
         return (fields[0].trimmingCharacters(in: .whitespaces).lowercased(), parameters)
+    }
+
+    static func firstBoundary(boundary: String, in body: Data) -> Range<Int>? {
+        let opening = Data("--\(boundary)".utf8)
+        if body.starts(with: opening), hasBoundaryTail(in: body, at: opening.count) {
+            return 0 ..< opening.count
+        }
+        return nextBoundary(Data("\r\n--\(boundary)".utf8), in: body, from: 0)
+    }
+
+    static func nextBoundary(_ delimiter: Data, in body: Data, from start: Int) -> Range<Int>? {
+        var searchStart = start
+        while searchStart < body.endIndex, let match = body.range(of: delimiter, in: searchStart ..< body.endIndex) {
+            if hasBoundaryTail(in: body, at: match.upperBound) { return match }
+            searchStart = match.lowerBound + 1
+        }
+        return nil
+    }
+
+    static func hasBoundaryTail(in body: Data, at index: Int) -> Bool {
+        let tail = body[index...]
+        return tail.starts(with: Data("\r\n".utf8)) || tail.starts(with: Data("--".utf8))
     }
 
     static func malformed(_ details: String) -> BasaltError {

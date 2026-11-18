@@ -27,9 +27,14 @@ struct SafetensorsShard {
     }
 
     func span(of key: String) -> (offset: Int64, length: Int64)? {
-        guard let offsets = (entries[key] as? [String: Any])?["data_offsets"] as? [Int], offsets.count == 2, offsets[0] <= offsets[1] else { return nil }
-        let start = Int64(8 + headerLength + offsets[0]), length = Int64(offsets[1] - offsets[0])
-        return start + length <= fileSize ? (start, length) : nil
+        guard let offsets = (entries[key] as? [String: Any])?["data_offsets"] as? [Int], offsets.count == 2,
+              offsets[0] >= 0, offsets[0] <= offsets[1] else { return nil }
+        let (base, ov1) = Int64(8).addingReportingOverflow(Int64(headerLength))
+        let (start, ov2) = base.addingReportingOverflow(Int64(offsets[0]))
+        let length = Int64(offsets[1]) - Int64(offsets[0])
+        let (end, ov3) = start.addingReportingOverflow(length)
+        guard !ov1, !ov2, !ov3, end <= fileSize else { return nil }
+        return (start, length)
     }
 
     func header(placeholders: [String: Int], dropping dropped: Set<String>) throws(BasaltError) -> Data {

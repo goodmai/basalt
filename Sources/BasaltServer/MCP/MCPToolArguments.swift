@@ -71,13 +71,13 @@ enum MCPArguments {
         let grammarJumpForward = try optionalBoolean("grammarJumpForward", in: args)
         var request = GenerationRequest(
             prompt: prompt,
-            maxTokens:   args?["maxTokens"]   as? Int,
-            temperature: args?["temperature"] as? Double,
-            topP:        args?["topP"]        as? Double,
+            maxTokens:   try integer("maxTokens", in: args, 1 ... .max),
+            temperature: try double("temperature", in: args),
+            topP:        try double("topP", in: args),
             messages:    images.isEmpty ? nil : [ChatMessageInput(role: .user, text: prompt, images: images)]
         )
-        request.minP = args?["minP"] as? Double
-        request.dynamicTemperature = args?["dynamicTemperature"] as? Bool
+        request.minP = try double("minP", in: args)
+        request.dynamicTemperature = try optionalBoolean("dynamicTemperature", in: args)
         request.cacheKey = PromptCacheKey.resolve(isService: false)
         let (regex, grammar) = (try MCPArguments.string("regex", in: args), try MCPArguments.string("grammar", in: args))
         guard regex == nil || grammar == nil else { throw .invalidParams("give regex or grammar, not both") }
@@ -143,8 +143,8 @@ struct HarnessInputArguments: Sendable {
             let known = HarnessSurfaceSpec.all.map(\.name).joined(separator: ", ")
             throw .invalidParams("Unknown surface '\(surfaceName)'; expected one of: \(known)")
         }
-        if let limit = args?["alwaysOnMaxChars"] {
-            guard let limit = limit as? Int, limit > 0 else {
+        if let limit = MCPArguments.present("alwaysOnMaxChars", in: args) {
+            guard !MCPArguments.isJSONBoolean(limit), let limit = limit as? Int, limit > 0 else {
                 throw .invalidParams("alwaysOnMaxChars must be a positive integer")
             }
             spec = spec.withAlwaysOnMaxChars(limit)
@@ -383,12 +383,16 @@ extension MCPArguments {
         return number
     }
 
-    static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
+    static func double(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Double? {
         guard let value = present(key, in: args) else { return nil }
         guard !isJSONBoolean(value), let number = (value as? Double) ?? (value as? Int).map(Double.init), number.isFinite else {
             throw .invalidParams("\(key) must be a number")
         }
-        return Float(number)
+        return number
+    }
+
+    static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
+        try double(key, in: args).map(Float.init)
     }
 
     static func numbers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Float]? {

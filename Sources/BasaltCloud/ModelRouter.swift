@@ -288,13 +288,15 @@ extension ModelRouter {
     }
 
     static func chatRequest(_ request: GenerationRequest, model: String, stream: Bool) -> OpenRouterClient.ChatRequest {
-        OpenRouterClient.ChatRequest(
+        var req = OpenRouterClient.ChatRequest(
             model: model,
             messages: cloudMessages(request),
             temperature: request.temperature,
             maxTokens: request.maxTokens,
             stream: stream
         )
+        if stream { req.usage = .init(include: true) }
+        return req
     }
 
     static func relayCloudStream(
@@ -305,23 +307,29 @@ extension ModelRouter {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    var finishReason: String?
+                    var usage: OpenRouterClient.ChatResponse.Usage?
                     for try await response in source {
-                        guard let choice = response.choices.first else { continue }
-                        if let text = choice.delta.content {
-                            continuation.yield(.text(text))
+                        if let reported = response.usage { usage = reported }
+                        if let choice = response.choices.first {
+                            if let text = choice.delta.content {
+                                continuation.yield(.text(text))
+                            }
+                            if let reason = choice.finishReason, reason != "null" {
+                                finishReason = reason
+                            }
                         }
-                        if let reason = choice.finishReason, reason != "null" {
-                            let metadata = GenerationResponse.cloudReply(
-                                text: "",
-                                promptTokens: response.usage?.promptTokens ?? 0,
-                                completionTokens: response.usage?.completionTokens ?? 0,
-                                finishReason: reason,
-                                elapsed: startTime.duration(to: ContinuousClock.now)
-                            )
-                            await onUsage(metadata)
-                            continuation.yield(.metadata(metadata))
-                            break
-                        }
+                    }
+                    if let reason = finishReason {
+                        let metadata = GenerationResponse.cloudReply(
+                            text: "",
+                            promptTokens: usage?.promptTokens ?? 0,
+                            completionTokens: usage?.completionTokens ?? 0,
+                            finishReason: reason,
+                            elapsed: startTime.duration(to: ContinuousClock.now)
+                        )
+                        await onUsage(metadata)
+                        continuation.yield(.metadata(metadata))
                     }
                     continuation.finish()
                 } catch {

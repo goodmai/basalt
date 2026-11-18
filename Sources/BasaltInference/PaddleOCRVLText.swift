@@ -9,12 +9,13 @@ enum PaddleOCRVLText {
         let sin: MLXArray
     }
 
-    static func positions(after cache: KVCache?, delta: Int, batch: Int, length: Int) -> MLXArray {
+    static func positions(after cache: KVCache?, delta: MLXArray?, batch: Int, length: Int) -> MLXArray {
         let steps = MLXArray(Int32(0) ..< Int32(length))
+        let shift = delta?.asType(.int32) ?? MLXArray(Int32(0))
         let base = switch cache?.ropeOffset {
         case .batch(let offsets): offsets.asType(.int32).reshaped(-1, 1) + steps
-        case .scalar(let offset): broadcast(steps + Int32(offset + delta), to: [batch, length])
-        case nil: broadcast(steps + Int32(delta), to: [batch, length])
+        case .scalar(let offset): broadcast(steps + Int32(offset) + shift, to: [batch, length])
+        case nil: broadcast(steps + shift, to: [batch, length])
         }
         return broadcast(base[.newAxis], to: [3, batch, length])
     }

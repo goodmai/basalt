@@ -14,8 +14,10 @@ public struct SpeechAnalyzerTranscriber: AudioTranscriber {
             return Transcription(text: text, language: locale.language.languageCode?.identifier, segments: segments)
         } catch let error as BasaltError {
             throw error
+        } catch is CancellationError {
+            throw .cancelled
         } catch {
-            throw .inferenceError("SpeechAnalyzer failed: \(error.localizedDescription)")
+            throw Task.isCancelled ? .cancelled : .inferenceError("SpeechAnalyzer failed: \(error.localizedDescription)")
         }
     }
 
@@ -43,11 +45,16 @@ public struct SpeechAnalyzerTranscriber: AudioTranscriber {
             segments.append(Transcription.Segment(
                 start: result.range.start.seconds, end: result.range.end.seconds, text: String(result.text.characters)))
         }
-        if let end = try await analyzer.analyzeSequence(input) {
-            try await analyzer.finalizeAndFinish(through: end)
-        } else {
-            await analyzer.cancelAndFinishNow()
+        do {
+            if let end = try await analyzer.analyzeSequence(input) {
+                try await analyzer.finalizeAndFinish(through: end)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            return try await results
+        } catch {
+            await withTaskCancellationShield { await analyzer.cancelAndFinishNow() }
+            throw error
         }
-        return try await results
     }
 }
