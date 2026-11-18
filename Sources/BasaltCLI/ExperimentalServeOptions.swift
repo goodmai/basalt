@@ -4,6 +4,8 @@ import BasaltInference
 import Foundation
 import BasaltSpeech
 
+extension MACaQActivationMode: ExpressibleByArgument {}
+
 struct ExperimentalServeOptions: ParsableArguments {
     @Flag(
         name: .customLong("experimental-zero-copy-body"),
@@ -40,6 +42,12 @@ struct ExperimentalServeOptions: ParsableArguments {
         help: "Measure per-token confidence (top-token probability, entropy, top-two margin) on every Nth generation and add it to /api/v1/stats and /api/v1/metrics; 0 measures only requests that ask for it. Costs one GPU sync per measured token (#450)"
     )
     var telemetryConfidenceEvery = 0
+
+    @Option(
+        name: .customLong("experimental-macaq-activations"),
+        help: "Experimental (#547): fused MACaQ activation microscaling mode inside the prologue-MMA Metal kernel: w4a16 (default), w4a8 (dynamic FP8 E4M3) or w4a4 (dynamic OCP MXFP4)"
+    )
+    var macaqActivations: MACaQActivationMode = .fp16
 
     func validate() throws {
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
