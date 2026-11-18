@@ -26,7 +26,8 @@ extension MLXInferenceEngine {
         return ActivationContrastReport(
             components: ActivationStatistics.rank(a: a, b: b, onsetWindow: request.onsetWindow, topK: request.topK),
             layers: indices.enumerated().map { DirectionLayer(index: $1, norm: norms[$0], separation: separations[$0]) },
-            bestLayer: indices[best], direction: unit[best].asArray(Float.self))
+            bestLayer: indices[best], direction: unit[best].asArray(Float.self),
+            headKurtosis: ActivationStatistics.headKurtosis(a: a, b: b, onsetWindow: request.onsetWindow))
     }
 
     static func tracedSamples(_ prompts: [String], request: ActivationContrastRequest, context: ModelContext) throws -> ([TracedSample], [MLXArray]) {

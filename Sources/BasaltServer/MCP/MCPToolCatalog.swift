@@ -319,6 +319,7 @@ extension ResearchTool {
             "vector": numbers.merging(["description": "steer: vector of the hidden size added after the layer"]) { $1 },
             "scale": ["type": "number", "description": "steer: factor on the vector, or rotation angle in radians for geodesic (default 1)"],
             "geometry": geometryProperty,
+            "contextGate": contextGateProperty,
             "head": ["type": "integer", "minimum": 0, "description": "ablate_head: head to zero"],
             "expert": ["type": "integer", "minimum": 0, "description": "ablate_expert: expert to zero"],
             "when": whenProperty,
@@ -453,33 +454,5 @@ extension ResearchTool {
             "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
         ].merging(adapterMethodProperties) { $1 }
-    }
-
-    private static func prompts(_ range: ClosedRange<Int>, _ description: String) -> [String: Any] {
-        ["type": "array", "items": ["type": "string"], "minItems": range.lowerBound, "maxItems": range.upperBound, "description": description]
-    }
-
-    static var steerSearchProperties: [String: Any] {
-        [
-            "positive": prompts(ContrastRequest.classPrompts, "Prompts showing the behaviour to find"),
-            "negative": prompts(ContrastRequest.classPrompts, "Prompts without it"),
-            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Prompts steered in the trials"),
-            "layers": ["type": "array", "items": ["type": "integer", "minimum": 0], "description": "Layers to search (default: all)"],
-            "topHeads": ["type": "integer", "minimum": ContrastRequest.headLimit.lowerBound, "maximum": ContrastRequest.headLimit.upperBound, "description": "Heads reported, ranked by ablation effect (default 8; 0 skips the ablations)"],
-            "scales": numbers.merging(["maxItems": ContrastRequest.scaleCount.upperBound, "description": "Steering scales tried on the held-out prompts (default [2, 4, 8])"]) { $1 },
-            "geometry": geometryProperty,
-        ]
-    }
-
-    static var steerCommitProperties: [String: Any] {
-        [
-            "layer": ["type": "integer", "minimum": 0, "description": "bestLayer from steer_search"],
-            "direction": numbers.merging(["description": "direction from steer_search (hidden size)"]) { $1 },
-            "scale": ["type": "number", "description": "Scale chosen from the steer_search trials"],
-            "positive": prompts(1...ContrastRequest.classPrompts.upperBound, "Positive prompts; their mean module input becomes the rank-1 input"),
-            "heldOut": prompts(ContrastRequest.heldOutPrompts, "Held-out prompts for the quality gate"),
-            "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL against the baseline (default 0.5)"],
-            "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise (default 0.1)"],
-        ]
     }
 }
