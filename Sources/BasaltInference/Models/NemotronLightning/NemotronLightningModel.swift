@@ -229,11 +229,27 @@ public final class NemotronLightningModel: Module, LLMModel, KVCacheDimensionPro
         return (emb, lmHead)
     }
 
+    private func syncBackingTopModules() {
+        let current = backing.model.children()
+        var updates: [(String, Module)] = []
+        if current[unwrapping: "backbone"] !== backbone {
+            updates.append(("backbone", backbone))
+        }
+        if let lmHead, current[unwrapping: "lm_head"] !== lmHead {
+            updates.append(("lm_head", lmHead))
+        }
+        if !updates.isEmpty {
+            backing.model.update(modules: ModuleChildren.unflattened(updates))
+        }
+    }
+
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        backing.model(inputs, cache: cache)
+        syncBackingTopModules()
+        return backing.model(inputs, cache: cache)
     }
 
     public func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        syncBackingTopModules()
         let emit = state?[mtpEmitFlagKey] ?? false
         backing.recorder.shouldRecord = emit
         backing.recorder.lastOutput = nil
