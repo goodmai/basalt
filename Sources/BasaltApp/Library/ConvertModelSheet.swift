@@ -90,30 +90,30 @@ public struct ConvertModelSheet: View {
         .padding(12)
         .adaptiveGlass(.chromeRegular, in: .rect(cornerRadius: 12))
     }
+}
 
+extension ConvertModelSheet {
     @ViewBuilder
-    private func targetParameters(_ draft: ConversionDraft) -> some View {
+    fileprivate func targetParameters(_ draft: ConversionDraft) -> some View {
         switch draft.family {
         case .macaq:
             Toggle("Use OCP MXFP4 Microscaling (E2M1 + E8M0)", isOn: binding(draft, \.useMXFP4InMACaQ, refreshOutput: true))
             if !draft.useMXFP4InMACaQ {
                 bitAndGroupPickers(draft, bitOptions: [2, 3, 4])
             }
-            Picker("Hadamard Block", selection: binding(draft, \.hadamardBlock)) {
-                Text("32").tag(32)
-                Text("64").tag(64)
+            hadamardBlockPicker(draft)
+        case .macaqMoE:
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Target Budget: \(String(format: "%.2f", draft.moeBudgetBPW)) bpw")
+                    .font(.caption)
+                Slider(value: binding(draft, \.moeBudgetBPW, refreshOutput: true), in: 2.0 ... 4.0, step: 0.1)
             }
-            .pickerStyle(.segmented)
+            hadamardBlockPicker(draft)
         case .flatQuant:
             bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
         case .lirQuant:
             bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
-            Picker("Vulnerable Subspace", selection: binding(draft, \.lirSubspaceDim, refreshOutput: true)) {
-                Text("64").tag(64)
-                Text("128").tag(128)
-                Text("256").tag(256)
-            }
-            .pickerStyle(.segmented)
+            lirSubspacePicker(draft)
         case .affine:
             bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 5, 6, 8])
             recipePicker(draft)
@@ -146,6 +146,23 @@ public struct ConvertModelSheet: View {
         }
     }
 
+    private func hadamardBlockPicker(_ draft: ConversionDraft) -> some View {
+        Picker("Hadamard Block", selection: binding(draft, \.hadamardBlock)) {
+            Text("32").tag(32)
+            Text("64").tag(64)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    private func lirSubspacePicker(_ draft: ConversionDraft) -> some View {
+        Picker("Vulnerable Subspace", selection: binding(draft, \.lirSubspaceDim, refreshOutput: true)) {
+            Text("64").tag(64)
+            Text("128").tag(128)
+            Text("256").tag(256)
+        }
+        .pickerStyle(.segmented)
+    }
+
     private func bitAndGroupPickers(_ draft: ConversionDraft, bitOptions: [Int]) -> some View {
         HStack(spacing: 16) {
             Picker("Bit-width", selection: binding(draft, \.bits, refreshOutput: true)) {
@@ -163,6 +180,7 @@ public struct ConvertModelSheet: View {
         Picker("Normalization Recipe", selection: binding(draft, \.recipe)) {
             Text("SINQ").tag("sinq")
             Text("A-SINQ").tag("a-sinq")
+            Text("MoE-RW").tag("moe-rw")
             Text("RTN").tag("rtn")
         }
         .pickerStyle(.segmented)
@@ -290,7 +308,7 @@ extension ConvertModelSheet {
         }
     }
 
-    private func binding<V: Equatable>(
+    fileprivate func binding<V: Equatable>(
         _ draft: ConversionDraft,
         _ keyPath: WritableKeyPath<ConversionDraft, V>,
         refreshOutput: Bool = false

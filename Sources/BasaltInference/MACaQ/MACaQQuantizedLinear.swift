@@ -241,11 +241,25 @@ package enum MACaQNativeLoader {
     package struct Manifest: Codable, Sendable {
         package var version: Int = 1
         package var alpha: Float
+        package var moeBPW: Double?
         package var modules: [String: MACaQLayerSpec]
 
-        package init(version: Int = 1, alpha: Float, modules: [String: MACaQLayerSpec]) {
+        enum CodingKeys: String, CodingKey {
+            case version
+            case alpha
+            case moeBPW = "moe_bpw"
+            case modules
+        }
+
+        package init(
+            version: Int = 1,
+            alpha: Float,
+            moeBPW: Double? = nil,
+            modules: [String: MACaQLayerSpec]
+        ) {
             self.version = version
             self.alpha = alpha
+            self.moeBPW = moeBPW
             self.modules = modules
         }
     }

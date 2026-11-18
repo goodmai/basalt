@@ -64,7 +64,8 @@ extension ConvertSubcommand {
     }
 
     private func buildUnifiedRequest(target: QuantizationTarget, calText: String?) -> ModelConversionRequest {
-        let recipe: SINQRecipe = sinq ? .sinq : (aSinq ? .asinq : (quantRecipe ?? .rtn))
+        let fallbackRecipe: SINQRecipe = if case .macaqMoEBudget = target { .moeRW } else { .rtn }
+        let recipe: SINQRecipe = sinq ? .sinq : (aSinq ? .asinq : (quantRecipe ?? fallbackRecipe))
         let outputId = registerCache ?? URL(fileURLWithPath: (out as NSString).expandingTildeInPath).lastPathComponent
         var req = ModelConversionRequest(
             source: source, outputId: outputId, target: target,

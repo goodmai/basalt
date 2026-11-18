@@ -248,6 +248,7 @@
 "MACaQ (Hadamard + Flip)" = "MACaQ (Hadamard + Flip)";
 "FlatQuant (Kronecker P1⊗P2)" = "FlatQuant (Kronecker P1⊗P2)";
 "LIRQuant (Givens Subspace)" = "LIRQuant (Givens Subspace)";
+"MACaQ MoE (Router-Weighted)" = "MACaQ MoE (Router-Weighted)";
 "Standard Affine" = "Standard Affine";
 "OCP MXFP4" = "OCP MXFP4";
 "NF4 NormalFloat" = "NF4 NormalFloat";
@@ -290,6 +291,8 @@
 "FP16" = "FP16";
 "SINQ" = "SINQ";
 "A-SINQ" = "A-SINQ";
+"MoE-RW" = "MoE-RW";
+"MoE-RW (Router-Weighted Hessian)" = "MoE-RW (Router-Weighted Hessian)";
 "RTN" = "RTN";
 "local/model-name" = "local/model-name";
 

@@ -30,7 +30,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New output directory; required unless --register-cache <org/repo> is supplied")
     var out: String = ""
 
-    @Option(name: .long, help: "Unified any-to-any quantization target (#546, #547): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, flatquant:<b:g>, lirquant:<b:g:k>, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
+    @Option(name: .long, help: "Unified any-to-any quantization target (#546, #547, #569): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, macaq:moe:<bpw>, flatquant:<b:g>, lirquant:<b:g:k>, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
     var to: String?
 
     @Option(name: .customLong("register-cache"), help: "Register converted model in local Hugging Face cache as <org/repo> (#546)")
@@ -126,7 +126,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     )
     var experimentalLirquant: String?
 
-    @Option(name: .customLong("quant-recipe"), help: "Quantization normalization recipe (#548): rtn (default), sinq (data-free Sinkhorn-Knopp dual-axis normalization absorbed into RMSNorm with zero runtime overhead), or a-sinq (activation-calibrated SINQ + EAQuant router invariance)")
+    @Option(name: .customLong("quant-recipe"), help: "Quantization normalization recipe (#548/#569): rtn (default), sinq (data-free Sinkhorn-Knopp dual-axis normalization absorbed into RMSNorm), a-sinq (activation-calibrated SINQ + EAQuant router invariance), or moe-rw (router-weighted MoE Hessian + EAQuant)")
     var quantRecipe: SINQRecipe?
 
     @Flag(name: .customLong("sinq"), help: "Shorthand for --quant-recipe sinq (#548): data-free No-overhead SINQ dual-axis normalization")
@@ -220,17 +220,20 @@ extension ConvertSubcommand {
         return chosen
     }
 
+    private func acceptsCalibrationCorpus(isGSQRCO: Bool) -> Bool {
+        [
+            experimentalPvTune, experimentalMacaqRefine, experimentalMacaq != nil,
+            hasBasisTransformFlag, experimentalQtip != nil, experimentalQtipBudget != nil,
+            isGSQRCO, aSinq, quantRecipe == .asinq, quantRecipe == .moeRW,
+        ].contains(true)
+    }
+
     func validatePVOptions(isGSQRCO: Bool) throws {
         if pvTeacher != nil, !experimentalPvTune && !experimentalMacaqRefine {
             throw ValidationError("--pv-teacher requires --experimental-pv-tune or --experimental-macaq-refine")
         }
-        let usesCalibration = [
-            experimentalPvTune, experimentalMacaqRefine, experimentalMacaq != nil,
-            hasBasisTransformFlag, experimentalQtip != nil, experimentalQtipBudget != nil,
-            isGSQRCO, aSinq, quantRecipe == .asinq,
-        ].contains(true)
-        if pvCalibration != nil, !usesCalibration {
-            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget, --a-sinq or --quantize gsq-rco")
+        if pvCalibration != nil, !acceptsCalibrationCorpus(isGSQRCO: isGSQRCO) {
+            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget, --a-sinq, --quant-recipe moe-rw or --quantize gsq-rco")
         }
         if experimentalPvTune, format != .mlx || dequantize != nil || isGGUFSource {
             throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")

@@ -36,14 +36,8 @@ package enum UniversalSourceReader {
         }
         let bytes = directoryWeightBytes(directory)
         if let macaq = json["macaq_quantization"] as? [String: Any],
-           let modules = macaq["modules"] as? [String: [String: Any]],
-           let first = modules.values.first {
-            let mode = (first["mode"] as? String) ?? "affine"
-            let bits = (first["bits"] as? Int) ?? 4
-            let group = (first["group_size"] as? Int) ?? 64
-            let label = mode == "mxfp4" ? "macaq:mxfp4" : "macaq:affine:\(bits):\(group)"
-            let bpw = mode == "mxfp4" ? 4.27 : (Double(bits) + 32.0 / Double(max(1, group)))
-            return DetectedSourceCheckpoint(format: label, effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
+           let det = detectMACaQ(macaq, bytes: bytes) {
+            return det
         }
         if let basis = detectBasisManifest(json, bytes: bytes) {
             return basis
@@ -83,6 +77,27 @@ package enum UniversalSourceReader {
             return DetectedSourceCheckpoint(format: "lirquant:\(bits):\(group):\(sub)", effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
         }
         return nil
+    }
+
+    private static func detectMACaQ(_ macaq: [String: Any], bytes: Int64) -> DetectedSourceCheckpoint? {
+        guard let modules = macaq["modules"] as? [String: [String: Any]],
+              let first = modules.values.first else { return nil }
+        if let moeBPW = (macaq["moe_bpw"] as? NSNumber)?.doubleValue, moeBPW > 0 {
+            let label = QuantizationTarget.macaqMoEBudget(bpw: moeBPW).specString
+            return DetectedSourceCheckpoint(format: label, effectiveBPW: moeBPW, totalBytes: bytes, requiresCanonicalDecode: true)
+        }
+        let allBits = modules.values.compactMap { $0["bits"] as? Int }
+        if Set(allBits).count > 1, !allBits.isEmpty {
+            let avgBits = Double(allBits.reduce(0, +)) / Double(allBits.count)
+            let label = QuantizationTarget.macaqMoEBudget(bpw: avgBits).specString
+            return DetectedSourceCheckpoint(format: label, effectiveBPW: avgBits, totalBytes: bytes, requiresCanonicalDecode: true)
+        }
+        let mode = (first["mode"] as? String) ?? "affine"
+        let bits = (first["bits"] as? Int) ?? 4
+        let group = (first["group_size"] as? Int) ?? 64
+        let label = mode == "mxfp4" ? "macaq:mxfp4" : "macaq:affine:\(bits):\(group)"
+        let bpw = mode == "mxfp4" ? 4.27 : (Double(bits) + 32.0 / Double(max(1, group)))
+        return DetectedSourceCheckpoint(format: label, effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
     }
 
     private static func detectStandardQuant(_ quant: [String: Any], bytes: Int64) -> DetectedSourceCheckpoint {

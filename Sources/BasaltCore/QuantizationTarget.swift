@@ -39,6 +39,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
     case nf4(groupSize: Int)
     case macaqAffine(bits: Int, groupSize: Int)
     case macaqMXFP4
+    case macaqMoEBudget(bpw: Double)
     case flatQuant(bits: Int, groupSize: Int)
     case lirQuant(bits: Int, groupSize: Int, subspaceDim: Int)
     case qtip(bpw: Double)
@@ -55,6 +56,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .nf4(let g): "nf4:\(g)"
         case .macaqAffine(let b, let g): "macaq:affine:\(b):\(g)"
         case .macaqMXFP4: "macaq:mxfp4"
+        case .macaqMoEBudget(let bpw): "macaq:moe:\(Self.formatBPW(bpw))"
         case .flatQuant(let b, let g): "flatquant:\(b):\(g)"
         case .lirQuant(let b, let g, let k): "lirquant:\(b):\(g):\(k)"
         case .qtip(let bpw): String(format: "qtip:%.1f", bpw)
@@ -73,6 +75,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .nf4(let g): "NF4-g\(g)"
         case .macaqAffine(let b, _): "MACaQ-\(b)bit"
         case .macaqMXFP4: "MACaQ-MXFP4"
+        case .macaqMoEBudget(let bpw): "MACaQ-MoE-\(Self.formatBPW(bpw))bpw"
         case .flatQuant(let b, _): "FlatQuant-\(b)bit"
         case .lirQuant(let b, _, let k): "LIRQuant-\(b)bit-k\(k)"
         case .qtip(let bpw): String(format: "QTIP-%.1fbpw", bpw)
@@ -106,7 +109,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .macaqMXFP4: 4.27
         case .flatQuant(let b, let g): Double(b) + 32.0 / Double(g) + 0.02
         case .lirQuant(let b, let g, _): Double(b) + 32.0 / Double(g) + 0.03
-        case .qtip(let bpw), .qtipBudget(let bpw), .gsqRCO(let bpw): bpw
+        case .macaqMoEBudget(let bpw), .qtip(let bpw), .qtipBudget(let bpw), .gsqRCO(let bpw): bpw
         }
     }
 
@@ -114,7 +117,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         [
             "affine:2:64", "affine:3:64", "affine:4:64", "affine:6:64", "affine:8:64",
             "mixed:3:4:64", "mxfp4", "nf4:64",
-            "macaq:affine:2:64", "macaq:affine:3:64", "macaq:affine:4:64", "macaq:mxfp4",
+            "macaq:affine:2:64", "macaq:affine:3:64", "macaq:affine:4:64", "macaq:mxfp4", "macaq:moe:2.8",
             "flatquant:3:64", "flatquant:4:64", "lirquant:3:64:128", "lirquant:4:64:128",
             "qtip:2.0", "qtip:2.5", "qtip:3.0", "qtip-budget:2.75", "gsq-rco:3.0",
             "dense:bf16", "dense:f16",
@@ -123,6 +126,11 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
 }
 
 extension QuantizationTarget {
+    private static func formatBPW(_ bpw: Double) -> String {
+        abs(bpw * 10.0 - (bpw * 10.0).rounded()) < 1e-6
+            ? String(format: "%.1f", bpw)
+            : String(format: "%.2f", bpw)
+    }
     public static func parse(_ raw: String) throws(BasaltError) -> QuantizationTarget {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let parts = trimmed.split(separator: ":").map(String.init)
@@ -187,6 +195,10 @@ extension QuantizationTarget {
             return .mixed(lowBits: lo, highBits: hi, groupSize: g)
         case "macaq":
             if parts.count == 2, parts[1] == "mxfp4" { return .macaqMXFP4 }
+            if parts.count == 3, parts[1] == "moe",
+               let bpw = Double(parts[2]), bpw.isFinite, (2.0 ... 4.5).contains(bpw) {
+                return .macaqMoEBudget(bpw: bpw)
+            }
             guard parts.count == 4, parts[1] == "affine",
                   let b = Int(parts[2]), let g = Int(parts[3]),
                   [2, 3, 4].contains(b), [32, 64, 128].contains(g) else { return nil }

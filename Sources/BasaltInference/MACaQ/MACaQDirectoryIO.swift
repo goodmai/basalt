@@ -198,6 +198,7 @@ extension MACaQRefiner {
         model: Module,
         manifest: [String: MACaQLayerSpec],
         alpha: Float,
+        moeBPW: Double? = nil,
         source: URL,
         output: URL
     ) throws -> (shards: Int, bytes: Int) {
@@ -211,7 +212,7 @@ extension MACaQRefiner {
         let shards = try writer.finish()
         let cfgURL = source.appending(component: "config.json")
         var cfg = try JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL)) as? [String: Any] ?? [:]
-        let manifestObj = MACaQNativeLoader.Manifest(version: 1, alpha: alpha, modules: manifest)
+        let manifestObj = MACaQNativeLoader.Manifest(version: 1, alpha: alpha, moeBPW: moeBPW, modules: manifest)
         cfg[MACaQNativeLoader.configKey] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifestObj))
         try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appending(component: "config.json"))

@@ -32,6 +32,13 @@ struct ModelsConvertController: Sendable {
         group.post("/models/convert", use: convertModel)
     }
 
+    static let validRecipes: Set<String> = ["rtn", "sinq", "a-sinq", "moe-rw"]
+
+    private static func isSupportedRecipe(_ raw: String?) -> Bool {
+        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        return validRecipes.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
     @Sendable
     func planConversion(request: Request, context: BasicRequestContext) async throws -> Response {
         guard let converter = operations.converter else {
@@ -41,6 +48,11 @@ struct ModelsConvertController: Sendable {
         guard let rawSource = request.uri.queryParameters.get("source"), !rawSource.isEmpty else {
             return ProviderErrorResponse.response(
                 status: .badRequest, message: "Query parameter 'source' is required.", shape: .openAI)
+        }
+        if let rawRecipe = request.uri.queryParameters.get("recipe").map({ String($0) }),
+           !Self.isSupportedRecipe(rawRecipe) {
+            return ProviderErrorResponse.response(
+                status: .badRequest, message: "Unsupported recipe '\(rawRecipe)'. Expected rtn, sinq, a-sinq, or moe-rw.", shape: .openAI)
         }
         let rawTarget = request.uri.queryParameters.get("target").map { String($0) } ?? "macaq:affine:4:64"
         let target: QuantizationTarget
@@ -83,6 +95,10 @@ struct ModelsConvertController: Sendable {
         guard ModelsController.isRepoId(req.outputId) else {
             return ProviderErrorResponse.response(
                 status: .badRequest, message: "output_id must be a valid repo id (org/name), e.g. local/model-4bit.", shape: .openAI)
+        }
+        guard Self.isSupportedRecipe(req.recipe) else {
+            return ProviderErrorResponse.response(
+                status: .badRequest, message: "Unsupported recipe '\(req.recipe ?? "")'. Expected rtn, sinq, a-sinq, or moe-rw.", shape: .openAI)
         }
         var normalized = req
         normalized.source = ModelsController.hfRepoId(from: req.source)

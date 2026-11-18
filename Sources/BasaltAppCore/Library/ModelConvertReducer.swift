@@ -3,6 +3,7 @@ import Foundation
 
 public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable {
     case macaq
+    case macaqMoE
     case flatQuant
     case lirQuant
     case affine
@@ -18,6 +19,7 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
     public var title: String {
         switch self {
         case .macaq: "MACaQ (Hadamard + Flip)"
+        case .macaqMoE: "MACaQ MoE (Router-Weighted)"
         case .flatQuant: "FlatQuant (Kronecker P1⊗P2)"
         case .lirQuant: "LIRQuant (Givens Subspace)"
         case .affine: "Standard Affine"
@@ -40,6 +42,7 @@ public struct ConversionDraft: Sendable, Equatable {
     public var useMXFP4InMACaQ: Bool = false
     public var hadamardBlock: Int = 64
     public var lirSubspaceDim: Int = 128
+    public var moeBudgetBPW: Double = 2.8
     public var qtipRate: Double = 2.5
     public var budgetBPW: Double = 3.0
     public var denseFP16: Bool = false
@@ -61,6 +64,8 @@ public struct ConversionDraft: Sendable, Equatable {
         switch family {
         case .macaq:
             useMXFP4InMACaQ ? .macaqMXFP4 : .macaqAffine(bits: min(max(bits, 2), 4), groupSize: groupSize)
+        case .macaqMoE:
+            .macaqMoEBudget(bpw: moeBudgetBPW)
         case .flatQuant:
             .flatQuant(bits: [2, 3, 4, 8].contains(bits) ? bits : 4, groupSize: groupSize)
         case .lirQuant:
@@ -97,14 +102,15 @@ public struct ConversionDraft: Sendable, Equatable {
 
     public func toRequest() -> ModelConversionRequest {
         let target = resolvedTarget
+        let effectiveRecipe = family == .macaqMoE ? "moe-rw" : recipe
         var req = ModelConversionRequest(
             source: sourceId,
             outputId: outputId.trimmingCharacters(in: .whitespacesAndNewlines),
             target: target,
-            recipe: recipe,
+            recipe: effectiveRecipe,
             pvTune: pvTune && target.supportsPVTune,
             stream: true)
-        req.hadamardBlock = family == .macaq ? hadamardBlock : nil
+        req.hadamardBlock = (family == .macaq || family == .macaqMoE) ? hadamardBlock : nil
         req.pvPreset = pvPreset
         req.pvTeacher = pvTeacher.isEmpty ? nil : pvTeacher
         return req

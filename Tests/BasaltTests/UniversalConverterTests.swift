@@ -220,17 +220,27 @@ struct UniversalConverterVisualTests {
     @Test("ConvertModelSheet renders all target families (Affine, NF4, MXFP4, QTIP, Budget, Dense)")
     func renderAllSheetFamilies() throws {
         var state = LibraryState()
-        state.models = [LibraryModel(id: "org/m", sizeBytes: 4_000_000_000, isLoaded: false)]
+        state.models = [LibraryModel(id: "Qwen/Qwen3-30B-A3B-BF16", sizeBytes: 61_000_000_000, isLoaded: false)]
         let env = LibraryEnvironment(client: { nil }, savePending: { _ in })
+        let outDir = ProcessInfo.processInfo.environment["BASALT_SAVE_GUI_569"].map { URL(fileURLWithPath: $0) }
+        if let outDir { try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true) }
         for fam in ConversionTargetFamily.allCases {
-            var draft = ConversionDraft(sourceId: "org/m", sourceBytes: 4_000_000_000)
+            var draft = ConversionDraft(sourceId: "Qwen/Qwen3-30B-A3B-BF16", sourceBytes: 61_000_000_000)
             draft.family = fam
             draft.pvTune = draft.resolvedTarget.supportsPVTune
+            draft.refreshSuggestedOutputId()
             state.convertDraft = draft
             let store = LibraryStore(state, reduce: LibraryReducer.reduce, handle: LibraryEffects.handler(env))
             let bmp = try OffscreenSceneRenderer.render(
                 ConvertModelSheet(store: store), spec: .init(id: .libraryMixed, width: 580, height: 630), variant: .darkStandard)
             #expect(bmp.width == 1_160 && !bmp.png.isEmpty)
+            if fam == .macaqMoE, let outDir {
+                for variant in [TraitVariant.lightStandard, .darkStandard, .darkRussian] {
+                    let vBmp = try OffscreenSceneRenderer.render(
+                        ConvertModelSheet(store: store), spec: .init(id: .libraryMixed, width: 580, height: 630), variant: variant)
+                    try vBmp.png.write(to: outDir.appending(component: "gui_569_convert_moe_sheet__\(variant.slug).png"), options: .atomic)
+                }
+            }
         }
     }
 }
@@ -320,5 +330,45 @@ struct UniversalConverterEndToEndTests {
         let cmd2 = try ConvertSubcommand.parse([macaqDir.path, "--to", "mxfp4", "--sinq", "--out", mxfp4Dir.path])
         try await cmd2.runUnifiedConversion()
         #expect(try UniversalSourceReader.detect(at: mxfp4Dir).format == "mxfp4")
+    }
+
+    @Test("UniversalModelConverter converts MoE checkpoint Dense -> macaq:moe:2.8 -> Dense BF16 cleanly (#569)")
+    func moeRouterWeightedBudgetAnyToAnyRoundTrip() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "umoe-\(UUID().uuidString)")
+        let denseMoEDir = root.appending(component: "dense-moe")
+        let macaqMoEDir = root.appending(component: "macaq-moe-28")
+        let recoveredDir = root.appending(component: "recovered-moe-bf16")
+        try FileManager.default.createDirectory(at: denseMoEDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let model = try TinyModel.make(.qwen3Moe)
+        let flat = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
+        try save(arrays: flat, url: denseMoEDir.appending(component: "model.safetensors"))
+        let cfgObj = try JSONSerialization.jsonObject(with: Data(TinyModel.Family.qwen3Moe.config.utf8))
+        try JSONSerialization.data(withJSONObject: cfgObj).write(to: denseMoEDir.appending(component: "config.json"))
+        try Data(#"{"tokenizer_class": "LlamaTokenizerFast", "legacy": false}"#.utf8)
+            .write(to: denseMoEDir.appending(component: "tokenizer_config.json"))
+        try Data(#"{"model": {"type": "BPE", "vocab": {"<unk>": 0, "a": 1, "b": 2, "ab": 3, " ": 4}, "merges": ["a b"], "unk_token": "<unk>"}, "added_tokens": []}"#.utf8)
+            .write(to: denseMoEDir.appending(component: "tokenizer.json"))
+
+        var req1 = ModelConversionRequest(
+            source: denseMoEDir.path, outputId: "local/qwen3-moe-28",
+            target: .macaqMoEBudget(bpw: 2.8), recipe: "moe-rw", stream: false)
+        req1.hadamardBlock = 32
+        req1.calibrationText = String(repeating: "ab a b ", count: 160)
+        let res1 = try await UniversalModelConverter.convertToDirectory(
+            request: req1, sourceURL: denseMoEDir, outputURL: macaqMoEDir) { _ in }
+        #expect(res1.shards >= 1 && res1.bytesAfter > 0)
+        let detMoE = try UniversalSourceReader.detect(at: macaqMoEDir)
+        #expect(detMoE.format.hasPrefix("macaq:moe:") && detMoE.requiresCanonicalDecode)
+
+        let req2 = ModelConversionRequest(
+            source: macaqMoEDir.path, outputId: "local/qwen3-moe-bf16",
+            target: .denseBF16, stream: false)
+        let res2 = try await UniversalModelConverter.convertToDirectory(
+            request: req2, sourceURL: macaqMoEDir, outputURL: recoveredDir) { _ in }
+        #expect(res2.shards >= 1 && res2.bytesAfter > 0)
+        let detDense = try UniversalSourceReader.detect(at: recoveredDir)
+        #expect(detDense.format == "dense:bf16" && !detDense.requiresCanonicalDecode)
     }
 }
