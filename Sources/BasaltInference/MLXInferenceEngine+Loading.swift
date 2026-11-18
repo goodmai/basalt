@@ -264,11 +264,14 @@ extension MLXInferenceEngine {
     public var supportsKVZones: Bool { modelAttendsThroughZones }
 
     func learnPolarGeometry(_ config: [String: Any]?, epoch: ModelEpoch) {
+        let rotated = config.flatMap(PolarGeometry.rotatedDims(config:))
+        if let rotated {
+            record(.learned(epoch) { $0.polarRotated = rotated })
+        }
         guard configuration.kvPrecision?.isPolar == true else { return }
-        guard let config, let rotated = PolarGeometry.rotatedDims(config: config) else {
+        guard let rotated else {
             return logger.warn("--kv-bits polar4: this model's RoPE layout is not known to pair dimensions i and i + d/2 (Qwen3, Qwen3.5 and LFM2 do); its zoned middle keeps affine 4-bit keys")
         }
-        record(.learned(epoch) { $0.polarRotated = rotated })
         logger.info("--kv-bits polar4 (experimental): zoned middle keys stored as one byte per RoPE pair (5-bit phase, 3-bit modulus) over \(rotated) rotated dims, the rest affine 4-bit")
     }
 

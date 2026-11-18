@@ -230,7 +230,7 @@ extension MLXInferenceEngine {
         GenerationPlan.Settings(
             kvPrecision: effectiveKVPrecision, kvZones: configuration.kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
             evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil, speculativeLookup: configuration.speculativeLookup,
-            capabilities: modelFacts.capabilities, adapter: adapterNamespace)
+            capabilities: modelFacts.capabilities, adapter: adapterNamespace, polarRotated: modelFacts.polarRotated)
     }
 
     func checkedSampling(_ request: GenerationRequest) async throws(BasaltError) -> (

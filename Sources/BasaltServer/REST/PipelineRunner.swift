@@ -62,10 +62,12 @@ struct PipelineRunner: Sendable {
         let perceived = perception.perceived
         let state = PipelineCore.state(perceived, text: request.text)
         let typed = perceived.pages == nil && perceived.transcript == nil
-        let share = !typed && stages.shareMedia && decisions?.acceptsMedia == true
+        let share = !typed && stages.shareMedia && decisions?.sharesPerceived == true
         let media = share ? request.attachments.compactMap(\.media) : nil
+        let decideCtx = DecideContext(state: state, media: media, perceived: !typed)
         let decided = try await decideWithEpistemic(
-            request, state: state, media: media, by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
+            request, context: decideCtx,
+            by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
         let executed = try await executeRoute(request, state: state, typed: typed, decided: decided, origin: origin, sessionId: sessionId)
         var receipt = PipelineCore.receipt(
             perception.receipts + [decided.receipt].compactMap { $0 }, replies: executed.replies, answers: executed.answers, ms: Self.elapsed(since: started))
@@ -189,16 +191,24 @@ struct PipelineRunner: Sendable {
         return (try await chat.transcribe(request).text, await chat.modelInfo)
     }
 
+    struct DecideContext: Sendable {
+        let state: String
+        var media: [DecisionMedia]? = nil
+        var perceived = false
+    }
+
     func decide(
-        _ questions: [String: SystemOneQuestion], state: String, media: [DecisionMedia]? = nil, by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
+        _ questions: [String: SystemOneQuestion], context: DecideContext,
+        by decisions: (any DecisionEngine)?, origin: RequestOrigin, sessionId: String?
     ) async throws(BasaltError) -> (SystemOneResponse?, PipelineStageReceipt?) {
         guard !questions.isEmpty, let decisions else { return (nil, nil) }
         let started = ContinuousClock.now
-        guard !state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, state.count <= SystemOneCore.maxStateCharacters else {
+        guard !context.state.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, context.state.count <= SystemOneCore.maxStateCharacters else {
             return (nil, PipelineCore.skipped(decisions.modelID, ms: Self.elapsed(since: started)))
         }
-        var request = SystemOneRequest(state: state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
-        request.media = media
+        var request = SystemOneRequest(state: context.state, questions: questions, abstainBelow: stages.abstainBelow, minMargin: stages.minMargin)
+        request.media = context.media
+        request.hasPerceivedContent = context.perceived ? true : nil
         do {
             let response = try await SystemOneController.decide(decisions, request, log: chat.sessionLog, origin: origin, sessionId: sessionId, telemetry: chat.telemetry)
             return (response, PipelineCore.decided(response, ms: Self.elapsed(since: started)))

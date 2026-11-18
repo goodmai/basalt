@@ -31,7 +31,7 @@ extension MLXInferenceEngine {
         guard let encoded, epoch == modelEpoch else { return input }
         let outputs = try await tower.run(encoded)
         guard epoch == modelEpoch else { return input }
-        return try await container.performSending(nonSendable: input) { context, input in
+        return try await container.performEvaluating(nonSendable: input) { context, input in
             let dtype = (context.model as? PaddleOCRVL)?.visual.embeddings.patchEmbedding.weight.dtype ?? .bfloat16
             let features = try CoreAIVisionTower.features(outputs, encoded: encoded, dtype: dtype)
             eval(features)

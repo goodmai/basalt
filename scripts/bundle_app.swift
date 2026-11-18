@@ -245,9 +245,10 @@ func assemble(_ options: Options, bin: String) {
 
 func sign(_ options: Options) {
     guard let identity = options.identity else { return }
+    let tsFlag = identity == "-" ? "--timestamp=none" : "--timestamp"
     let contents = "\(options.out)/Contents"
     for path in ["\(contents)/Helpers/basalt", options.out] {
-        run(["codesign", "--force", "--options", "runtime", "--timestamp=none", "--sign", identity, path], dryRun: options.dryRun)
+        run(["codesign", "--force", "--options", "runtime", tsFlag, "--sign", identity, path], dryRun: options.dryRun)
     }
 }
 
@@ -262,7 +263,15 @@ func package(_ options: Options, version: String) {
         run(["ditto", "-c", "-k", "--keepParent", options.out, zip], dryRun: options.dryRun)
     }
     if options.dmg {
-        run(["hdiutil", "create", "-volname", "Basalt", "-srcfolder", options.out, "-ov", "-format", "UDZO", folder.appending(path: "Basalt-\(version).dmg").path], dryRun: options.dryRun)
+        let dmg = folder.appending(path: "Basalt-\(version).dmg").path
+        run(["hdiutil", "create", "-volname", "Basalt", "-srcfolder", options.out, "-ov", "-format", "UDZO", dmg], dryRun: options.dryRun)
+        if let identity = options.identity, identity != "-" {
+            run(["codesign", "--force", "--timestamp", "--sign", identity, dmg], dryRun: options.dryRun)
+        }
+        if let profile = options.notarize {
+            run(["xcrun", "notarytool", "submit", dmg, "--keychain-profile", profile, "--wait"], dryRun: options.dryRun)
+            run(["xcrun", "stapler", "staple", dmg], dryRun: options.dryRun)
+        }
     }
 }
 

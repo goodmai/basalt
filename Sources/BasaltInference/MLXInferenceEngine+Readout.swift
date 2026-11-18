@@ -59,10 +59,17 @@ extension MLXInferenceEngine {
 
     package func letterLogits(state: String, questions: [SystemOneQuestion]) async throws(BasaltError) -> ([[Double]], SystemOneUsage) {
         guard let container else { throw .modelNotLoaded }
+        let limit = modelDescription.isEmpty ? nil : ModelCache.config(at: URL(fileURLWithPath: modelDescription)).flatMap {
+            (($0["text_config"] as? [String: Any])?["max_position_embeddings"] ?? $0["max_position_embeddings"]) as? Int
+        }
         do {
-            return try await container.perform { context in try Self.letterLogits(state: state, questions: questions, context: context) }
+            return try await container.performEvaluating(nonSendable: ()) { context, _ in
+                try Self.letterLogits(state: state, questions: questions, context: context, limit: limit)
+            }
         } catch let error as BasaltError {
             throw error
+        } catch is CancellationError {
+            throw .cancelled
         } catch {
             throw .inferenceError("systemone: \(Self.briefly(error))")
         }
@@ -83,9 +90,12 @@ extension MLXInferenceEngine {
         return (parts[0], parts[1])
     }
 
-    static func letterLogits(state: String, questions: [SystemOneQuestion], context: ModelContext) throws -> ([[Double]], SystemOneUsage) {
+    static func letterLogits(state: String, questions: [SystemOneQuestion], context: ModelContext, limit: Int? = nil) throws -> ([[Double]], SystemOneUsage) {
         let (header, userTail) = try readoutTemplate(context.tokenizer)
         let prefix = context.tokenizer.encode(text: header + SystemOneReadout.prefix(state: state), addSpecialTokens: false)
+        if let limit, prefix.count >= limit {
+            throw BasaltError.contextLengthExceeded(maxTokens: limit, requested: prefix.count + 1)
+        }
         let cache = try context.model.newCache(parameters: nil)
         let warm = context.model(LMInput.Text(tokens: MLXArray(prefix.map(Int32.init))[.newAxis]), cache: cache, state: nil)
         eval(cache)
@@ -93,6 +103,12 @@ extension MLXInferenceEngine {
         for question in questions {
             try Task.checkCancellation()
             let tail = context.tokenizer.encode(text: SystemOneReadout.tail(question) + userTail, addSpecialTokens: false)
+            guard let lastToken = tail.last else {
+                throw BasaltError.invalidRequestStructure(details: "systemone: empty question tail")
+            }
+            if let limit, prefix.count + tail.count > limit {
+                throw BasaltError.contextLengthExceeded(maxTokens: limit, requested: prefix.count + tail.count)
+            }
             let letters = try letterIds(context.tokenizer, count: SystemOneReadout.options(question).count)
             let branch = cache.map { $0.copy() }
             var state = warm.state
@@ -100,7 +116,7 @@ extension MLXInferenceEngine {
                 state = context.model(LMInput.Text(tokens: MLXArray(tail.dropLast().map(Int32.init))[.newAxis]), cache: branch, state: state).state
                 eval(branch)
             }
-            let output = context.model(LMInput.Text(tokens: MLXArray([Int32(tail[tail.count - 1])])[.newAxis]), cache: branch, state: state)
+            let output = context.model(LMInput.Text(tokens: MLXArray([Int32(lastToken)])[.newAxis]), cache: branch, state: state)
             let last = output.logits[0, -1].asType(.float32)
             rows.append(last[MLXArray(letters.map(Int32.init))].asArray(Float.self).map(Double.init))
             suffixTokens += tail.count

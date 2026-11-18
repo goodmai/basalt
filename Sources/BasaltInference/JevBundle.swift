@@ -38,9 +38,15 @@ struct JevBundle: Sendable {
         maxBranchTokens = config["max_branch_tokens"] as? Int ?? 192
         branchBatchSize = max(1, config["branch_batch_size"] as? Int ?? 16)
         maxCandidates = config["max_total_candidates"] as? Int ?? 512
-        temperatures = Dictionary(uniqueKeysWithValues: SystemOneKind.allCases.compactMap { kind in
-            ((calibration[kind.rawValue] as? [String: Any])?["temperature"] as? Double).map { (kind, $0) }
-        })
+        var parsedTemps: [SystemOneKind: Double] = [:]
+        for kind in SystemOneKind.allCases {
+            guard let rawTemp = (calibration[kind.rawValue] as? [String: Any])?["temperature"] as? Double else { continue }
+            guard rawTemp.isFinite, rawTemp > 0 else {
+                throw .modelConfigurationInvalid(path: directory.path, reason: "calibration temperature for \(kind.rawValue) must be finite and positive")
+            }
+            parsedTemps[kind] = rawTemp
+        }
+        temperatures = parsedTemps
         let rank = Float(adapter["r"] as? Int ?? config["lora_rank"] as? Int ?? 8)
         loraScale = Float(adapter["lora_alpha"] as? Double ?? Double(config["lora_alpha"] as? Int ?? 16)) / max(rank, 1)
         loraTargets = adapter["target_modules"] as? [String] ?? config["target_modules"] as? [String] ?? []

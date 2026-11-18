@@ -18,11 +18,22 @@ struct CoreAIEmbeddingBundle: Sendable, Equatable {
     var bos: Int?
     var eos: Int?
     var pad: Int
+    var vocabSize: Int?
     var documentPrompt: String
 
+    static func isSafeAssetName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.contains("\\") && !name.contains("..")
+    }
+
     static func isBundle(_ directory: URL) -> Bool {
-        FileManager.default.fileExists(atPath: directory.appending(component: "metadata.json").path)
-            && FileManager.default.fileExists(atPath: directory.appending(component: "encoder.aimodel").path)
+        let metaURL = directory.appending(component: "metadata.json")
+        guard let data = try? Data(contentsOf: metaURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let emb = root["embedding"] as? [String: Any]
+        else { return false }
+        let encName = ((emb["components"] as? [String: Any])?["encoder"] as? [String: Any])?["asset"] as? String ?? "encoder"
+        guard isSafeAssetName(encName) else { return false }
+        return FileManager.default.fileExists(atPath: directory.appending(component: "\(encName).aimodel").path)
     }
 
     init(directory: URL) throws(BasaltError) {
@@ -43,8 +54,9 @@ struct CoreAIEmbeddingBundle: Sendable, Equatable {
             guard let name = entry["function"] as? String, let length = entry["length"] as? Int, entry["batch"] as? Int ?? 1 == 1 else { return nil }
             return Function(name: name, length: length)
         }.sorted { $0.length < $1.length }
-        guard let tableAsset = table?["asset"] as? String, let encoderAsset = encoder?["asset"] as? String, !functions.isEmpty,
-              let dimension = embedding["dimension"] as? Int
+        guard let tableAsset = table?["asset"] as? String, let encoderAsset = encoder?["asset"] as? String,
+              Self.isSafeAssetName(tableAsset), Self.isSafeAssetName(encoderAsset),
+              !functions.isEmpty, let dimension = embedding["dimension"] as? Int, dimension > 0
         else { throw .modelConfigurationInvalid(path: path, reason: "the bundle needs a token_table and an encoder with batch-1 functions of fixed length (export it with coreai.embedding.export --platform iOS --text-only)") }
         let space = embedding["space"] as? [String: Any]
         id = space?["id"] as? String ?? URL(fileURLWithPath: path).lastPathComponent
@@ -58,6 +70,13 @@ struct CoreAIEmbeddingBundle: Sendable, Equatable {
         bos = (text["add_bos_token"] as? Bool ?? false) ? text["bos_token_id"] as? Int : nil
         eos = (text["add_eos_token"] as? Bool ?? false) ? text["eos_token_id"] as? Int : nil
         pad = text["pad_token_id"] as? Int ?? 0
+        vocabSize = (table?["vocab_size"] ?? text["vocab_size"] ?? embedding["vocab_size"]) as? Int
+        let upper = vocabSize ?? Int(Int32.max)
+        guard upper > 0, upper <= Int(Int32.max),
+              [bos, eos, pad].compactMap({ $0 }).allSatisfy({ $0 >= 0 && $0 < upper })
+        else {
+            throw .modelConfigurationInvalid(path: path, reason: "bundle special token IDs or vocab_size are out of Int32 bounds")
+        }
         documentPrompt = (text["prompts"] as? [String: Any])?["document"] as? String ?? ""
     }
 
@@ -80,6 +99,20 @@ struct CoreAIEmbeddingBundle: Sendable, Equatable {
 
     func poolWeights(real: Int, length: Int) -> [Float] {
         (0 ..< length).map { $0 < real ? 1 / Float(max(real, 1)) : 0 }
+    }
+
+    func bias16(real: Int, length: Int) -> [Float16] {
+        var out = [Float16](repeating: Float16(masked), count: length * length)
+        let zeroCount = min(max(0, real), length) * length
+        if zeroCount > 0 {
+            out.replaceSubrange(0 ..< zeroCount, with: repeatElement(Float16(0), count: zeroCount))
+        }
+        return out
+    }
+
+    func poolWeights16(real: Int, length: Int) -> [Float16] {
+        let w = Float16(1 / Float(max(real, 1)))
+        return (0 ..< length).map { $0 < real ? w : Float16(0) }
     }
 
     func truncated(_ vector: [Float], to dimensions: Int?) throws(BasaltError) -> [Float] {

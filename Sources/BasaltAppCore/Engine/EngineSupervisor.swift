@@ -50,12 +50,18 @@ public actor EngineSupervisor {
 
     public func start() async {
         guard state.isIdle else { return }
+        let epoch = state.epoch
         if let record = environment.records.load(), record.version == HealthResponse.version, record.arguments == launch.arguments,
-           environment.isAlive(record.pid), await environment.probe(.loopback(port: record.port, token: record.token)) {
-            (token, adoptedPID) = (record.token, record.pid)
-            send(.adopted(port: record.port))
-            return
+           environment.isAlive(record.pid) {
+            let ok = await environment.probe(.loopback(port: record.port, token: record.token))
+            guard state.epoch == epoch, state.isIdle else { return }
+            if ok {
+                (token, adoptedPID) = (record.token, record.pid)
+                send(.adopted(port: record.port))
+                return
+            }
         }
+        guard state.epoch == epoch, state.isIdle else { return }
         send(.start)
     }
 

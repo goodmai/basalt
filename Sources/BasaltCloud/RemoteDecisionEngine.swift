@@ -108,7 +108,9 @@ enum RemoteDecisionCore {
         var usage = SystemOneUsage(prefixTokens: 0, candidateBranches: 0, prefixEvaluations: 0, branchForwardCalls: 0, suffixTokens: 0)
         let tokens = provider == .gemini ? wire.usage?.totalInputTokens.map { Double($0) * CloudDecisionProvider.geminiInputPrice } : nil
         usage.cost = (wire.usage?.cost ?? tokens).flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
-        return SystemOneResponse(model: wire.model ?? model, answers: answers, usage: usage, calibrated: request.calibrated != false)
+        var response = SystemOneResponse(model: wire.model ?? model, answers: answers, usage: usage, calibrated: request.calibrated != false)
+        if answers.count < request.questions.count { response.escalate = true }
+        return response
     }
 
     static func answer(_ wire: Wire.Answer, for question: SystemOneQuestion) -> SystemOneAnswer? {
@@ -146,20 +148,33 @@ public struct RemoteDecisionEngine: DecisionEngine {
     public let modelID: String
     public let provider: CloudDecisionProvider
     public let runsBesideDecode = true
+    public let sharesPerceived: Bool
     public var onDevice: (any DecisionEngine)? { nil }
     public var acceptsMedia: Bool { provider == .gemini }
     let endpoint: URL
     let key: Secret
     let session: URLSession
 
-    public init(model: String, apiKey: String, provider: CloudDecisionProvider = .openRouter, baseURL: URL? = nil, timeout: TimeInterval? = nil) throws(BasaltError) {
+    public init(
+        model: String,
+        apiKey: String,
+        provider: CloudDecisionProvider = .openRouter,
+        baseURL: URL? = nil,
+        timeout: TimeInterval? = nil,
+        sharesPerceived: Bool = false
+    ) throws(BasaltError) {
         guard !apiKey.isEmpty else { throw .authenticationFailed(details: "cloud decisions need \(provider.keyEnvironment)") }
         let timeout = timeout ?? provider.timeout
         guard !model.trimmingCharacters(in: .whitespaces).isEmpty, timeout > 0 else { throw .invalidRequestStructure(details: "cloud decisions need a model and a positive timeout") }
-        (modelID, self.provider, endpoint, key) = (model, provider, (baseURL ?? provider.baseURL).appendingPathComponent("decisions"), Secret(value: apiKey))
+        (modelID, self.provider, endpoint, key, self.sharesPerceived) = (
+            model, provider, (baseURL ?? provider.baseURL).appendingPathComponent("decisions"), Secret(value: apiKey), sharesPerceived)
         let configuration = URLSessionConfiguration.ephemeral
         (configuration.timeoutIntervalForRequest, configuration.timeoutIntervalForResource) = (timeout, timeout)
         session = URLSession(configuration: configuration)
+    }
+
+    public func unload() async {
+        session.finishTasksAndInvalidate()
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {

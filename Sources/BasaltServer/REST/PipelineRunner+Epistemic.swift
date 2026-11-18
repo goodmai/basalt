@@ -16,20 +16,19 @@ extension PipelineRunner {
 
     func decideWithEpistemic(
         _ request: PipelineRequest,
-        state: String,
-        media: [DecisionMedia]?,
+        context: DecideContext,
         by engine: (any DecisionEngine)?,
         origin: RequestOrigin,
         sessionId: String?
     ) async throws(BasaltError) -> DecidedStage {
         guard let spec = stages.epistemic, spec.enabled else {
             let (decision, deciding) = try await decide(
-                request.questions, state: state, media: media, by: engine, origin: origin, sessionId: sessionId)
+                request.questions, context: context, by: engine, origin: origin, sessionId: sessionId)
             return DecidedStage(decision: decision, receipt: deciding, epistemic: nil)
         }
         let merged = EpistemicGateCore.mergedQuestions(request.questions, spec: spec, includeTools: true)
         let (raw, deciding) = try await decide(
-            merged, state: state, media: media, by: engine, origin: origin, sessionId: sessionId)
+            merged, context: context, by: engine, origin: origin, sessionId: sessionId)
         guard let raw else { return DecidedStage(decision: nil, receipt: deciding, epistemic: nil) }
         let gate = EpistemicGateCore.reduce(raw, spec: spec, hasTools: stages.hasTools)
         let userDecision = EpistemicGateCore.userResponse(raw, keeping: Set(request.questions.keys))

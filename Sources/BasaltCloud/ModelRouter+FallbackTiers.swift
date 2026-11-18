@@ -16,26 +16,39 @@ extension ModelRouter {
         return cloudClient
     }
 
+    private static func isCancellation(_ error: any Error) -> Bool {
+        Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
+    private func tierEstimatedCost(
+        _ tier: FallbackTier,
+        request: GenerationRequest,
+        exhausted: Bool,
+        remaining: Double?
+    ) -> Double? {
+        if tier.isFree { return 0 }
+        guard !exhausted else { return nil }
+        let text = (request.messages?.isEmpty == false)
+            ? ChatMessageInput.plainText(request.messages ?? [])
+            : request.prompt
+        let promptTokens = text.utf8.count / 4
+        let completionTokens = request.maxTokens ?? 1_024
+        let cost = estimateCost(model: tier.model, promptTokens: promptTokens, completionTokens: completionTokens)
+        if let remaining, cost > remaining { return nil }
+        return cost
+    }
+
     func assessFallbackTiers(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
         guard Self.isFallbackEligible(request) else { return nil }
         let context = RoutingContext(request)
         let completionTokens = request.maxTokens ?? 1_024
-        let promptTokens = request.prompt.utf8.count / 4
         let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
         let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
-            let estimatedCost: Double
-            let tierRemaining: Double?
-            if tier.isFree {
-                estimatedCost = 0
-                tierRemaining = nil
-            } else {
-                if exhausted { continue }
-                let cost = estimateCost(model: tier.model, promptTokens: promptTokens, completionTokens: completionTokens)
-                if let remaining, cost > remaining { continue }
-                estimatedCost = cost
-                tierRemaining = remaining
+            guard let estimatedCost = tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) else {
+                continue
             }
+            let tierRemaining: Double? = tier.isFree ? nil : remaining
             guard await isTierHealthy(tier) else { continue }
             let choice = state.cost?.stickyTier(request, sessionId: context.sessionId, localModel: localModel, at: Date())
             if let choice { state = .reduce(state, .tierChosen(choice.tier, sessionId: context.sessionId, request: request)) }
@@ -52,10 +65,14 @@ extension ModelRouter {
     func generateFromFallbackTiers(_ request: GenerationRequest) async throws -> GenerationResponse {
         let context = RoutingContext(request)
         let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
+        let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         var lastError: Error?
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
-            if !tier.isFree, exhausted { continue }
-            guard await isTierHealthy(tier) else { continue }
+            guard tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) != nil else { continue }
+            guard await isTierHealthy(tier) else {
+                if Task.isCancelled { throw CancellationError() }
+                continue
+            }
             do {
                 let response = try await routeToCloud(client: tier.client, model: tier.model, request: request)
                 state = .reduce(state, .fallback(.sessionBound(sessionId: context.sessionId, tierId: tier.id)))
@@ -64,6 +81,7 @@ extension ModelRouter {
                 }
                 return response
             } catch {
+                if Self.isCancellation(error) { throw error }
                 lastError = error
                 let instant = state.fallback.probeConfig.now()
                 state = .reduce(state, .fallback(.failed(id: tier.id, at: instant)))
@@ -75,10 +93,14 @@ extension ModelRouter {
     func generateStreamFromFallbackTiers(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let context = RoutingContext(request)
         let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
+        let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         var lastError: Error?
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
-            if !tier.isFree, exhausted { continue }
-            guard await isTierHealthy(tier) else { continue }
+            guard tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) != nil else { continue }
+            guard await isTierHealthy(tier) else {
+                if Task.isCancelled { throw CancellationError() }
+                continue
+            }
             do {
                 let startTime = ContinuousClock.now
                 let source = try await tier.client.chatStream(request: Self.chatRequest(request, model: tier.model, stream: true))
@@ -90,6 +112,7 @@ extension ModelRouter {
                     await self?.recordCloudCost(model: model, response: metadata, context: context)
                 }
             } catch {
+                if Self.isCancellation(error) { throw error }
                 lastError = error
                 let instant = state.fallback.probeConfig.now()
                 state = .reduce(state, .fallback(.failed(id: tier.id, at: instant)))
@@ -110,6 +133,7 @@ extension ModelRouter {
             state = .reduce(state, .fallback(.probeStarted(tier.id)))
             let generation = state.fallback.probesStarted[tier.id] ?? 1
             let healthy = await Self.probeTierModels(tier, timeout: timeout)
+            if Task.isCancelled { return false }
             let instant = clock()
             state = .reduce(state, .fallback(.probed(id: tier.id, generation: generation, healthy: healthy, at: instant)))
             return state.fallback.verdict(for: tier.id, at: instant) == .healthy

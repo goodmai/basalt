@@ -107,7 +107,10 @@ public actor CloudGate {
         core.update(limits: limits, rekeyed: rekeyed)
     }
 
-    public func spent(_ model: String) -> Double { core.spent[model, default: 0] }
+    public func spent(_ model: String) -> Double {
+        core.roll(to: CloudGateCore.day(of: now()))
+        return core.spent[model, default: 0]
+    }
 }
 
 public struct GuardedDecisionEngine: DecisionEngine {
@@ -116,10 +119,15 @@ public struct GuardedDecisionEngine: DecisionEngine {
     public var modelID: String { inner.modelID }
     public var runsBesideDecode: Bool { inner.runsBesideDecode }
     public var acceptsMedia: Bool { inner.acceptsMedia }
+    public var sharesPerceived: Bool { inner.sharesPerceived }
     public var onDevice: (any DecisionEngine)? { inner.onDevice }
 
     public init(_ inner: any DecisionEngine, gate: CloudGate) {
         (self.inner, self.gate) = (inner, gate)
+    }
+
+    public func unload() async {
+        await inner.unload()
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
