@@ -312,3 +312,15 @@
 "Semantic Turn-Taking" = "Semantic Turn-Taking";
 "Duplex Speech-to-Speech" = "Duplex Speech-to-Speech";
 "Thinking pause…" = "Thinking pause…";
+"DFlash" = "DFlash";
+"dLLM Infill" = "dLLM Infill";
+"Duplex STS" = "Duplex STS";
+"SmartTurn" = "SmartTurn";
+"Soprano 80M" = "Soprano 80M";
+"ACE-Step 1.5" = "ACE-Step 1.5";
+"Music DiT" = "Music DiT";
+"Video DiT" = "Video DiT";
+"3D-VAE Tiled" = "3D-VAE Tiled";
+"Shared Encoder" = "Shared Encoder";
+"SeedVR2 2K" = "SeedVR2 2K";
+"Cluster TB5" = "Cluster TB5";

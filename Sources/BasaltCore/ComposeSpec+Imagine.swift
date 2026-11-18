@@ -14,6 +14,10 @@ extension ComposeSpec {
         public var candidates: Int?
         public var judgeVia: String?
         public var onGPUBusy: ImageOnGPUBusy?
+        public var shareTextEncoderWith: String?
+        public var kvCacheReferences: Bool?
+        public var rgba: Bool?
+        public var upscale: ImagineUpscaleSpec?
 
         public init(
             chain: [String],
@@ -38,9 +42,11 @@ extension ComposeSpec {
         }
 
         enum CodingKeys: String, CodingKey {
-            case chain, steps, size, format, candidates
+            case chain, steps, size, format, candidates, rgba, upscale
             case upsampleVia = "upsample_via"
             case shareEncoder = "share_encoder"
+            case shareTextEncoderWith = "share_text_encoder_with"
+            case kvCacheReferences = "kv_cache_references"
             case decoderVia = "decoder_via"
             case teacacheThreshold = "teacache_threshold"
             case previewEverySteps = "preview_every_steps"

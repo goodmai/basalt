@@ -35,6 +35,7 @@ extension ComposeFile.Walk {
         stage.previewEverySteps = integer(field["preview_every_steps"], "\(path).preview_every_steps")
         stage.candidates = integer(field["candidates"], "\(path).candidates")
         stage.judgeVia = text(field["judge_via"], "\(path).judge_via")
+        parseImagineV22(field, path: path, into: &stage)
         imagineEnums(field, path: path, into: &stage)
         spec.imagine = stage
     }

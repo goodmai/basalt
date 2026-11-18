@@ -40,7 +40,8 @@ struct ComposeProfilesMatrixTests {
     func allBundledProfilesParseCleanly() throws {
         let bundledKeys = ComposeFile.bundled.keys.sorted()
         #expect(ComposeProfileCatalog.flux3Combinations.count == 5)
-        #expect(bundledKeys.count == 84 + 4 * 12 + 3 + 5)
+        #expect(ComposeProfileCatalog.v22Specialists.count == 6)
+        #expect(bundledKeys.count == 84 + 4 * 12 + 3 + 5 + ComposeProfileCatalog.v22Specialists.count)
         for key in bundledKeys {
             let spec = try ComposeFile.load(key)
             #expect(spec.issues.isEmpty, "Bundled profile \(key) had issues: \(spec.issues)")

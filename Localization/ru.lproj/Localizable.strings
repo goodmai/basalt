@@ -312,3 +312,15 @@
 "Semantic Turn-Taking" = "Семантическая смена реплики";
 "Duplex Speech-to-Speech" = "Дуплекс речь-в-речь";
 "Thinking pause…" = "Пауза на размышление…";
+"DFlash" = "DFlash";
+"dLLM Infill" = "dLLM Infill";
+"Duplex STS" = "Дуплекс STS";
+"SmartTurn" = "SmartTurn";
+"Soprano 80M" = "Soprano 80M";
+"ACE-Step 1.5" = "ACE-Step 1.5";
+"Music DiT" = "Музыка DiT";
+"Video DiT" = "Видео DiT";
+"3D-VAE Tiled" = "3D-VAE тайлинг";
+"Shared Encoder" = "Общий энкодер";
+"SeedVR2 2K" = "SeedVR2 2K";
+"Cluster TB5" = "Кластер TB5";

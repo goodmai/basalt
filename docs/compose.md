@@ -447,3 +447,14 @@ Measured with `compose up` on an M4 Pro with 24 GB, release build:
 | | document | OCR reloaded (267 ms): 5.3 s |
 | voice-agent (bundled) | audio | chat unloaded around Nemotron Transcribe (swap 6.9 s): 17.3 s |
 | too-big (example) | `compose plan` | refused: one stage needs 20.7 GB plus 2 GB against a 19.1 GB working set |
+
+
+## Schema `version: "2.2"` Extensions
+
+Compose `version: "2.2"` (compatible with `version: 2`) adds declarative configuration for block-diffusion LLMs, `DFlash` speculative drafters, duplex speech-to-speech, shared VLM/DiT text encoders, 1-step `SeedVR2` upscaling, `ACE-Step` music DiT, causal 3D-VAE video DiTs, segment-wise preference training, and Thunderbolt/LAN multi-Mac clusters:
+
+- Per-model `speculative` (`mode`, `drafter`, `block_size`, `verify`) and `diffusion_text` (`dual_kv_cache`, `confidence_threshold`, `contrastive_alpha`).
+- `imagine` extensions: `share_text_encoder_with`, `kv_cache_references`, `rgba`, and `upscale` (`model`, `steps`, `target_resolution`).
+- Root `voice` (`mode`, `sts_model`, `denoise`, `turn_detection` with `model` and `diarization`, `tts_fallback`, `aligner`).
+- Root `music` (`model`, `steps`, `duration_seconds`) and `video` (`model`, `vae_tiling`, `sta_sparse`, `fps`, `frames`).
+- Root `train` (`method`, `segments`, `ema_decay`) and `cluster` (`topology`, `peers`, `compression`).

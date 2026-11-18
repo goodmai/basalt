@@ -27,12 +27,17 @@ public enum ComposeSchema {
 
     public static let sections: [String: [Field]] = [
         "root": [
-            Field("version", .integer), Field("name", .string), Field("memory", .choice(PipelineMemory.allCases.map(\.rawValue))),
+            Field("version", .choice(["1", "2", "2.2"])), Field("name", .string), Field("memory", .choice(PipelineMemory.allCases.map(\.rawValue))),
             Field("budget", .section("budget")), Field("models", .sections("model")), Field("pipeline", .section("pipeline")),
             Field("pipelines", .sections("pipeline")), Field("experimental", .section("experimental")), Field("mcp", .section("mcp")),
             Field("variables", .variables, since: 2), Field("profiles", .sections("profile"), since: 2),
             Field("adapters", .sections("compose_adapter"), since: 2),
             Field("benchmarks", .section("benchmarks"), since: 2),
+            Field("voice", .section("voice_v22"), since: 2),
+            Field("music", .section("music_v22"), since: 2),
+            Field("video", .section("video_v22"), since: 2),
+            Field("train", .section("train_v22"), since: 2),
+            Field("cluster", .section("cluster_v22"), since: 2),
         ],
         "experimental": [
             Field("zero_copy_body", .boolean), Field("smallm_kernel", .boolean), Field("speech_analyzer", .boolean),
@@ -50,6 +55,8 @@ public enum ComposeSchema {
             Field("source", .string), Field("keep", .choice(ComposeSpec.Keep.allCases.map(\.rawValue))), Field("idle_unload", .duration),
             Field("api_key_env", .string), Field("data", .choice([ComposeSpec.noPerceived])), Field("budget", .section("budget")),
             Field("profiles", .names, since: 2),
+            Field("speculative", .section("model_speculative"), since: 2),
+            Field("diffusion_text", .section("diffusion_text"), since: 2),
         ],
         "pipeline": [
             Field("perceive", .section("perceive")), Field("decide", .section("decide")),
@@ -67,6 +74,8 @@ public enum ComposeSchema {
         ],
         "imagine": [
             Field("chain", .names), Field("upsample_via", .string), Field("share_encoder", .string),
+            Field("share_text_encoder_with", .string, since: 2), Field("kv_cache_references", .boolean, since: 2),
+            Field("rgba", .boolean, since: 2), Field("upscale", .section("imagine_upscale"), since: 2),
             Field("decoder_via", .string), Field("steps", .integer), Field("size", .string),
             Field("format", .choice(ImageOutputFormat.allCases.map(\.rawValue))),
             Field("teacache_threshold", .number), Field("preview_every_steps", .integer),
@@ -141,6 +150,41 @@ public enum ComposeSchema {
         ],
         "adapter_gate": [
             Field("max_kl", .number), Field("max_ppl_rise", .number), Field("held_out", .names),
+        ],
+        "model_speculative": [
+            Field("mode", .choice(ModelSpeculativeSpec.validModes.sorted())),
+            Field("drafter", .string), Field("block_size", .integer),
+            Field("verify", .choice(ModelSpeculativeSpec.validVerifiers.sorted())),
+        ],
+        "diffusion_text": [
+            Field("dual_kv_cache", .boolean), Field("confidence_threshold", .number), Field("contrastive_alpha", .number),
+        ],
+        "imagine_upscale": [
+            Field("model", .string), Field("steps", .integer), Field("target_resolution", .integer),
+        ],
+        "voice_v22": [
+            Field("mode", .choice(VoiceDuplexSpec.validModes.sorted())), Field("sts_model", .string),
+            Field("denoise", .string), Field("turn_detection", .section("voice_turn_detection")),
+            Field("tts_fallback", .string), Field("aligner", .string),
+        ],
+        "voice_turn_detection": [
+            Field("model", .string), Field("diarization", .string),
+        ],
+        "music_v22": [
+            Field("model", .string), Field("steps", .integer), Field("duration_seconds", .integer),
+        ],
+        "video_v22": [
+            Field("model", .string), Field("vae_tiling", .boolean), Field("sta_sparse", .boolean),
+            Field("fps", .integer), Field("frames", .integer),
+        ],
+        "train_v22": [
+            Field("method", .choice(ComposeTrainSpec.validMethods.sorted())),
+            Field("segments", .integer), Field("ema_decay", .number),
+        ],
+        "cluster_v22": [
+            Field("topology", .choice(ComposeClusterSpec.validTopologies.sorted())),
+            Field("peers", .names),
+            Field("compression", .choice(ComposeClusterSpec.validCompressions.sorted())),
         ],
     ]
 
