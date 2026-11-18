@@ -57,11 +57,7 @@ extension MLXInferenceEngine {
                 MLXLLM.Qwen35MoEModel(try JSONDecoder.json5().decode(MLXLLM.Qwen35Configuration.self, from: data))
             }
         }
-        for type in ["minimax_m2", "minimax-m2"] {
-            await registry.registerModelType(type) { data in
-                MiniMaxModel(try JSONDecoder.json5().decode(MiniMaxConfiguration.self, from: data))
-            }
-        }
+        await ModelFamilyAliases.registerAll()
         await registry.registerModelType(FlintModel.modelType) { data in
             FlintModel(try JSONDecoder.json5().decode(FlintConfiguration.self, from: data).validated())
         }

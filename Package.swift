@@ -8,6 +8,24 @@ let package = Package(
     platforms: [
         .macOS(.v27)
     ],
+    products: [
+        .library(
+            name: "BasaltFoundationModels",
+            targets: ["BasaltFoundationModels"]
+        ),
+        .executable(
+            name: "Basalt",
+            targets: ["Basalt"]
+        ),
+        .executable(
+            name: "BasaltMac",
+            targets: ["BasaltMac"]
+        ),
+        .executable(
+            name: "PerformanceBenchmark",
+            targets: ["PerformanceBenchmark"]
+        ),
+    ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",         from: "0.33.0"),
         .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "ee0cd4739c508280c6c615d248644a4312b70cba"),
@@ -50,7 +68,6 @@ let package = Package(
             path: "Sources/BasaltBench",
             swiftSettings: swiftSettings
         ),
-        // Inference: the MLX-backed engine.
         .target(
             name: "BasaltInference",
             dependencies: [
@@ -58,8 +75,6 @@ let package = Package(
                 .product(name: "MLX",           package: "mlx-swift"),
                 .product(name: "MLXOptimizers", package: "mlx-swift"),
                 .product(name: "MLXLLM",        package: "mlx-swift-lm"),
-                // Gemma 4 and other *ForConditionalGeneration checkpoints are only
-                // registered in MLXVLM; without it ModelFactoryRegistry cannot load them.
                 .product(name: "MLXVLM",        package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon",   package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
@@ -79,14 +94,12 @@ let package = Package(
             path: "Sources/BasaltSpeech",
             swiftSettings: swiftSettings
         ),
-        // Cloud: OpenRouter client, router, cost tracking.
         .target(
             name: "BasaltCloud",
             dependencies: ["BasaltCore"],
             path: "Sources/BasaltCloud",
             swiftSettings: swiftSettings
         ),
-        // Server: REST (Hummingbird) controllers, middleware, MCP server.
         .target(
             name: "BasaltServer",
             dependencies: [
@@ -102,7 +115,6 @@ let package = Package(
             path: "Sources/BasaltServer",
             swiftSettings: swiftSettings
         ),
-        // UI: terminal renderers. Headless — the SwiftUI client lives in BasaltApp.
         .target(
             name: "BasaltUI",
             dependencies: [
@@ -119,8 +131,12 @@ let package = Package(
             path: "Sources/BasaltAppCore",
             swiftSettings: swiftSettings
         ),
-        // App: the SwiftUI REST chat client. Nothing links it yet (its launch command is #55),
-        // so SwiftUI/AppKit stay out of the CLI binary.
+        .target(
+            name: "BasaltFoundationModels",
+            dependencies: ["BasaltCore", "BasaltAppCore"],
+            path: "Sources/BasaltFoundationModels",
+            swiftSettings: swiftSettings
+        ),
         .target(
             name: "BasaltApp",
             dependencies: [
@@ -136,7 +152,6 @@ let package = Package(
             path: "Sources/BasaltMac",
             swiftSettings: swiftSettings
         ),
-        // CLI: ArgumentParser commands wiring everything together.
         .target(
             name: "BasaltCLI",
             dependencies: [
@@ -147,8 +162,6 @@ let package = Package(
             path: "Sources/BasaltCLI",
             swiftSettings: swiftSettings
         ),
-
-        // ── Executable (thin wrapper — just calls the CLI main) ──────────────
         .executableTarget(
             name: "Basalt",
             dependencies: [
@@ -158,13 +171,11 @@ let package = Package(
             path: "Sources/BasaltBin",
             swiftSettings: swiftSettings
         ),
-
-        // ── Tests ─────────────────────────────────────────────────────────────
         .testTarget(
             name: "BasaltTests",
             dependencies: [
                 .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
-                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltHarness", "BasaltBench", "BasaltSpeech",
+                "BasaltCore", "BasaltInference", "BasaltCloud", "BasaltServer", "BasaltUI", "BasaltCLI", "BasaltApp", "BasaltAppCore", "BasaltFoundationModels", "BasaltHarness", "BasaltBench", "BasaltSpeech",
                 .product(name: "HummingbirdTesting", package: "hummingbird"),
                 .product(name: "CoreMetrics", package: "swift-metrics"),
                 .product(name: "MetricsTestKit", package: "swift-metrics"),
