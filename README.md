@@ -166,6 +166,7 @@ Local 4B–12B models are not a drop-in replacement for a frontier model — the
 | `basalt compose` reference and measurements | [docs/compose.md](docs/compose.md) |
 | Basalt for Mac & `basalt://` deep links | [docs/mac-app.md](docs/mac-app.md) |
 | Model X-ray, telemetry, experiments, self-training, distillation | [docs/research-tools.md](docs/research-tools.md) |
+| Mathematical & scientific research foundations (85+ papers & acknowledgements) | [docs/research-foundations.md](docs/research-foundations.md) |
 | Project structure, architecture notes, scripts, dependencies | [docs/architecture.md](docs/architecture.md) |
 | Architecture patterns and modules (Russian) | [docs/ARCHITECTURE_PATTERNS_AND_MODULES.md](docs/ARCHITECTURE_PATTERNS_AND_MODULES.md) |
 | Cloud: OpenRouter setup, cost optimization, model comparison | [docs/cloud/OPENROUTER_SETUP.md](docs/cloud/OPENROUTER_SETUP.md) · [docs/cloud/COST_OPTIMIZATION.md](docs/cloud/COST_OPTIMIZATION.md) · [docs/cloud/MODEL_COMPARISON.md](docs/cloud/MODEL_COMPARISON.md) |

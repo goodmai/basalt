@@ -114,6 +114,7 @@ extension ServeCommand {
                 ).withDecisions(launch.decisions).withPipeline(launch.pipeline).withPipelines(launch.pipelines, compose: launch.compose)
                     .withSpeechSynthesizer(launch.speechSynthesizer)
                     .withImageSynthesizer(launch.imageSynthesizer)
+                    .withModelHub(.live(converter: UniversalModelConverter()))
                     .withReadyHandler(launch.readyHandler)
                 group.addTask { try await restServer.run(); return true }
             }

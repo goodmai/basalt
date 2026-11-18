@@ -1,14 +1,23 @@
+import BasaltCore
 import Foundation
 
 public struct LibraryClient: Sendable {
     public typealias Progress = @Sendable (Int64, Int64) -> Void
     public typealias Downloader = @Sendable (String, @escaping Progress) async throws -> Void
+    public typealias ConversionPlanner = @Sendable (String, QuantizationTarget, Double?, Bool) async throws -> ModelConversionPlan
+    public typealias Converter = @Sendable (ModelConversionRequest, @escaping ConversionProgressHandler) async throws -> ModelConversionResult
 
     public var models: @Sendable () async throws -> [LibraryModel]
     public var fit: @Sendable (String) async throws -> ModelFit
     public var load: @Sendable (String) async throws -> Void
     public var download: Downloader
     public var delete: @Sendable (String) async throws -> Void
+    public var planConversion: ConversionPlanner = { source, target, _, pv in
+        ModelConversionPlan(sourceId: source, sourceFormat: "affine:4:64", target: target.specString, supportsPVTune: pv && target.supportsPVTune)
+    }
+    public var convert: Converter = { req, _ in
+        ModelConversionResult(outputId: req.outputId, bytesBefore: 0, bytesAfter: 0, shards: 1)
+    }
 
     public init(
         models: @escaping @Sendable () async throws -> [LibraryModel], fit: @escaping @Sendable (String) async throws -> ModelFit,
@@ -16,14 +25,18 @@ public struct LibraryClient: Sendable {
         download: @escaping Downloader,
         delete: @escaping @Sendable (String) async throws -> Void
     ) {
-        (self.models, self.fit, self.load, self.download, self.delete) = (models, fit, load, download, delete)
+        self.models = models
+        self.fit = fit
+        self.load = load
+        self.download = download
+        self.delete = delete
     }
 }
 
 extension LibraryClient {
     public static func live(_ endpoint: EngineEndpoint, session: URLSession = .engine) -> LibraryClient {
         let engine = EngineClient.http(endpoint, session: session)
-        return LibraryClient(
+        var client = LibraryClient(
             models: {
                 let (data, response) = try await session.data(for: endpoint.request("v1/models"))
                 try EngineClient.check(response, data)
@@ -47,6 +60,14 @@ extension LibraryClient {
             delete: { id in
                 try await engine.deleteModel(id)
             })
+        client.planConversion = { source, target, budgetGB, pvTune in
+            try await Self.livePlanConversion(
+                source, target: target, budgetGB: budgetGB, pvTune: pvTune, endpoint: endpoint, session: session)
+        }
+        client.convert = { req, onProgress in
+            try await Self.liveConvertModel(req, endpoint: endpoint, session: session, onProgress: onProgress)
+        }
+        return client
     }
 
     static func models(_ data: Data) throws -> [LibraryModel] {
@@ -84,6 +105,12 @@ public enum LibraryEffects {
             case .savePending(let ids): return .run(id: "pending") { _ in environment.savePending(ids) }
             case .cancelDownload(let id): return .cancel(id: "download:\(id)")
             case .download(let id): return .run(id: "download:\(id)") { send in await download(id, environment, send) }
+            case .planConversion(let src, let tgt, let bgb, let pv):
+                return .run(id: "convert-plan") { send in await planConversion(src, tgt, bgb, pv, environment, send) }
+            case .convert(let req):
+                return .run(id: "convert:\(req.outputId)") { send in await runConvert(req, environment, send) }
+            case .cancelConversion(let id):
+                return .cancel(id: "convert:\(id)")
             case .list, .fit, .load, .delete: return .run(id: Self.id(effect)) { send in await call(effect, environment, send) }
             }
         }
@@ -134,6 +161,47 @@ public enum LibraryEffects {
             }
         } catch {
             await send(.failed(Self.describe(error)))
+        }
+    }
+
+    static func planConversion(
+        _ source: String,
+        _ target: QuantizationTarget,
+        _ budgetGB: Double?,
+        _ pvTune: Bool,
+        _ environment: LibraryEnvironment,
+        _ send: @escaping @Sendable (LibraryAction) async -> Void
+    ) async {
+        guard let client = await environment.client() else { return }
+        if let plan = try? await client.planConversion(source, target, budgetGB, pvTune), !Task.isCancelled {
+            await send(.conversionPlanned(plan))
+        }
+    }
+
+    static func runConvert(
+        _ req: ModelConversionRequest,
+        _ environment: LibraryEnvironment,
+        _ send: @escaping @Sendable (LibraryAction) async -> Void
+    ) async {
+        guard let client = await environment.client() else {
+            return await send(.conversionFailed(req.outputId, "the engine is not running"))
+        }
+        let (updates, sink) = AsyncStream.makeStream(of: ModelConversionProgress.self, bufferingPolicy: .bufferingNewest(1))
+        let relay = Task {
+            for await prog in updates {
+                await send(.conversionProgressed(req.outputId, prog))
+            }
+        }
+        defer { relay.cancel() }
+        do {
+            let result = try await client.convert(req) { prog in sink.yield(prog) }
+            sink.finish()
+            await relay.value
+            guard !Task.isCancelled else { return }
+            await send(.conversionCompleted(req.outputId, result))
+        } catch {
+            guard !Task.isCancelled else { return }
+            await send(.conversionFailed(req.outputId, Self.describe(error)))
         }
     }
 }

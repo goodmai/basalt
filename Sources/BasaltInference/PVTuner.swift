@@ -226,6 +226,7 @@ package struct PVTeacherBatch: Sendable {
 }
 
 package struct PVTuneConfig: Sendable {
+    package var calibrationBatches = 40
     package var globalContinuousSteps = 24
     package var continuousStepsPerGroup = 8
     package var batchesPerDiscreteStep = 6
@@ -237,6 +238,12 @@ package struct PVTuneConfig: Sendable {
     package var maxContinuousSwitchExperts = 16
 
     package init() {}
+
+    package init(preset: PVTunePreset) {
+        self.calibrationBatches = preset.calibrationBatches
+        self.globalContinuousSteps = preset.globalContinuousSteps
+        self.maxLayerGroups = preset.maxLayerGroups
+    }
 }
 
 package struct PVTuneSummary: Sendable {

@@ -139,7 +139,8 @@ extension PVTuner {
             defer { await withTaskCancellationShield { await teacherEngine.unload(); Memory.clearCache() } }
             try await teacherEngine.load(modelPath: teacher.path)
             guard let teacherContainer = await teacherEngine.container else { throw BasaltError.modelNotLoaded }
-            allBatches = await collectTeacherBatches(teacherContainer, texts: corpus, count: 40, seqLen: 128, topK: 64)
+            allBatches = await collectTeacherBatches(
+                teacherContainer, texts: corpus, count: max(4, config.calibrationBatches), seqLen: 128, topK: 64)
         }
         let studentEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
         defer { await withTaskCancellationShield { await studentEngine.unload(); Memory.clearCache() } }

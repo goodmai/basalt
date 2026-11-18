@@ -110,6 +110,15 @@ A custom kernel or a new decode path lands only with:
 - a parity test against the stock MLX graph on a tiny fixture: exact for token ids and expert indices, within a stated float tolerance for logits and weights;
 - no mocked engine below `BasaltServer`. `MockInferenceEngine` is for REST and controller tests.
 
+## Quantization and universal converter
+
+Every new quantization format, basis or normalization transform, mixed-precision allocator, or post-quantization refinement method added to Basalt must support the universal converter in the same PR (or its designated converter follow-up in a multi-slice epic):
+
+- **Target & recipe grammar (`BasaltCore/QuantizationTarget.swift`)** — add or extend the canonical specification string (`--to <spec>` and `--quant-recipe <recipe>`), round-trip parser, bit-rate / RAM footprint estimator (`ModelConversionPlan`), and `supportsPVTune` classification.
+- **Checkpoint detection & canonical decode (`BasaltInference/Quantization/UniversalSourceReader.swift`)** — detect checkpoints saved in the new format (`config.json` / tensor metadata) and decode quantized weights canonically per layer/shard so any checkpoint in the new format can also serve as a conversion source (`any-to-any`).
+- **Encoding & refinement (`BasaltInference/Quantization/UniversalModelConverter.swift`)** — wire target encoding, recipe normalization, and PV-Tuning compatibility (when discrete codes/scales are refined) without materializing the full model twice in memory.
+- **CLI, REST SSE & macOS GUI parity (`ModelsConvertCommand`, `/v1/models/convert*`, `ConvertModelSheet` + `Localization/{en,ru}.lproj/Localizable.strings`)** — expose the new format or recipe consistently across CLI, REST `/v1/models/convert/plan` + `/v1/models/convert`, and the macOS Library converter sheet with English and Russian localization strings, backed by an `any-to-any` round-trip test in `UniversalConverterTests`.
+
 ## Real-model runs
 
 Anything that loads a real model — a benchmark, a quality or memory measurement, a passkey check, a parity run — runs from Swift: `PerformanceBenchmark`, a Swift test gated on `BASALT_E2E*` environment variables, or a `scripts/*.swift` runner. A shell script may only launch it; it does not loop over models, parse output or decide pass/fail.

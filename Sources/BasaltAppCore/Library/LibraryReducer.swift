@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 
 public struct LibraryModel: Sendable, Equatable, Identifiable {
@@ -35,6 +36,8 @@ public struct LibraryState: Sendable, Equatable {
     public var models: [LibraryModel] = []
     public var fits: [String: ModelFit] = [:]
     public var downloads: [String: Download] = [:]
+    public var conversions: [String: ConversionJobState] = [:]
+    public var convertDraft: ConversionDraft?
     public var loading: String?
     public var problem: String?
 
@@ -55,6 +58,15 @@ public enum LibraryAction: Sendable {
     case downloadFailed(String, String)
     case cancelDownload(String)
     case delete(String)
+    case openConvert(LibraryModel)
+    case updateConvertDraft(ConversionDraft)
+    case closeConvert
+    case conversionPlanned(ModelConversionPlan)
+    case startConversion
+    case conversionProgressed(String, ModelConversionProgress)
+    case conversionCompleted(String, ModelConversionResult)
+    case conversionFailed(String, String)
+    case cancelConversion(String)
     case failed(String)
 }
 
@@ -66,6 +78,9 @@ public enum LibraryEffect: Sendable, Equatable {
     case cancelDownload(String)
     case delete(String)
     case savePending([String])
+    case planConversion(source: String, target: QuantizationTarget, budgetGB: Double?, pvTune: Bool)
+    case convert(ModelConversionRequest)
+    case cancelConversion(String)
 }
 
 public enum LibraryReducer {
@@ -98,6 +113,10 @@ public enum LibraryReducer {
             return transfer(&state, action)
         case .delete(let id):
             return delete(&state, id)
+        case .openConvert, .updateConvertDraft, .closeConvert, .conversionPlanned,
+             .startConversion, .conversionProgressed, .conversionCompleted,
+             .conversionFailed, .cancelConversion:
+            return reduceConversion(&state, action)
         case .failed(let message):
             (state.problem, state.loading) = (message, nil)
             return [.list]
