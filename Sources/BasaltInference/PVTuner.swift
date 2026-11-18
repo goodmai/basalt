@@ -334,7 +334,7 @@ package enum PVTuner {
                 eval(repacked)
                 try swapModule(path, with: repacked, in: model)
                 replaced += 1
-            } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.bits <= 4 {
+            } else if let ql = mod as? QuantizedLinear, type(of: ql) == QuantizedLinear.self, ql.globalScale == nil, ql.bits <= 4 {
                 let cols = ql.weight.dim(-1) * 32 / ql.bits
                 guard cols.isMultiple(of: groupSize) else { continue }
                 let dense = dequantized(ql.weight, scales: ql.scales, biases: ql.biases, groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode)

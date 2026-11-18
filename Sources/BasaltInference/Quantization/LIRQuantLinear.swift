@@ -105,11 +105,100 @@ package enum LIRQuantKernels {
             )[0]
             return out.reshaped(x.shape)
         }
+        return differentiableTransform(x, basis: basis)
+    }
+
+    package static func differentiableTransform(_ x: MLXArray, basis: LIRBasisParameters) -> MLXArray {
+        let origType = x.dtype
+        let k = basis.perm.size
+        guard x.ndim >= 1, x.dim(-1) == k, k.isMultiple(of: 32) else { return x }
+        let rows = x.size / max(1, k)
+        guard rows > 0 else { return x }
         var cur = x.asType(.float32).reshaped(rows, k).take(basis.perm.asType(.int32), axis: -1)
+        if let givens = givensMatrix(basis) {
+            let rotatedSub = matmul(cur[0..., 0 ..< givens.width], givens.matrix)
+            cur = givens.width < k ? concatenated([rotatedSub, cur[0..., givens.width...]], axis: -1) : rotatedSub
+        }
         cur = cur * basis.diagScale.asType(.float32).reshaped(1, k)
         return hadamardTransform(cur.reshaped(-1, 32), scale: 1.0 / Float(32.0).squareRoot())
             .reshaped(x.shape)
             .asType(origType)
+    }
+
+    private static func givensMatrix(_ basis: LIRBasisParameters) -> (matrix: MLXArray, width: Int)? {
+        guard basis.numLayers > 0, basis.pairsPerLayer > 0 else { return nil }
+        let pFlat = basis.givensPairs.asType(.int32).asArray(Int32.self)
+        let aFlat = basis.givensAngles.asType(.float32).asArray(Float.self)
+        let maxIdx = pFlat.max().map(Int.init) ?? -1
+        guard maxIdx >= 1 else { return nil }
+        let width = min(basis.perm.size, maxIdx + 1)
+        var mat = [Float](repeating: 0, count: width * width)
+        for r in 0 ..< width { mat[r * width + r] = 1.0 }
+        for l in 0 ..< basis.numLayers {
+            for p in 0 ..< basis.pairsPerLayer {
+                let off = (l * basis.pairsPerLayer + p) * 2
+                guard off + 1 < pFlat.count, off + 1 < aFlat.count else { continue }
+                let (i, j) = (Int(pFlat[off]), Int(pFlat[off + 1]))
+                guard i >= 0, j >= 0, i < width, j < width, i != j else { continue }
+                let (c, s) = (aFlat[off], aFlat[off + 1])
+                for r in 0 ..< width {
+                    let (mi, mj) = (mat[r * width + i], mat[r * width + j])
+                    mat[r * width + i] = c * mi + s * mj
+                    mat[r * width + j] = -s * mi + c * mj
+                }
+            }
+        }
+        return (MLXArray(mat, [width, width]), width)
+    }
+}
+
+package struct LIRQuantLayerSpec: Codable, Sendable, Equatable {
+    package var bits: Int
+    package var groupSize: Int
+    package var mode: String
+    package var subspaceDim: Int
+    package var numLayers: Int
+    package var pairsPerLayer: Int
+    package var scaleDType: String?
+    package var hasBias: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case bits
+        case groupSize = "group_size"
+        case mode
+        case subspaceDim = "subspace_dim"
+        case numLayers = "num_layers"
+        case pairsPerLayer = "pairs_per_layer"
+        case scaleDType = "scale_dtype"
+        case hasBias = "has_bias"
+    }
+
+    package init(
+        bits: Int,
+        groupSize: Int,
+        mode: QuantizationMode,
+        subspaceDim: Int,
+        numLayers: Int,
+        pairsPerLayer: Int
+    ) {
+        self.bits = bits
+        self.groupSize = groupSize
+        self.mode = mode.rawValue
+        self.subspaceDim = subspaceDim
+        self.numLayers = numLayers
+        self.pairsPerLayer = pairsPerLayer
+    }
+
+    package var quantizationMode: QuantizationMode {
+        QuantizationMode(rawValue: mode) ?? .affine
+    }
+
+    package var resolvedScaleDType: DType {
+        if quantizationMode == .mxfp4 { return .uint8 }
+        if let scaleDType, let match = DType.allCases.first(where: { "\($0)" == scaleDType }) {
+            return match
+        }
+        return .bfloat16
     }
 }
 
@@ -151,11 +240,38 @@ package final class LIRQuantLinear: QuantizedLinear {
         freeze()
     }
 
+    package static func placeholder(replacing linear: Linear, spec: LIRQuantLayerSpec) -> LIRQuantLinear {
+        let (outputs, inputs) = linear.shape
+        let groups = inputs / spec.groupSize
+        let qMode = spec.quantizationMode
+        let sType = spec.resolvedScaleDType
+        let factorType: DType = sType.isFloatingPoint ? sType : .bfloat16
+        let weight = MLXArray.zeros([outputs, (inputs * spec.bits) / 32], dtype: .uint32)
+        let scales = MLXArray.zeros([outputs, groups], dtype: sType)
+        let biases = qMode == .affine ? MLXArray.zeros([outputs, groups], dtype: sType) : nil
+        let hasBias = spec.hasBias ?? (linear.bias != nil)
+        let bias = hasBias ? (linear.bias ?? MLXArray.zeros([outputs], dtype: factorType)) : nil
+        let pairLen = max(2, spec.numLayers * spec.pairsPerLayer * 2)
+        let basis = LIRBasisParameters(
+            perm: MLXArray(Array(0 ..< Int32(inputs))),
+            givensPairs: MLXArray.zeros([pairLen], dtype: .int32),
+            givensAngles: MLXArray.zeros([pairLen], dtype: .float32),
+            diagScale: MLXArray.ones([inputs], dtype: factorType),
+            numLayers: spec.numLayers,
+            pairsPerLayer: spec.pairsPerLayer)
+        let packed = MACaQPackedWeights(weight: weight, scales: scales, biases: biases)
+        return LIRQuantLinear(
+            packed: packed, bias: bias, basis: basis,
+            groupSize: spec.groupSize, bits: spec.bits, mode: qMode)
+    }
+
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let basis = LIRBasisParameters(
             perm: perm, givensPairs: givensPairs, givensAngles: givensAngles,
             diagScale: diagScale, numLayers: numLayers, pairsPerLayer: pairsPerLayer)
-        let transformed = LIRQuantKernels.transform(x, basis: basis)
+        let transformed = training
+            ? LIRQuantKernels.differentiableTransform(x, basis: basis)
+            : LIRQuantKernels.transform(x, basis: basis)
         return super.callAsFunction(transformed)
     }
 

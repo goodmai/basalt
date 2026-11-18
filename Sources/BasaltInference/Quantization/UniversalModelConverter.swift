@@ -246,7 +246,7 @@ extension UniversalModelConverter {
             return (1, 0)
         case .affine, .mixed, .mxfp4, .nf4:
             return try await encodeSINQTarget(request: request, workingSource: workingSource, outputURL: outputURL)
-        case .macaqAffine, .macaqMXFP4, .qtip, .qtipBudget, .gsqRCO:
+        case .macaqAffine, .macaqMXFP4, .flatQuant, .lirQuant, .qtip, .qtipBudget, .gsqRCO:
             return try await encodeCalibratedTarget(
                 request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
         }
@@ -300,6 +300,12 @@ extension UniversalModelConverter {
             let res = try await MACaQRefiner.convertDirectory(
                 source: workingSource, output: outputURL, targetMode: .mxfp4,
                 calibrationText: request.calibrationText, config: cfg
+            ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
+            return (res.shards, Int64(res.bytesAfter))
+        case .flatQuant, .lirQuant:
+            let res = try await BasisTransformConverter.convertDirectory(
+                source: workingSource, output: outputURL, target: request.target,
+                calibrationText: request.calibrationText, alpha: request.alpha
             ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
             return (res.shards, Int64(res.bytesAfter))
         case .qtip(let bpw):

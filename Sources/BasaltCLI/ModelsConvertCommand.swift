@@ -30,7 +30,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New output directory; required unless --register-cache <org/repo> is supplied")
     var out: String = ""
 
-    @Option(name: .long, help: "Unified any-to-any quantization target (#546): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
+    @Option(name: .long, help: "Unified any-to-any quantization target (#546, #547): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, flatquant:<b:g>, lirquant:<b:g:k>, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
     var to: String?
 
     @Option(name: .customLong("register-cache"), help: "Register converted model in local Hugging Face cache as <org/repo> (#546)")
@@ -111,8 +111,20 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("macaq-block"), help: "With --experimental-macaq: Hadamard rotation block size (32 or 64; default 64)")
     var macaqBlock: Int?
 
-    @Option(name: .customLong("macaq-alpha"), help: "With --experimental-macaq: channel-balance exponent alpha in [0, 1] (default 0.75)")
+    @Option(name: .customLong("macaq-alpha"), help: "With --experimental-macaq or --experimental-flatquant: channel-balance exponent alpha in [0, 1] (default 0.75 / 0.5)")
     var macaqAlpha: Float?
+
+    @Option(
+        name: .customLong("experimental-flatquant"),
+        help: "Experimental (#547): quantize linear weights with FlatQuant Kronecker (P1⊗P2) basis conjugation (<2|3|4|8>:<32|64|128>)"
+    )
+    var experimentalFlatquant: String?
+
+    @Option(
+        name: .customLong("experimental-lirquant"),
+        help: "Experimental (#547): quantize linear weights with LIRQuant sensitivity permutation and subspace Givens rotations (<2|3|4|8>:<32|64|128>[:<32|64|128|256>])"
+    )
+    var experimentalLirquant: String?
 
     @Option(name: .customLong("quant-recipe"), help: "Quantization normalization recipe (#548): rtn (default), sinq (data-free Sinkhorn-Knopp dual-axis normalization absorbed into RMSNorm with zero runtime overhead), or a-sinq (activation-calibrated SINQ + EAQuant router invariance)")
     var quantRecipe: SINQRecipe?
@@ -136,6 +148,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
         try validateBudgetQTIP(isGSQRCO: gsqBPW != nil)
         try validateGSQRCOOptions(gsqBPW)
         try validateMACaQOptions(isGSQRCO: gsqBPW != nil)
+        try validateBasisTransformOptions(isGSQRCO: gsqBPW != nil)
     }
 
     static func resolveModelDirectory(_ spec: String) throws -> URL {
@@ -152,6 +165,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
         if to != nil { return try await runUnifiedConversion() }
         if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
         if let spec = experimentalMacaq { return try await convertMACaQ(spec: spec) }
+        if let target = try basisTransformCLITarget() { return try await convertBasisTransform(target: target) }
         if let bpw = try gsqRCOBits() { return try await convertGSQRCO(bpw: bpw) }
         if let bpw = experimentalQtipBudget { return try await convertQTIPBudget(bpw: bpw) }
         if let bpw = experimentalQtip { return try await convertQTIP(bpw: bpw) }
@@ -189,9 +203,13 @@ extension ConvertSubcommand {
         }
         let chosen: SINQRecipe = sinq ? .sinq : (aSinq ? .asinq : (quantRecipe ?? .rtn))
         if chosen != .rtn {
-            guard quantize != nil, quantize != "gsq-rco", !(quantize?.hasPrefix("gsq-rco:") == true),
-                  dequantize == nil, format == .mlx, !isGGUFSource,
-                  experimentalMacaq == nil, experimentalQtip == nil, experimentalQtipBudget == nil else {
+            let incompatible = [
+                quantize == nil, quantize == "gsq-rco", quantize?.hasPrefix("gsq-rco:") == true,
+                dequantize != nil, format != .mlx, isGGUFSource,
+                experimentalMacaq != nil, hasBasisTransformFlag,
+                experimentalQtip != nil, experimentalQtipBudget != nil,
+            ].contains(true)
+            if incompatible {
                 throw ValidationError("--sinq / --a-sinq / --quant-recipe applies to MLX --quantize (affine, mixed, nf4 or mxfp4)")
             }
         }
@@ -202,9 +220,11 @@ extension ConvertSubcommand {
         if pvTeacher != nil, !experimentalPvTune && !experimentalMacaqRefine {
             throw ValidationError("--pv-teacher requires --experimental-pv-tune or --experimental-macaq-refine")
         }
-        let usesCalibration = experimentalPvTune || experimentalMacaqRefine || experimentalMacaq != nil
-            || experimentalQtip != nil || experimentalQtipBudget != nil || isGSQRCO
-            || aSinq || quantRecipe == .asinq
+        let usesCalibration = [
+            experimentalPvTune, experimentalMacaqRefine, experimentalMacaq != nil,
+            hasBasisTransformFlag, experimentalQtip != nil, experimentalQtipBudget != nil,
+            isGSQRCO, aSinq, quantRecipe == .asinq,
+        ].contains(true)
         if pvCalibration != nil, !usesCalibration {
             throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget, --a-sinq or --quantize gsq-rco")
         }

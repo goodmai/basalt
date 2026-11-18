@@ -100,7 +100,14 @@ extension MACaQRefiner {
         else {
             throw BasaltError.invalidRequestStructure(details: "macaq: missing or invalid config.json in \(directory.path)")
         }
-        for key in [MACaQNativeLoader.configKey, "qtip_quantization", "gguf_quantization"] where json[key] != nil {
+        let customKeys = [
+            MACaQNativeLoader.configKey,
+            BasisTransformNativeLoader.flatQuantConfigKey,
+            BasisTransformNativeLoader.lirQuantConfigKey,
+            "qtip_quantization",
+            "gguf_quantization",
+        ]
+        for key in customKeys where json[key] != nil {
             throw BasaltError.invalidRequestStructure(details: "macaq: source checkpoint already uses custom block layout (\(key))")
         }
         guard let modelType = (json["model_type"] as? String)

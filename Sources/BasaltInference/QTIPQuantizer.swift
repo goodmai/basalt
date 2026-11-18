@@ -309,6 +309,16 @@ extension QTIPQuantizer {
             eval(dense)
             return (dense, mac.bias)
         }
+        if let fq = module as? FlatQuantLinear {
+            let dense = fq.unrotatedDenseWeight()
+            eval(dense)
+            return (dense, fq.bias)
+        }
+        if let lir = module as? LIRQuantLinear {
+            let dense = lir.unrotatedDenseWeight()
+            eval(dense)
+            return (dense, lir.bias)
+        }
         if let ql = module as? QuantizedLinear {
             let dense = dequantized(
                 ql.weight, scales: ql.scales, biases: ql.biases,

@@ -20,9 +20,16 @@ extension ConvertSubcommand {
 
     func validateUnifiedToOptions() throws {
         guard let to else { return }
-        if quantize != nil || dequantize != nil || experimentalMacaq != nil
-            || experimentalQtip != nil || experimentalQtipBudget != nil {
-            throw ValidationError("--to replaces --quantize, --dequantize, --experimental-macaq, --experimental-qtip and --experimental-qtip-budget")
+        let legacyConflict = [
+            quantize != nil,
+            dequantize != nil,
+            experimentalMacaq != nil,
+            hasBasisTransformFlag,
+            experimentalQtip != nil,
+            experimentalQtipBudget != nil,
+        ].contains(true)
+        if legacyConflict {
+            throw ValidationError("--to replaces --quantize, --dequantize, --experimental-macaq, --experimental-flatquant, --experimental-lirquant, --experimental-qtip and --experimental-qtip-budget")
         }
         let target: QuantizationTarget
         do {

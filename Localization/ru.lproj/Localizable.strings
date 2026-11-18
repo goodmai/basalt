@@ -246,6 +246,8 @@
 "Target Quantization" = "Целевой формат квантизации";
 "Format Family" = "Семейство формата";
 "MACaQ (Hadamard + Flip)" = "MACaQ (Адамар + Flip)";
+"FlatQuant (Kronecker P1⊗P2)" = "FlatQuant (Кронекер P1⊗P2)";
+"LIRQuant (Givens Subspace)" = "LIRQuant (подпространство Гивенса)";
 "Standard Affine" = "Стандартный Affine";
 "OCP MXFP4" = "OCP MXFP4";
 "NF4 NormalFloat" = "NF4 NormalFloat";
@@ -276,6 +278,9 @@
 "Start Conversion" = "Начать конвертацию";
 "32" = "32";
 "64" = "64";
+"128" = "128";
+"256" = "256";
+"Vulnerable Subspace" = "Уязвимое подпространство";
 "Trellis Rate" = "Битрейт решётки";
 "2.0 bpw" = "2,0 бит/вес";
 "2.5 bpw" = "2,5 бит/вес";

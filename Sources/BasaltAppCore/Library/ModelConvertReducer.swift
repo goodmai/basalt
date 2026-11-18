@@ -3,6 +3,8 @@ import Foundation
 
 public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable {
     case macaq
+    case flatQuant
+    case lirQuant
     case affine
     case mxfp4
     case nf4
@@ -16,6 +18,8 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
     public var title: String {
         switch self {
         case .macaq: "MACaQ (Hadamard + Flip)"
+        case .flatQuant: "FlatQuant (Kronecker P1⊗P2)"
+        case .lirQuant: "LIRQuant (Givens Subspace)"
         case .affine: "Standard Affine"
         case .mxfp4: "OCP MXFP4"
         case .nf4: "NF4 NormalFloat"
@@ -35,6 +39,7 @@ public struct ConversionDraft: Sendable, Equatable {
     public var groupSize: Int = 64
     public var useMXFP4InMACaQ: Bool = false
     public var hadamardBlock: Int = 64
+    public var lirSubspaceDim: Int = 128
     public var qtipRate: Double = 2.5
     public var budgetBPW: Double = 3.0
     public var denseFP16: Bool = false
@@ -56,6 +61,13 @@ public struct ConversionDraft: Sendable, Equatable {
         switch family {
         case .macaq:
             useMXFP4InMACaQ ? .macaqMXFP4 : .macaqAffine(bits: min(max(bits, 2), 4), groupSize: groupSize)
+        case .flatQuant:
+            .flatQuant(bits: [2, 3, 4, 8].contains(bits) ? bits : 4, groupSize: groupSize)
+        case .lirQuant:
+            .lirQuant(
+                bits: [2, 3, 4, 8].contains(bits) ? bits : 4,
+                groupSize: groupSize,
+                subspaceDim: [32, 64, 128, 256].contains(lirSubspaceDim) ? lirSubspaceDim : 128)
         case .affine:
             .affine(bits: bits, groupSize: groupSize)
         case .mxfp4:
