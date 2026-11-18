@@ -99,7 +99,7 @@ public struct ComposeProfilesView: View {
                     }
                 }
                 filterChip(
-                    title: LocalizedStringKey("All 84"),
+                    title: LocalizedStringKey("All 91"),
                     systemImage: "square.grid.2x2",
                     isSelected: store.state.filter == .all
                 ) {

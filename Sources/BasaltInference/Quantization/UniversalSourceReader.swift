@@ -161,6 +161,9 @@ extension UniversalSourceReader {
             onStep?("canonical basis decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
             return summary
         }
+        if VideoDiTCheckpointCompat.isVideoDiTDirectory(source) {
+            return try VideoDiTCheckpointCompat.exportCanonicalDense(from: source, to: output, dtype: dtype, onStep: onStep)
+        }
         if detected.format.hasPrefix("macaq:"), DiTBlockQuantizer.isDiTCheckpoint(source) {
             let summary = try DiTBlockQuantizer.dequantizeMACaQDirectory(source: source, output: output, dtype: dtype)
             onStep?("canonical DiT MACaQ decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")

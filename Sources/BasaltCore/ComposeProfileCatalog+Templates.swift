@@ -18,6 +18,7 @@ extension ComposeProfileCatalog {
         case .documentOCR: return makeDocumentOCR(id: id, p: p, keep: keep)
         case .voiceDuplex: return makeVoiceDuplex(id: id, p: p, keep: keep)
         case .creativeStudio: return makeCreativeStudio(id: id, p: p, keep: keep)
+        case .videoStudio: return makeVideoStudio(id: id, p: p)
         case .ragKnowledge: return makeRagKnowledge(id: id, p: p)
         case .hybridCloud: return makeHybridCloud(id: id, p: p, keep: keep)
         case .moeFrontier: return makeMoEFrontier(id: id, p: p)

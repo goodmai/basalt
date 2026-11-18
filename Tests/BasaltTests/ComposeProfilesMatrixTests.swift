@@ -6,17 +6,17 @@ import SwiftUI
 @testable import BasaltAppCore
 @testable import BasaltApp
 
-@Suite("84 hardware-tiered Compose profiles (16/24/32-36/48/64/128/256 GB x 12) and RAM detection (#526)")
+@Suite("91 hardware-tiered Compose profiles (16/24/32-36/48/64/128/256 GB x 13) and RAM detection (#526, #583)")
 struct ComposeProfilesMatrixTests {
-    @Test("Catalog holds 84 profiles (12 per tier, 4 primary per tier), detects RAM tiers, and resolves 32gb/36gb/236gb aliases")
+    @Test("Catalog holds 91 profiles (13 per tier, 4 primary per tier), detects RAM tiers, and resolves 32gb/36gb/236gb aliases")
     func catalogCountsTiersAndAliases() {
         #expect(ComposeMemoryTier.allCases.count == 7)
-        #expect(ComposeProfileArchetype.allCases.count == 12)
-        #expect(ComposeProfileCatalog.profiles.count == 84)
+        #expect(ComposeProfileArchetype.allCases.count == 13)
+        #expect(ComposeProfileCatalog.profiles.count == 91)
 
         for tier in ComposeMemoryTier.allCases {
             let slice = ComposeProfileCatalog.profiles(for: tier)
-            #expect(slice.count == 12)
+            #expect(slice.count == 13)
             #expect(slice.filter(\.isPrimary).count == 4)
         }
 
@@ -36,16 +36,21 @@ struct ComposeProfilesMatrixTests {
         #expect(ComposeProfileCatalog.resolve(id: "192gb-coding-agent")?.id == "256gb-coding-agent")
     }
 
-    @Test("Every one of the 84 hardware-tiered profiles, 5 FLUX.3 4-stage presets, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
+    @Test("Every one of the 91 hardware-tiered profiles, 5 FLUX.3 presets, 5 Video DiT presets, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
     func allBundledProfilesParseCleanly() throws {
         let bundledKeys = ComposeFile.bundled.keys.sorted()
         #expect(ComposeProfileCatalog.flux3Combinations.count == 5)
+        #expect(ComposeProfileCatalog.videoCombinations.count == 5)
         #expect(ComposeProfileCatalog.v22Specialists.count == 6)
-        #expect(bundledKeys.count == 84 + 4 * 12 + 3 + 5 + ComposeProfileCatalog.v22Specialists.count)
+        #expect(bundledKeys.count == 91 + 4 * 13 + 3 + 5 + 5 + ComposeProfileCatalog.v22Specialists.count)
         for key in bundledKeys {
             let spec = try ComposeFile.load(key)
             #expect(spec.issues.isEmpty, "Bundled profile \(key) had issues: \(spec.issues)")
             #expect(!spec.models.isEmpty)
+        }
+        for vid in ComposeProfileCatalog.videoCombinations {
+            let resolved = try #require(ComposeProfileCatalog.resolve(id: vid.id))
+            #expect(resolved.archetype == .videoStudio && resolved.primaryModel.hasPrefix("goodmai/"))
         }
     }
 
@@ -59,10 +64,10 @@ struct ComposeProfilesMatrixTests {
             "24gb-voice-zonos",
             "24gb-multimodal-desk",
         ])
-        #expect(state.recommendedSecondary.count == 8)
+        #expect(state.recommendedSecondary.count == 9)
 
         _ = ComposeProfilesReducer.reduce(&state, .filterChanged(.tier(.gb64)))
-        #expect(state.filteredProfiles.count == 12 && state.selectedProfile?.tier == .gb64)
+        #expect(state.filteredProfiles.count == 13 && state.selectedProfile?.tier == .gb64)
         #expect(state.selectedProfile?.fits(ramGB: 24) == false)
 
         _ = ComposeProfilesReducer.reduce(&state, .filterChanged(.all))

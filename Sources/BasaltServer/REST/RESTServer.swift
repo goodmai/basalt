@@ -17,6 +17,8 @@ package struct RESTServer: Sendable {
     private(set) var imageSynthesizer: (any ImageSynthesizer)?
     private(set) var musicSynthesizer: (any MusicSynthesizer)?
     private(set) var imageStoreDirectory: URL?
+    private(set) var videoSynthesizer: (any VideoSynthesizer)?
+    private(set) var videoStoreDirectory: URL?
     private(set) var modelHub = ModelHubOperations.live()
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
@@ -180,6 +182,7 @@ package struct RESTServer: Sendable {
         AudioSpeechController(synthesizer: speechSynthesizer, pipelines: registry).add(to: oai)
         AudioMusicController(synthesizer: musicSynthesizer, pipelines: registry).add(to: oai)
         ImagesController(synthesizer: imageSynthesizer, pipelines: registry, storeDirectory: imageStoreDirectory).add(to: oai)
+        VideoGenerationController(synthesizer: videoSynthesizer, pipelines: registry, storeDirectory: videoStoreDirectory).add(to: oai)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
         oai.post("/pipeline", use: pipelineController.pipeline)
@@ -234,6 +237,13 @@ extension RESTServer {
     package func withImageStoreDirectory(_ directory: URL?) -> RESTServer {
         var server = self
         server.imageStoreDirectory = directory
+        return server
+    }
+
+    package func withVideoSynthesizer(_ synthesizer: (any VideoSynthesizer)?, storeDirectory: URL? = nil) -> RESTServer {
+        var server = self
+        server.videoSynthesizer = synthesizer
+        if let storeDirectory { server.videoStoreDirectory = storeDirectory }
         return server
     }
 
@@ -318,6 +328,9 @@ extension RESTServer {
         "/v1/images/edits":        { "post": { "summary": "OpenAI-compatible multi-reference image & audio editing (JSON or multipart/form-data)" } },
         "/v1/images/content/{id}": { "get":  { "summary": "Fetch persisted generated image artifact by SHA-256 asset id" } },
         "/v1/images/models":       { "get":  { "summary": "List configured image synthesis model descriptors" } },
+        "/v1/videos/generations":  { "post": { "summary": "Phased UMA audio-visual video generation (JSON + SSE stream: true with progress and completed events)" } },
+        "/v1/videos/content/{id}": { "get":  { "summary": "Fetch persisted generated .mp4/.mov video artifact by SHA-256 asset id" } },
+        "/v1/videos/models":       { "get":  { "summary": "List configured video synthesis model descriptors" } },
         "/v1/ocr":                 { "post": { "summary": "Document OCR with GLM-OCR, MinerU2.5, PaddleOCR-VL or DeepSeek-OCR (JSON: file as base64 PDF or image, pages such as 1-3, task document|text|table|formula|chart, format markdown|json, model, resolution tiny|small|base|large|gundam for DeepSeek-OCR)" } },
         "/v1/pipeline":            { "post": { "summary": "Perceive (OCR of pdf/image attachments with serve --pipeline-ocr-model or Apple Vision, transcription of audio with serve --pipeline-audio-model, the chat model's audio encoder or SpeechAnalyzer (with --experimental-speech-analyzer)) → decide (System One on typed questions) → answer (the chat model, only for abstained questions and a task); returns perceived text, answers, the System 2 reply and a route receipt (swap_ms when serve --pipeline-memory loads models per stage; --pipeline-preset fills the models)" } },
         "/v1/pipelines/{name}":    { "post": { "summary": "The same request as /v1/pipeline, for a named pipeline of the compose file served with basalt compose up" } },

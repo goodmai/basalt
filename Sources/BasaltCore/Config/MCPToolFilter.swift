@@ -18,7 +18,7 @@ public struct MCPToolFilter: Sendable, Equatable {
             case .gemma:
                 ["gemma_generate", "gemma_status", "gemma_add_knowledge"]
             case .media:
-                ["basalt_transcribe", "basalt_systemone_decide", "basalt_ocr", "basalt_pipeline", "basalt_generate_image", "basalt_edit_image"]
+                ["basalt_transcribe", "basalt_systemone_decide", "basalt_ocr", "basalt_pipeline", "basalt_generate_image", "basalt_edit_image", "video_generate"]
             case .harness:
                 ["basalt_add_knowledge", "harness_validate", "harness_optimize", "harness_library_query"]
             case .xray:

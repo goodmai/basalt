@@ -7,15 +7,17 @@ package struct PipelineSystem: Sendable {
     package var speech: (any SpeechSynthesizer)?
     package var image: (any ImageSynthesizer)?
     package var music: (any MusicSynthesizer)?
+    package var video: (any VideoSynthesizer)?
 
     package init(
         decisions: (any DecisionEngine)?,
         stages: PipelineStages,
         speech: (any SpeechSynthesizer)? = nil,
         image: (any ImageSynthesizer)? = nil,
-        music: (any MusicSynthesizer)? = nil
+        music: (any MusicSynthesizer)? = nil,
+        video: (any VideoSynthesizer)? = nil
     ) {
-        (self.decisions, self.stages, self.speech, self.image, self.music) = (decisions, stages, speech, image, music)
+        (self.decisions, self.stages, self.speech, self.image, self.music, self.video) = (decisions, stages, speech, image, music, video)
     }
 }
 

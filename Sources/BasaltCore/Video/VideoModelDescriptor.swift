@@ -21,9 +21,20 @@ public struct VideoModelDescriptor: Sendable, Codable, Equatable {
     public var supportsJointAudio: Bool
     public var supportsExpertStreaming: Bool
     public var defaultSteps: Int
+    public var defaultFrames: Int
     public var defaultGuidanceScale: Double
     public var defaultFPS: Int
     public var strategy24GB: VideoExecutionStrategy24GB
+
+    public var identifier: String {
+        get { id }
+        set { id = newValue }
+    }
+
+    public var supportsAudio: Bool {
+        get { supportsJointAudio }
+        set { supportsJointAudio = newValue }
+    }
 
     public init(
         id: String,
@@ -40,9 +51,25 @@ public struct VideoModelDescriptor: Sendable, Codable, Equatable {
         self.supportsJointAudio = true
         self.supportsExpertStreaming = false
         self.defaultSteps = 8
+        self.defaultFrames = 25
         self.defaultGuidanceScale = 1.0
         self.defaultFPS = 24
         self.strategy24GB = .resident4Bit
+    }
+
+    public init(
+        identifier: String,
+        defaultSteps: Int = 20,
+        defaultFrames: Int = 25,
+        defaultFPS: Int = 24,
+        supportsAudio: Bool = true
+    ) {
+        var detected = Self.detect(identifier: identifier)
+        detected.defaultSteps = defaultSteps
+        detected.defaultFrames = defaultFrames
+        detected.defaultFPS = defaultFPS
+        detected.supportsJointAudio = supportsAudio
+        self = detected
     }
 }
 
@@ -136,6 +163,10 @@ extension VideoModelDescriptor {
             return wan22A14B(id: identifier)
         }
         return ltx25Distilled(id: identifier)
+    }
+
+    public static func detect(identifier: String, modelType: String?) -> VideoModelDescriptor {
+        detect(identifier: identifier, configJSON: modelType.map { ["model_type": $0] })
     }
 
     public static func selectKandinskyCascade(availableRAMBytes: Int64) -> VideoModelDescriptor {
