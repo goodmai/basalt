@@ -243,15 +243,17 @@ struct HubState: Sendable {
 package actor HuggingFaceHub {
     package typealias Progress = @Sendable (String, Int64, Int64) -> Void
 
-    private let session: URLSession
-    private let baseURL: String
-    private let apiURL: String
+    let session: URLSession
+    let baseURL: String
+    let apiURL: String
     private let requireVerified: Bool
-    private(set) var state = HubState()
+    let usesCustomProtocols: Bool
+    var state = HubState()
     package var bytesFetched: Int { state.bytesFetched }
 
     package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co", requireVerified: Bool = false) {
         self.requireVerified = requireVerified
+        self.usesCustomProtocols = !(configuration.protocolClasses ?? []).isEmpty
         baseURL = endpoint
         apiURL = endpoint + "/api"
         let config = configuration
@@ -369,24 +371,50 @@ extension HuggingFaceHub {
 }
 
 extension HuggingFaceHub {
+    static let copyChunkBytes = 4 * 1024 * 1024
+
     package func download(
         repoId: String,
         subfolder: String? = nil,
         token: String? = nil,
         onFile: @escaping Progress
     ) async throws -> URL {
-        let details  = try await modelDetails(repoId: repoId)
-        let destDir  = ModelCache.cacheDir(for: repoId)
+        if !usesCustomProtocols, !requireVerified, baseURL == "https://huggingface.co" {
+            return try await downloadSnapshotNative(
+                repoId: repoId,
+                subfolder: subfolder,
+                token: token,
+                onFile: onFile
+            )
+        }
+
+        let details = try await modelDetails(repoId: repoId)
+        let destDir = ModelCache.cacheDir(for: repoId)
 
         try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
 
-        let filesToDownload = HubRequest.downloadable((details.siblings ?? []).map(\.rfilename), subfolder: subfolder)
+        let siblings = details.siblings ?? []
+        let filesToDownload = HubRequest.downloadable(siblings.map(\.rfilename), subfolder: subfolder)
         guard !filesToDownload.isEmpty else {
             throw HFError.modelNotFound(subfolder.map { "\(repoId)/\($0)" } ?? repoId)
         }
 
+        let sizeByName = Dictionary(
+            siblings.compactMap { sib in sib.size.map { (sib.rfilename, Int64($0)) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for filename in filesToDownload {
+            if let known = sizeByName[filename], known > 0 {
+                onFile(filename, 0, known)
+            }
+        }
+
         try await withThrowingTaskGroup(of: Void.self) { group in
+            var active = 0
             for filename in filesToDownload {
+                while active >= 4 {
+                    if try await group.next() != nil { active -= 1 }
+                }
                 group.addTask {
                     guard let url = HubRequest.resolveURL(endpoint: self.baseURL, repoId: repoId, path: filename) else {
                         throw HFError.downloadFailed(filename)
@@ -394,6 +422,7 @@ extension HuggingFaceHub {
                     let file = HubFile(name: filename, url: url, destination: destDir.appendingPathComponent(filename))
                     try await self.transfer(file, token: token, onProgress: onFile)
                 }
+                active += 1
             }
             for try await _ in group {}
         }
@@ -420,7 +449,9 @@ extension HuggingFaceHub {
         state = HubState.reduce(state, .transferStarted(file.destination, generation: generation, task))
         return task
     }
+}
 
+extension HuggingFaceHub {
     private func downloadWithRetry(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {
         var attempt = 1
         while true {
@@ -462,49 +493,49 @@ extension HuggingFaceHub {
         }
 
         var hasher = try digest?.streamingHasher(prefix: plan.offset > 0 ? file.destination : nil)
-        let (stream, response) = try await session.bytes(for: HubRequest.file(file.url, token: token, range: plan.rangeHeader))
+        let (tempURL, response) = try await session.download(for: HubRequest.file(file.url, token: token, range: plan.rangeHeader))
+        defer { try? fileManager.removeItem(at: tempURL) }
         guard let http = response as? HTTPURLResponse, http.statusCode == plan.expectedStatus else {
             try? fileManager.removeItem(at: file.destination)
             throw HFError.downloadFailed(file.name)
         }
-        try await saveStream(stream, to: file, plan: plan, contentLength: http.expectedContentLength, hasher: &hasher, onProgress: onProgress)
+        try saveChunkedTempFile(
+            from: tempURL,
+            to: file,
+            plan: plan,
+            contentLength: http.expectedContentLength,
+            hasher: &hasher,
+            onProgress: onProgress
+        )
         try HubDigest.verifyDownload(file, digest: digest, streamed: hasher, remoteSize: remoteSize)
     }
 
-    private func saveStream(
-        _ stream: URLSession.AsyncBytes,
+    private func saveChunkedTempFile(
+        from tempURL: URL,
         to file: HubFile,
         plan: HubTransferPlan,
         contentLength: Int64,
         hasher: inout SHA256?,
         onProgress: @escaping Progress
-    ) async throws {
+    ) throws {
         if plan.offset == 0 {
             FileManager.default.createFile(atPath: file.destination.path, contents: nil)
         }
-        let handle = try FileHandle(forWritingTo: file.destination)
-        if plan.offset > 0 { try handle.seekToEnd() }
-        defer { try? handle.close() }
+        let reader = try FileHandle(forReadingFrom: tempURL)
+        defer { try? reader.close() }
+        let writer = try FileHandle(forWritingTo: file.destination)
+        if plan.offset > 0 { try writer.seekToEnd() }
+        defer { try? writer.close() }
 
         let totalSize = plan.totalSize(contentLength: contentLength)
         var downloaded = plan.offset
-        var buffer = [UInt8]()
-        buffer.reserveCapacity(65_536)
-
-        for try await byte in stream {
-            buffer.append(byte)
-            if buffer.count >= 65_536 {
-                try handle.write(contentsOf: buffer)
-                hasher?.update(data: buffer)
-                downloaded += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                onProgress(file.name, downloaded, totalSize)
-            }
+        while let chunk = try reader.read(upToCount: Self.copyChunkBytes), !chunk.isEmpty {
+            try writer.write(contentsOf: chunk)
+            hasher?.update(data: chunk)
+            downloaded += Int64(chunk.count)
+            onProgress(file.name, downloaded, totalSize)
         }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            hasher?.update(data: buffer)
-            downloaded += Int64(buffer.count)
+        if downloaded == plan.offset {
             onProgress(file.name, downloaded, totalSize)
         }
     }

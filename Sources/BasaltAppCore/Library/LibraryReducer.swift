@@ -24,6 +24,8 @@ public struct ModelFit: Sendable, Equatable {
 public struct Download: Sendable, Equatable {
     public var done: Int64 = 0
     public var total: Int64 = 0
+    public var bytesPerSecond: Int64 = 0
+    public var etaSeconds: Int?
     public var active = false
     public var error: String?
 
@@ -37,7 +39,11 @@ public struct LibraryState: Sendable, Equatable {
     public var fits: [String: ModelFit] = [:]
     public var downloads: [String: Download] = [:]
     public var conversions: [String: ConversionJobState] = [:]
+    public var publishes: [String: PublishJobState] = [:]
     public var convertDraft: ConversionDraft?
+    public var publishDraft: PublishDraft?
+    public var searchQuery: String = ""
+    public var hubSuggestions: [HubModelSuggestion] = []
     public var loading: String?
     public var problem: String?
 
@@ -53,7 +59,7 @@ public enum LibraryAction: Sendable {
     case load(String)
     case loaded(String)
     case download(String)
-    case progressed(String, done: Int64, total: Int64)
+    case progressed(String, done: Int64, total: Int64, bytesPerSecond: Int64 = 0, etaSeconds: Int? = nil)
     case downloaded(String)
     case downloadFailed(String, String)
     case cancelDownload(String)
@@ -67,6 +73,16 @@ public enum LibraryAction: Sendable {
     case conversionCompleted(String, ModelConversionResult)
     case conversionFailed(String, String)
     case cancelConversion(String)
+    case searchQueryChanged(String)
+    case hubSuggestionsLoaded(String, [HubModelSuggestion])
+    case openPublish(LibraryModel)
+    case updatePublishDraft(PublishDraft)
+    case closePublish
+    case startPublish
+    case publishProgressed(String, HubTransferTelemetry)
+    case publishCompleted(String, HubPublishResult)
+    case publishFailed(String, String)
+    case cancelPublish(String)
     case failed(String)
 }
 
@@ -81,6 +97,10 @@ public enum LibraryEffect: Sendable, Equatable {
     case planConversion(source: String, target: QuantizationTarget, budgetGB: Double?, pvTune: Bool)
     case convert(ModelConversionRequest)
     case cancelConversion(String)
+    case searchHub(String)
+    case cancelHubSearch
+    case publish(HubPublishRequest)
+    case cancelPublish(String)
 }
 
 public enum LibraryReducer {
@@ -117,6 +137,10 @@ public enum LibraryReducer {
              .startConversion, .conversionProgressed, .conversionCompleted,
              .conversionFailed, .cancelConversion:
             return reduceConversion(&state, action)
+        case .searchQueryChanged, .hubSuggestionsLoaded, .openPublish, .updatePublishDraft,
+             .closePublish, .startPublish, .publishProgressed, .publishCompleted,
+             .publishFailed, .cancelPublish:
+            return reduceHubAndPublish(&state, action)
         case .failed(let message):
             (state.problem, state.loading) = (message, nil)
             return [.list]
@@ -127,9 +151,11 @@ public enum LibraryReducer {
 
     static func transfer(_ state: inout LibraryState, _ action: LibraryAction) -> [LibraryEffect] {
         switch action {
-        case .progressed(let id, let done, let total):
+        case .progressed(let id, let done, let total, let bps, let eta):
             state.downloads[id]?.done = done
             state.downloads[id]?.total = total
+            state.downloads[id]?.bytesPerSecond = bps
+            state.downloads[id]?.etaSeconds = eta
             return []
         case .downloaded(let id):
             state.downloads[id] = nil
@@ -170,7 +196,7 @@ public enum LibraryReducer {
         guard state.downloads[id]?.active != true else { return [] }
         var download = Download()
         download.active = true
-        (state.downloads[id], state.problem) = (download, nil)
+        (state.downloads[id], state.problem, state.hubSuggestions, state.searchQuery) = (download, nil, [], "")
         return [.download(id), .fit(id), .savePending(pending(state))]
     }
 

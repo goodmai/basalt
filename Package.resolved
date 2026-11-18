@@ -1,5 +1,5 @@
 {
-  "originHash" : "f4789a6576236b99cb204e9f029598dcde6e68b8f63fe8ad335527440cfe6c9d",
+  "originHash" : "75c0294cc83087b53810e00b634565d86fcdf7369986a58293a1c29d44bc85b0",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -313,6 +313,15 @@
       "state" : {
         "revision" : "402a8a1105f52038b0949d9596981fc9e32bed17",
         "version" : "1.4.0"
+      }
+    },
+    {
+      "identity" : "swift-xet",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/huggingface/swift-xet.git",
+      "state" : {
+        "revision" : "4b9b9af2acd55e719bda147d8c4f99ce84006e4f",
+        "version" : "1.1.1"
       }
     },
     {

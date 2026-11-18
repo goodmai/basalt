@@ -18,6 +18,11 @@ public struct LibraryClient: Sendable {
     public var convert: Converter = { req, _ in
         ModelConversionResult(outputId: req.outputId, bytesBefore: 0, bytesAfter: 0, shards: 1)
     }
+    public var downloadWithTelemetry: (@Sendable (String, @escaping TelemetryHandler) async throws -> Void)? = nil
+    public var searchHub: @Sendable (String, Int) async throws -> [HubModelSuggestion] = { _, _ in [] }
+    public var publish: @Sendable (HubPublishRequest, @escaping TelemetryHandler) async throws -> HubPublishResult = { req, _ in
+        HubPublishResult(repoId: req.repoId, url: "https://huggingface.co/\(req.repoId)", uploadedFiles: 0, totalBytes: 0)
+    }
 
     public init(
         models: @escaping @Sendable () async throws -> [LibraryModel], fit: @escaping @Sendable (String) async throws -> ModelFit,
@@ -67,6 +72,15 @@ extension LibraryClient {
         client.convert = { req, onProgress in
             try await Self.liveConvertModel(req, endpoint: endpoint, session: session, onProgress: onProgress)
         }
+        client.downloadWithTelemetry = { id, onTelemetry in
+            try await Self.liveDownloadTelemetry(id, endpoint: endpoint, session: session, onTelemetry: onTelemetry)
+        }
+        client.searchHub = { query, limit in
+            try await Self.liveSearchHub(query, limit: limit, endpoint: endpoint, session: session)
+        }
+        client.publish = { req, onTelemetry in
+            try await Self.livePublishModel(req, endpoint: endpoint, session: session, onTelemetry: onTelemetry)
+        }
         return client
     }
 
@@ -111,6 +125,14 @@ public enum LibraryEffects {
                 return .run(id: "convert:\(req.outputId)") { send in await runConvert(req, environment, send) }
             case .cancelConversion(let id):
                 return .cancel(id: "convert:\(id)")
+            case .searchHub(let query):
+                return .run(id: "hub-search") { send in await runSearchHub(query, environment, send) }
+            case .cancelHubSearch:
+                return .cancel(id: "hub-search")
+            case .publish(let req):
+                return .run(id: "publish:\(req.repoId)") { send in await runPublish(req, environment, send) }
+            case .cancelPublish(let repoId):
+                return .cancel(id: "publish:\(repoId)")
             case .list, .fit, .load, .delete: return .run(id: Self.id(effect)) { send in await call(effect, environment, send) }
             }
         }
@@ -129,11 +151,21 @@ public enum LibraryEffects {
 
     static func download(_ id: String, _ environment: LibraryEnvironment, _ send: @escaping @Sendable (LibraryAction) async -> Void) async {
         guard let client = await environment.client() else { return await send(.downloadFailed(id, "the engine is not running")) }
-        let (updates, progress) = AsyncStream.makeStream(of: (Int64, Int64).self, bufferingPolicy: .bufferingNewest(1))
-        let relay = Task { for await (done, total) in updates { await send(.progressed(id, done: done, total: total)) } }
+        let (updates, progress) = AsyncStream.makeStream(of: HubTransferTelemetry.self, bufferingPolicy: .bufferingNewest(1))
+        let relay = Task {
+            for await item in updates {
+                await send(.progressed(id, done: item.done, total: item.total, bytesPerSecond: item.bytesPerSecond, etaSeconds: item.etaSeconds))
+            }
+        }
         defer { relay.cancel() }
         do {
-            try await client.download(id) { done, total in progress.yield((done, total)) }
+            if let withTelemetry = client.downloadWithTelemetry {
+                try await withTelemetry(id) { item in progress.yield(item) }
+            } else {
+                try await client.download(id) { done, total in
+                    progress.yield(HubTransferTelemetry(done: done, total: total))
+                }
+            }
             progress.finish()
             await relay.value
             guard !Task.isCancelled else { return }
@@ -202,6 +234,44 @@ public enum LibraryEffects {
         } catch {
             guard !Task.isCancelled else { return }
             await send(.conversionFailed(req.outputId, Self.describe(error)))
+        }
+    }
+
+    static func runSearchHub(
+        _ query: String,
+        _ environment: LibraryEnvironment,
+        _ send: @escaping @Sendable (LibraryAction) async -> Void
+    ) async {
+        guard let client = await environment.client(), !Task.isCancelled else { return }
+        if let items = try? await client.searchHub(query, 8), !Task.isCancelled {
+            await send(.hubSuggestionsLoaded(query, items))
+        }
+    }
+
+    static func runPublish(
+        _ req: HubPublishRequest,
+        _ environment: LibraryEnvironment,
+        _ send: @escaping @Sendable (LibraryAction) async -> Void
+    ) async {
+        guard let client = await environment.client() else {
+            return await send(.publishFailed(req.repoId, "the engine is not running"))
+        }
+        let (updates, sink) = AsyncStream.makeStream(of: HubTransferTelemetry.self, bufferingPolicy: .bufferingNewest(1))
+        let relay = Task {
+            for await prog in updates {
+                await send(.publishProgressed(req.repoId, prog))
+            }
+        }
+        defer { relay.cancel() }
+        do {
+            let result = try await client.publish(req) { prog in sink.yield(prog) }
+            sink.finish()
+            await relay.value
+            guard !Task.isCancelled else { return }
+            await send(.publishCompleted(req.repoId, result))
+        } catch {
+            guard !Task.isCancelled else { return }
+            await send(.publishFailed(req.repoId, Self.describe(error)))
         }
     }
 }

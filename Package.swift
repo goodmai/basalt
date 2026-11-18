@@ -18,10 +18,9 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git",            from: "1.6.2"),
         .package(url: "https://github.com/apple/swift-metrics.git",        exact: "2.13.1"),
         .package(url: "https://github.com/apple/swift-nio.git",            from: "2.104.0"),
-        // Provides the `Tokenizers` module used by MLXHuggingFace macros
+        .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "1.0.0", traits: ["Xet"]),
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
         .package(url: "https://github.com/huggingface/swift-jinja.git",     from: "3.1.0"),
-        // Epic 16: CLI Enhancements
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.2.2"),
         .package(url: "https://github.com/apple/swift-markdown.git", from: "0.9.0"),
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.2.2"),
@@ -29,12 +28,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-numerics", from: "1.1.1"),
     ],
     targets: [
-
-        // ── Libraries (layered DAG: Core ← Inference/Cloud/Server/UI ← CLI) ──
-        // Core: DTOs, errors, config, logger, profilers, calculators. No MLX, no UI.
         .target(
             name: "BasaltCore",
             dependencies: [
+                .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "ComplexModule", package: "swift-numerics"),
                 .product(name: "RealModule", package: "swift-numerics"),
             ],

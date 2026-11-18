@@ -11,6 +11,15 @@ public struct LibraryView: View {
 
     public var body: some View {
         List {
+            if !store.state.publishes.isEmpty {
+                Section("Publishing") {
+                    ForEach(store.state.publishes.keys.sorted(), id: \.self) { id in
+                        if let job = store.state.publishes[id] {
+                            PublishRow(job: job, store: store)
+                        }
+                    }
+                }
+            }
             if !store.state.conversions.isEmpty {
                 Section("Converting") {
                     ForEach(store.state.conversions.keys.sorted(), id: \.self) { id in
@@ -45,6 +54,13 @@ public struct LibraryView: View {
         ) {
             ConvertModelSheet(store: store)
         }
+        .sheet(
+            isPresented: Binding(
+                get: { store.state.publishDraft != nil },
+                set: { if !$0 { store.send(.closePublish) } })
+        ) {
+            PublishModelSheet(store: store)
+        }
         .confirmationDialog(
             "Delete \(deleting ?? "")?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
@@ -62,8 +78,11 @@ public struct LibraryView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.down.circle")
                         .foregroundStyle(.secondary)
-                    TextField("Hugging Face repo, such as mlx-community/gemma-4-12B-it-qat-4bit", text: $repo)
+                    TextField("Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)", text: $repo)
                         .textFieldStyle(.plain)
+                        .onChange(of: repo) { _, newValue in
+                            store.send(.searchQueryChanged(newValue))
+                        }
                         .onSubmit(download)
                     Button("Download", action: download)
                         .controlSize(.small)
@@ -73,6 +92,13 @@ public struct LibraryView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .adaptiveGlass(.chromeRegular, in: .capsule)
+
+                if !store.state.hubSuggestions.isEmpty {
+                    HubSuggestionList(suggestions: store.state.hubSuggestions) { chosen in
+                        repo = ""
+                        store.send(.download(chosen))
+                    }
+                }
 
                 if let problem = store.state.problem {
                     Label(problem, systemImage: "exclamationmark.triangle")
@@ -90,6 +116,40 @@ public struct LibraryView: View {
     func download() {
         store.send(.download(repo.trimmingCharacters(in: .whitespaces)))
         repo = ""
+    }
+}
+
+struct HubSuggestionList: View {
+    let suggestions: [HubModelSuggestion]
+    let pick: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(suggestions.prefix(6)) { item in
+                HStack(spacing: 8) {
+                    Text(item.id)
+                        .font(.callout)
+                        .lineLimit(1)
+                    if item.quantization != "unknown" {
+                        Text(item.quantization)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.14), in: .capsule)
+                    }
+                    Spacer()
+                    Text("\(item.downloads)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Button("Download") { pick(item.id) }
+                        .controlSize(.mini)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+            }
+        }
+        .padding(.vertical, 4)
+        .adaptiveGlass(.chromeRegular, in: .rect(cornerRadius: 12))
     }
 }
 
@@ -113,6 +173,10 @@ struct ModelRow: View {
                 store.send(.openConvert(model))
             }
             .controlSize(.small)
+            Button("Publish…", systemImage: "icloud.and.arrow.up") {
+                store.send(.openPublish(model))
+            }
+            .controlSize(.small)
             if model.isLoaded {
                 Text("Loaded").foregroundStyle(.green)
             } else {
@@ -120,6 +184,34 @@ struct ModelRow: View {
                     .disabled(!store.state.canLoad(model.id))
                 Button("Delete", systemImage: "trash", role: .destructive, action: delete)
                     .labelStyle(.iconOnly)
+            }
+        }
+    }
+}
+
+struct PublishRow: View {
+    let job: PublishJobState
+    let store: LibraryStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(job.repoId).font(.subheadline.weight(.medium)).lineLimit(1)
+                Spacer()
+                if let rate = HubTransferFormatting.rateAndETA(bytesPerSecond: job.bytesPerSecond, etaSeconds: job.etaSeconds), job.active {
+                    Text(rate).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Button(job.active ? "Cancel" : "Dismiss") { store.send(.cancelPublish(job.repoId)) }
+            }
+            ProgressView(value: job.fraction)
+            if let error = job.error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            } else if let url = job.publishedURL {
+                Text(url).font(.caption).foregroundStyle(.green)
+            } else {
+                Text("\(ByteCountFormatter.string(fromByteCount: job.done, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: job.total, countStyle: .file))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -164,6 +256,11 @@ struct DownloadRow: View {
             HStack {
                 Text(id).lineLimit(1)
                 Spacer()
+                if let rate = HubTransferFormatting.rateAndETA(bytesPerSecond: download.bytesPerSecond, etaSeconds: download.etaSeconds) {
+                    Text(rate)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
                 if download.error != nil { Button("Retry") { store.send(.download(id)) } }
                 Button("Cancel") { store.send(.cancelDownload(id)) }
             }

@@ -287,3 +287,15 @@
 "A-SINQ" = "A-SINQ";
 "RTN" = "RTN";
 "local/model-name" = "local/model-name";
+
+"Publishing" = "Publishing";
+"Publish…" = "Publish…";
+"Publish to Hugging Face" = "Publish to Hugging Face";
+"Target Repository ID" = "Target Repository ID";
+"owner/model-name" = "owner/model-name";
+"Private Repository" = "Private Repository";
+"Commit Message" = "Commit Message";
+"Upload MLX checkpoint via Basalt" = "Upload MLX checkpoint via Basalt";
+"Publish Model" = "Publish Model";
+"Dismiss" = "Dismiss";
+"Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)" = "Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)";
