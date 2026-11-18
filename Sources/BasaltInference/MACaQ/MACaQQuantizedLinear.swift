@@ -105,8 +105,9 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let rotated = MACaQFusedKernels.blockHadamard(
-            x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
+        let rotated = training
+            ? MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock)
+            : MACaQFusedKernels.blockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
         return super.callAsFunction(rotated)
     }
 }
@@ -167,7 +168,10 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
         let params = parameters()
         guard case .value(let w)? = params["weight"] else { return x }
         let rotated: MLXArray
-        if preScale.ndim == 1 {
+        if training {
+            rotated = MACaQFusedKernels.differentiableSwitchHadamard(
+                x, indices: indices, preScale: preScale, blockSize: hadamardBlock)
+        } else if preScale.ndim == 1 {
             rotated = MACaQFusedKernels.blockHadamard(
                 x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
         } else {
@@ -237,6 +241,7 @@ package enum MACaQNativeLoader {
             throw BasaltError.inferenceError("MACaQ native: missing model_type in config.json")
         }
         var failure: (any Error)?
+        await MLXInferenceEngine.registerAliases()
         let scaleKeys = safetensorsScaleKeys(in: directory)
         let perLayer = (try? JSONDecoder.json5().decode(BaseConfiguration.self, from: rawConfig))?.perLayerQuantization
         for family in ExpertStreamingLoader.families where await family.types.contains(modelType) {

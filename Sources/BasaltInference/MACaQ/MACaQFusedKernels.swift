@@ -24,6 +24,47 @@ package enum MACaQFusedKernels {
             && dtypes.contains(dtype)
     }
 
+    package static func differentiableBlockHadamard(
+        _ x: MLXArray,
+        scaleVector: MLXArray,
+        blockSize: Int
+    ) -> MLXArray {
+        let origType = x.dtype
+        let clamped = clip(scaleVector.asType(.float32), min: Float(1e-4), max: Float(1e4))
+        let scaled = x.asType(.float32) * clamped
+        guard blockSize > 1, scaled.ndim > 0, scaled.dim(-1).isMultiple(of: blockSize) else {
+            return scaled.asType(origType)
+        }
+        let scale = 1.0 / Float(blockSize).squareRoot()
+        return hadamardTransform(scaled.reshaped(-1, blockSize), scale: scale)
+            .reshaped(scaled.shape)
+            .asType(origType)
+    }
+
+    package static func differentiableSwitchHadamard(
+        _ x: MLXArray,
+        indices: MLXArray,
+        preScale: MLXArray,
+        blockSize: Int
+    ) -> MLXArray {
+        let origType = x.dtype
+        let clamped = clip(preScale.asType(.float32), min: Float(1e-4), max: Float(1e4))
+        let scaled: MLXArray
+        if clamped.ndim == 1 {
+            scaled = x.asType(.float32) * clamped
+        } else {
+            let gathered = expandedDimensions(clamped.take(indices, axis: 0), axis: -2)
+            scaled = x.asType(.float32) * gathered
+        }
+        guard blockSize > 1, scaled.ndim > 0, scaled.dim(-1).isMultiple(of: blockSize) else {
+            return scaled.asType(origType)
+        }
+        let scale = 1.0 / Float(blockSize).squareRoot()
+        return hadamardTransform(scaled.reshaped(-1, blockSize), scale: scale)
+            .reshaped(scaled.shape)
+            .asType(origType)
+    }
+
     package static func blockHadamard(
         _ x: MLXArray,
         scaleVector: MLXArray,

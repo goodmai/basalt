@@ -316,7 +316,12 @@ package enum PVTuner {
         var replaced = 0
         for (path, mod) in entries {
             guard textBlockIndex(path) != nil, !path.contains("router") else { continue }
-            if let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.bits <= 4 {
+            if let mac = mod as? MACaQQuantizedLinear, mac.bits <= 4 {
+                guard let repacked = requantizeMACaQLinear(mac, bits: bits, groupSize: groupSize, mode: mode) else { continue }
+                eval(repacked)
+                try swapModule(path, with: repacked, in: model)
+                replaced += 1
+            } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.bits <= 4 {
                 let cols = ql.weight.dim(-1) * 32 / ql.bits
                 guard cols.isMultiple(of: groupSize) else { continue }
                 let dense = dequantized(ql.weight, scales: ql.scales, biases: ql.biases, groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode)
