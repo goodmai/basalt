@@ -14,8 +14,8 @@ extension ConvertSubcommand {
             throw ValidationError(error.localizedDescription)
         }
         let conflict = hasDirectSourceConflict || experimentalQtip != nil || experimentalQtipBudget != nil
-        if conflict || isGSQRCO || experimentalPvTune {
-            throw ValidationError("--experimental-macaq converts an MLX source directly without --quantize, --dequantize, --adapter, --experimental-pv-tune or --format hf")
+        if conflict || isGSQRCO {
+            throw ValidationError("--experimental-macaq converts an MLX source directly without --quantize, --dequantize, --adapter or --format hf")
         }
     }
 
@@ -66,6 +66,7 @@ extension ConvertSubcommand {
             throw ValidationError(error.localizedDescription)
         }
         let sourceURL = try Self.resolveModelDirectory(source)
+        let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
         let calibrationText = try readCalibrationText()
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
         var config = MACaQConfig()
@@ -77,6 +78,11 @@ extension ConvertSubcommand {
                 source: sourceURL, output: outURL, targetMode: mode,
                 calibrationText: calibrationText, config: config
             ) { print("  [macaq] \($0)") }
+            let pvSummary = experimentalPvTune
+                ? try await PVTuner.tuneConvertedDirectory(
+                    output: outURL, teacher: teacherURL, calibrationText: calibrationText
+                ) { print("  [pv-tune] \($0)") }
+                : nil
             let elapsed = ContinuousClock.now - start
             let reduction = Double(max(Float(0), (Float(1) - result.summary.meanLossRatio) * Float(100)))
             printSuccess("Converted \(sourceURL.path) → \(outURL.path) (MACaQ \(mode.label), B=\(config.hadamardBlock))")
@@ -84,8 +90,14 @@ extension ConvertSubcommand {
                 format: "  MACaQ:     %d layer(s), %d code flip(s), H-loss -%.1f%% in %d shard(s)",
                 result.summary.refinedLayers, result.summary.totalFlips, reduction, result.shards))
             print("  Bytes:     \(formatBytes(Int64(result.bytesAfter)))")
+            if let pv = pvSummary {
+                print(String(
+                    format: "  PV-Tune:   valKL %.4f → %.4f, %d code(s) updated, %d tensor(s) rewritten",
+                    pv.valKLBefore, pv.valKLAfter, pv.totalUpdatedCodes, pv.rewrittenTensors))
+            }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
+            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }

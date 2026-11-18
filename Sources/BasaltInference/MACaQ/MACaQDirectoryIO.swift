@@ -111,6 +111,7 @@ extension MACaQRefiner {
         if modelType == PrismHadamard.modelType {
             throw BasaltError.invalidRequestStructure(details: "macaq: source checkpoint is already Hadamard-rotated (\(modelType))")
         }
+        await MLXInferenceEngine.registerAliases()
         var supported = false
         for family in ExpertStreamingLoader.families where await family.types.contains(modelType) {
             supported = true

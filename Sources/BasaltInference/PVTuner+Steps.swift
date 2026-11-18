@@ -14,6 +14,8 @@ package struct PVQuantTarget {
     package var spec: PVCodeGrid.Spec
     package var isSwitch: Bool
     package var elementCount: Int
+    package var macaqPreScale: MLXArray? = nil
+    package var macaqBlock: Int? = nil
 }
 
 extension PVTuner {
@@ -39,6 +41,9 @@ extension PVTuner {
     }
 
     private static func target(path: String, module: Module, maxSwitchExperts: Int) -> PVQuantTarget? {
+        if let mac = macaqTarget(path: path, module: module, maxSwitchExperts: maxSwitchExperts) {
+            return mac
+        }
         if let nf4 = module as? NF4Linear {
             let wCopy = nf4.weight + MLXArray(UInt32(0))
             let sCopy = nf4.scales + MLXArray(0, dtype: nf4.scales.dtype)
@@ -126,15 +131,13 @@ extension PVTuner {
             case .nf4:
                 dense = NF4Metal.dequantized(t.packedWeight, scales: t.scales, groupSize: t.spec.groupSize)
             case .affine(let mode):
+                let outType: DType = t.scales.dtype.isFloatingPoint ? t.scales.dtype : .float32
                 dense = dequantized(
-                    t.packedWeight, scales: t.scales, biases: t.biases, groupSize: t.spec.groupSize, bits: t.spec.bits, mode: mode)
+                    t.packedWeight, scales: t.scales, biases: t.biases,
+                    groupSize: t.spec.groupSize, bits: t.spec.bits, mode: mode, dtype: outType)
             }
             eval(dense)
-            let replacement: Module = if t.isSwitch {
-                SwitchLinear(inputDims: dense.dim(-1), outputDims: dense.dim(-2), numExperts: dense.dim(0), weight: dense, bias: t.bias)
-            } else {
-                Linear(weight: dense, bias: t.bias)
-            }
+            let replacement = makeDenseProbe(for: t, dense: dense)
             replacement.freeze()
             try replacement.unfreeze(keys: ["weight"], strict: false)
             try swapModule(t.path, with: replacement, in: root)
@@ -182,7 +185,7 @@ extension PVTuner {
             let grads = try denseGradients(model, chunk: chunk, minBlock: minBlock, batches: slice)
             let baseTrainKL = meanKL(model, Array(slice.prefix(min(4, slice.count))))
             let baseValKL = meanKL(model, gateBatches)
-            let unpacked = Dictionary(uniqueKeysWithValues: chunk.map { ($0.path, PVCodeGrid.unpackCodes($0.packedWeight, bits: $0.spec.bits)) })
+            let unpacked = Dictionary(uniqueKeysWithValues: chunk.map { ($0.path, PVMACaQGrid.unpackCodes($0.packedWeight, spec: $0.spec)) })
             eval(Array(unpacked.values))
             var accepted = false
             for fraction in config.discreteFractions {
@@ -190,8 +193,8 @@ extension PVTuner {
                 var updates: [(String, MLXArray)] = []
                 for t in chunk {
                     guard let g = grads[t.path], let codes = unpacked[t.path] else { continue }
-                    let step = PVCodeGrid.discreteStep(codes: codes, scales: t.scales, grad: g, spec: t.spec, fraction: fraction)
-                    updates.append(("\(t.path).weight", PVCodeGrid.packCodes(step.codes, bits: t.spec.bits)))
+                    let step = PVMACaQGrid.discreteStep(codes: codes, scales: t.scales, grad: g, spec: t.spec, fraction: fraction)
+                    updates.append(("\(t.path).weight", PVMACaQGrid.packCodes(step.codes, spec: t.spec)))
                     candidateCount += step.updated
                 }
                 guard candidateCount > 0 else { continue }
@@ -222,7 +225,9 @@ extension PVTuner {
         nf4Swaps: inout [(String, PVScaleLinear)],
         qtipSwaps: inout [(String, PVQTIPLinear)]
     ) throws {
-        if let qt = mod as? QTIPLinear {
+        if try unfreezeMACaQContinuous(mod: mod, maxSwitchExperts: maxSwitchExperts) {
+            return
+        } else if let qt = mod as? QTIPLinear {
             qtipSwaps.append((path, PVQTIPLinear(from: qt)))
         } else if let nf4 = mod as? NF4Linear {
             nf4Swaps.append((path, PVScaleLinear(from: nf4)))
@@ -289,7 +294,8 @@ extension PVTuner {
                 guard let p = master[k], let mOld = mState[k], let vOld = vState[k], let dt = origDTypes[k] else { continue }
                 let g = gRaw.asType(.float32)
                 let (mNew, vNew) = (Float(0.9) * mOld + Float(0.1) * g, Float(0.999) * vOld + Float(0.001) * (g * g))
-                let pNew = p - lrCorr * mNew / (sqrt(vNew) + Float(1e-8))
+                let pNew = clampContinuousUpdate(
+                    key: k, value: p - lrCorr * mNew / (sqrt(vNew) + Float(1e-8)))
                 (master[k], mState[k], vState[k]) = (pNew, mNew, vNew)
                 castedUpdates.append((k, pNew.asType(dt)))
             }
