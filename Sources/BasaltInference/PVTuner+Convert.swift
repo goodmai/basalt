@@ -122,7 +122,7 @@ extension PVTuner {
         let valCount = max(1, allBatches.count / 5)
         let trainBatches = Array(allBatches.dropLast(valCount))
         let valBatches = Array(allBatches.suffix(valCount))
-        return try await studentContainer.perform { ctx in
+        return try await studentContainer.performEvaluating(nonSendable: ()) { ctx, _ in
             var tuned = try tune(ctx.model, train: trainBatches, val: valBatches, config: config, onStep: onStep)
             tuned.rewrittenTensors = try writeTunedShards(from: ctx.model as Module, into: output)
             return tuned
@@ -135,13 +135,13 @@ extension PVTuner {
         let corpus = (calibrationText?.isEmpty == false ? calibrationText : nil) ?? defaultCalibrationCorpus
         let allBatches: [PVTeacherBatch]
         do {
-            let teacherEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+            let teacherEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
             defer { await withTaskCancellationShield { await teacherEngine.unload(); Memory.clearCache() } }
             try await teacherEngine.load(modelPath: teacher.path)
             guard let teacherContainer = await teacherEngine.container else { throw BasaltError.modelNotLoaded }
             allBatches = await collectTeacherBatches(teacherContainer, texts: corpus, count: 40, seqLen: 128, topK: 64)
         }
-        let studentEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let studentEngine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
         defer { await withTaskCancellationShield { await studentEngine.unload(); Memory.clearCache() } }
         try await studentEngine.load(modelPath: output.path)
         guard let studentContainer = await studentEngine.container else { throw BasaltError.modelNotLoaded }

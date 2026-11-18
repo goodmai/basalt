@@ -110,6 +110,12 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
             : MACaQFusedKernels.blockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
         return super.callAsFunction(rotated)
     }
+
+    package func unrotatedDenseWeight() -> MLXArray {
+        let wRot = dequantized(weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: mode).asType(.float32)
+        let unrotated = MACaQMath.rotateBlocks(wRot, blockSize: hadamardBlock)
+        return unrotated * preScale.asType(.float32).expandedDimensions(axis: 0)
+    }
 }
 
 package final class MACaQSwitchLinear: SwitchLinear, Quantized {
@@ -222,17 +228,24 @@ package enum MACaQNativeLoader {
         }
     }
 
-    package static func manifest(in directory: URL) -> Manifest? {
-        guard let data = try? Data(contentsOf: directory.appending(component: "config.json")) else {
+    package static func manifest(in directory: URL) throws(BasaltError) -> Manifest? {
+        let configURL = directory.appending(component: "config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              json[configKey] != nil else {
             return nil
         }
-        return (try? JSONDecoder().decode(WrapperConfig.self, from: data))?.macaqQuantization
+        guard let manifest = (try? JSONDecoder().decode(WrapperConfig.self, from: data))?.macaqQuantization,
+              manifest.version == 1 else {
+            throw .modelConfigurationInvalid(path: configURL.path, reason: "invalid macaq_quantization manifest or unsupported version")
+        }
+        return manifest
     }
 
     package static func loadContainer(
         from directory: URL, tokenizerLoader: any TokenizerLoader
     ) async throws -> ModelContainer? {
-        guard let manifest = manifest(in: directory) else { return nil }
+        guard let manifest = try manifest(in: directory) else { return nil }
         let rawConfig = try Data(contentsOf: directory.appending(component: "config.json"))
         guard let json = try JSONSerialization.jsonObject(with: rawConfig) as? [String: Any],
               let modelType = (json["model_type"] as? String)
@@ -263,8 +276,11 @@ package enum MACaQNativeLoader {
     package static func install(_ modules: [String: MACaQLayerSpec], in model: Module) throws(BasaltError) {
         let named = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
         for (path, spec) in modules.sorted(by: { $0.key < $1.key }) {
-            guard spec.hadamardBlock > 0, (spec.hadamardBlock & (spec.hadamardBlock - 1)) == 0 else {
-                throw .inferenceError("MACaQ native: \(path) has invalid hadamard_block \(spec.hadamardBlock)")
+            guard spec.hadamardBlock > 0, (spec.hadamardBlock & (spec.hadamardBlock - 1)) == 0,
+                  [2, 3, 4, 8].contains(spec.bits), [32, 64, 128].contains(spec.groupSize) else {
+                throw .modelConfigurationInvalid(
+                    path: path,
+                    reason: "invalid MACaQ spec (block=\(spec.hadamardBlock), bits=\(spec.bits), group=\(spec.groupSize))")
             }
             let replacement: Module
             switch named[path] {
@@ -272,13 +288,17 @@ package enum MACaQNativeLoader {
                 guard linear.shape.1.isMultiple(of: spec.hadamardBlock),
                       linear.shape.1.isMultiple(of: spec.groupSize)
                 else {
-                    throw .inferenceError("MACaQ native: \(path) width \(linear.shape.1) incompatible with block \(spec.hadamardBlock) / group \(spec.groupSize)")
+                    throw .modelConfigurationInvalid(path: path, reason: "width \(linear.shape.1) incompatible with block \(spec.hadamardBlock) / group \(spec.groupSize)")
                 }
                 replacement = MACaQQuantizedLinear(replacing: linear, spec: spec)
             case let sw as SwitchLinear where !(sw is QuantizedSwitchLinear):
+                let inDim = sw.parameters().flattened().first(where: { $0.0 == "weight" })?.1.dim(-1) ?? 0
+                guard inDim > 0, inDim.isMultiple(of: spec.hadamardBlock), inDim.isMultiple(of: spec.groupSize) else {
+                    throw .modelConfigurationInvalid(path: path, reason: "SwitchLinear width \(inDim) incompatible with block \(spec.hadamardBlock) / group \(spec.groupSize)")
+                }
                 replacement = MACaQSwitchLinear(replacing: sw, spec: spec)
             default:
-                throw .inferenceError("MACaQ native: \(path) is not a replaceable Linear or SwitchLinear")
+                throw .modelConfigurationInvalid(path: path, reason: "not a replaceable Linear or SwitchLinear")
             }
             try swapChild(path: path, replacement: replacement, named: named, root: model)
         }

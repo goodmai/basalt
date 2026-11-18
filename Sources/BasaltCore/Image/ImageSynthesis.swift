@@ -284,6 +284,7 @@ public protocol ImageSynthesizer: Sendable {
     var descriptor: ImageModelDescriptor { get }
     func resolveRoute(_ request: ImageGenerationRequest) async -> ImageRouteDecision
     func generate(_ request: ImageGenerationRequest) async throws -> AsyncThrowingStream<ImageGenerationEvent, any Error>
+    func unload() async
 }
 
 extension ImageSynthesizer {
@@ -291,4 +292,6 @@ extension ImageSynthesizer {
         _ = request
         return ImageRouteDecision(selectedModel: modelIdentifier, compute: descriptor.defaultCompute)
     }
+
+    public func unload() async {}
 }

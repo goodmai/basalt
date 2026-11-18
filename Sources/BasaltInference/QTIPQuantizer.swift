@@ -304,6 +304,11 @@ extension QTIPQuantizer {
     }
 
     static func extractDenseWeight(_ module: Module) -> (weight: MLXArray, bias: MLXArray?) {
+        if let mac = module as? MACaQQuantizedLinear {
+            let dense = mac.unrotatedDenseWeight()
+            eval(dense)
+            return (dense, mac.bias)
+        }
         if let ql = module as? QuantizedLinear {
             let dense = dequantized(
                 ql.weight, scales: ql.scales, biases: ql.biases,

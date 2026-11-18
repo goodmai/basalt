@@ -152,7 +152,7 @@ public struct SpeechRequest: Sendable, Codable, Equatable {
             throw .invalidRequestStructure(details: "speech: reference_audio must be a valid local file path")
         }
         let segments = trimmed.split(omittingEmptySubsequences: false) { $0 == "/" || $0 == "\\" }
-        if segments.contains("..") || trimmed.contains("..") {
+        if segments.contains("..") {
             throw .invalidRequestStructure(details: "speech: reference_audio must not contain '..' path traversal")
         }
         let ext = URL(fileURLWithPath: trimmed).pathExtension.lowercased()

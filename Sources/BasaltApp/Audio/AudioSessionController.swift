@@ -53,6 +53,7 @@ public actor AudioCaptureActor {
     private var player: AVAudioPlayer?
     private var delegate: PlaybackDelegate?
     private var playbackContinuation: AsyncStream<Bool>.Continuation?
+    private var playbackEpoch: UInt64 = 0
 
     public init() {}
 
@@ -94,6 +95,8 @@ public actor AudioCaptureActor {
 
     public func play(_ wavData: Data) async throws {
         stopPlayback()
+        playbackEpoch &+= 1
+        let epoch = playbackEpoch
         let audioPlayer = try AVAudioPlayer(data: wavData)
         let (stream, continuation) = AsyncStream<Bool>.makeStream()
         let finishDelegate = PlaybackDelegate { flag in
@@ -106,7 +109,7 @@ public actor AudioCaptureActor {
             throw AudioCaptureError.playbackFailed
         }
         (player, delegate, playbackContinuation) = (audioPlayer, finishDelegate, continuation)
-        defer { cleanupPlayback() }
+        defer { cleanupPlayback(epoch: epoch) }
         await withTaskCancellationHandler {
             for await _ in stream { break }
         } onCancel: {
@@ -115,12 +118,16 @@ public actor AudioCaptureActor {
     }
 
     public func stopPlayback() {
+        playbackEpoch &+= 1
         playbackContinuation?.finish()
-        cleanupPlayback()
+        player?.stop()
+        (player, delegate, playbackContinuation) = (nil, nil, nil)
     }
 
-    private func cleanupPlayback() {
+    private func cleanupPlayback(epoch: UInt64) {
+        guard epoch == playbackEpoch else { return }
         player?.stop()
+        playbackContinuation?.finish()
         (player, delegate, playbackContinuation) = (nil, nil, nil)
     }
 

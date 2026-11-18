@@ -190,7 +190,22 @@ extension Zonos3MiniConfig {
         if let lmDict = raw["lm"] as? [String: Any] { cfg.lm = parseLM(lmDict) }
         if let codecDict = raw["codec"] as? [String: Any] { cfg.codec = parseCodec(codecDict) }
         if let genDict = raw["generation"] as? [String: Any] { cfg.generation = parseGeneration(genDict) }
-        return cfg
+        return try cfg.validated(path: url.path)
+    }
+
+    public func validated(path: String = "Zonos3MiniConfig") throws(BasaltError) -> Zonos3MiniConfig {
+        guard lm.nLayers > 0, lm.dim > 0, lm.headDim > 0, lm.nHeads > 0, lm.nKVHeads > 0, lm.nHeads.isMultiple(of: lm.nKVHeads),
+              lm.nCodebooks > 0, lm.codebookSize > 0, lm.nExperts > 0, lm.moeTopK > 0, lm.moeTopK <= lm.nExperts,
+              lm.textVocab > 0, lm.textRows >= lm.textVocab else {
+            throw .modelConfigurationInvalid(path: path, reason: "Zonos3MiniConfig.lm dimensions are invalid")
+        }
+        guard codec.codebookSize > 0, codec.codebookDim > 0, codec.residualCodebooks >= 0,
+              codec.latentDim > 0, codec.hop > 0, codec.headHop > 0,
+              codec.resampleOrig > 0, codec.resampleNew > 0,
+              !codec.nFFTs.isEmpty, codec.nFFTs.allSatisfy({ $0 > 0 }) else {
+            throw .modelConfigurationInvalid(path: path, reason: "Zonos3MiniConfig.codec dimensions are invalid")
+        }
+        return self
     }
 
     private static func parseLM(_ d: [String: Any]) -> LM {

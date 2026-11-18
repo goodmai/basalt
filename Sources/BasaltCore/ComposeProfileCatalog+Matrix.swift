@@ -80,6 +80,29 @@ public enum ComposeProfileCatalog {
     public static func resolve(id rawID: String) -> ComposeBundledProfile? {
         let clean = rawID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let exact = profilesByID[clean] { return exact }
+        if let flux = flux3Combinations.first(where: { $0.id == clean }) {
+            return ComposeBundledProfile(
+                id: flux.id,
+                tier: flux.tier,
+                archetype: .creativeStudio,
+                estimatedResidentGB: flux.estimatedPeakGB,
+                primaryModel: flux.painterModel,
+                capabilityBadges: ["Chat", "FLUX.3", "\(flux.steps) steps"],
+                yaml: flux.yaml
+            )
+        }
+        if let legacy = legacyYAML[clean] {
+            let archetype: ComposeProfileArchetype = clean == "document-qa" ? .documentOCR : .voiceZonos
+            return ComposeBundledProfile(
+                id: clean,
+                tier: .gb24,
+                archetype: archetype,
+                estimatedResidentGB: 14.0,
+                primaryModel: "mlx-community/Qwen3.5-9B-4bit",
+                capabilityBadges: ["Chat", clean],
+                yaml: legacy
+            )
+        }
         for tier in ComposeMemoryTier.allCases {
             for alias in tier.aliases where clean.hasPrefix("\(alias)-") {
                 let suffix = clean.dropFirst(alias.count + 1)

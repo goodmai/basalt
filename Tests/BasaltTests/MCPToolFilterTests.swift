@@ -7,14 +7,16 @@ import Testing
 
 @Suite("MCPToolFilter expands groups, enforces deny-overrides precedence, and matches the full MCP catalog (#484)")
 struct MCPToolFilterValueTests {
-    @Test("Group.all covers the exact 41 tools in MCPToolCatalog, partitioned into 23 base and 18 experiment tools")
+    @Test("Group.all covers the exact 43 tools in MCPToolCatalog, partitioned into 25 base (23 text + 2 image) and 18 experiment tools")
     func catalogCoverage() {
-        let fullCatalog = Set(MCPToolCatalog.catalog(researchTools: true).tools.map(\.name))
-        let baseCatalog = Set(MCPToolCatalog.catalog(researchTools: false).tools.map(\.name))
+        let fullCatalog = Set(MCPToolCatalog.catalog(researchTools: true, includeImageTools: true).tools.map(\.name))
+        let baseCatalog = Set(MCPToolCatalog.catalog(researchTools: false, includeImageTools: true).tools.map(\.name))
+        let textBaseCatalog = Set(MCPToolCatalog.catalog(researchTools: false, includeImageTools: false).tools.map(\.name))
         #expect(fullCatalog == MCPToolFilter.allTools)
-        #expect(fullCatalog.count == 41)
+        #expect(fullCatalog.count == 43)
         #expect(baseCatalog == MCPToolFilter.defaultBaseTools)
-        #expect(baseCatalog.count == 23)
+        #expect(baseCatalog.count == 25)
+        #expect(textBaseCatalog.count == 23)
         #expect(MCPToolFilter.experimentTools.count == 18)
         #expect(MCPToolFilter.Group.surgery.tools.isSubset(of: MCPToolFilter.Group.research.tools))
         #expect(MCPToolFilter.Group.surgery.tools.count == 9)

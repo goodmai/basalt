@@ -454,7 +454,13 @@ extension PromptCacheTree {
         let changed = delta.hits > 0 || delta.misses > 0 || delta.evictions > 0
             || reported.entries != leafCount || reported.tokens != tokens || reported.bytes != bytes
         guard changed else { return nil }
-        reported = (hits, misses, evictions, leafCount, tokens, bytes)
+        reported = (
+            max(reported.hits, hits),
+            max(reported.misses, misses),
+            max(reported.evictions, evictions),
+            leafCount,
+            tokens,
+            bytes)
         return delta
     }
 }

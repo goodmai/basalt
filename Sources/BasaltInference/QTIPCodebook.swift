@@ -236,7 +236,8 @@ package struct KroneckerRHT: Sendable, Equatable {
 
     package static func decompose(_ d: Int) -> (outer: Int, hadamardWidth: Int)? {
         guard d >= 16, d.isMultiple(of: 16) else { return nil }
-        let tz = d.trailingZeroBitCount
+        let rawTZ = d.trailingZeroBitCount
+        let tz = (rawTZ > 12 && (d >> 12) <= 64) ? 12 : rawTZ
         let odd = d >> tz
         guard tz >= 4, odd <= 64 else { return nil }
         return (odd, 1 << tz)

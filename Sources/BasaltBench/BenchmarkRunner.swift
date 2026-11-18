@@ -97,6 +97,12 @@ public struct BenchmarkRunner: Sendable {
         )
         let artifact = buildArtifact(request: request, suite: suite, defaults: defaults, summary: summary)
         if let dir = request.outputDirectory {
+            guard !request.runID.isEmpty,
+                  !request.runID.contains("/"),
+                  !request.runID.contains("\\"),
+                  !request.runID.contains("..") else {
+                throw BenchmarkError.invalidResponse("runID must be a single safe path component, got '\(request.runID)'")
+            }
             try Self.writeArtifact(artifact, to: dir.appendingPathComponent(request.runID, isDirectory: true))
         }
         return artifact

@@ -15,6 +15,7 @@ struct AudioSpeechController: Sendable {
 
     let synthesizer: (any SpeechSynthesizer)?
     var pipelines: PipelineRegistry? = nil
+    var allowedReferenceDirectories: [URL] = []
 
     func add(to group: RouterGroup<BasicRequestContext>) {
         group.post("/audio/speech", use: speech)
@@ -22,8 +23,8 @@ struct AudioSpeechController: Sendable {
     }
 
     private func resolveSynthesizer() async -> (any SpeechSynthesizer)? {
-        if let synthesizer { return synthesizer }
-        return await pipelines?.system(ComposeSpec.defaultPipeline)?.speech
+        if let live = await pipelines?.system(ComposeSpec.defaultPipeline)?.speech { return live }
+        return synthesizer
     }
 
     @Sendable
@@ -50,7 +51,7 @@ struct AudioSpeechController: Sendable {
             )
         }
         do {
-            let speechRequest = try Self.parseRequest(Data(body.readableBytesView))
+            let speechRequest = try Self.parseRequest(Data(body.readableBytesView), allowedReferenceDirectories: allowedReferenceDirectories)
             guard let active = await resolveSynthesizer() else {
                 throw BasaltError.invalidRequestStructure(details: "speech: no speech synthesizer is configured on this server")
             }
@@ -63,14 +64,14 @@ struct AudioSpeechController: Sendable {
         }
     }
 
-    static func parseRequest(_ data: Data) throws(BasaltError) -> SpeechRequest {
+    static func parseRequest(_ data: Data, allowedReferenceDirectories: [URL] = []) throws(BasaltError) -> SpeechRequest {
         let wire: WireSpeechRequest
         do {
             wire = try JSONDecoder().decode(WireSpeechRequest.self, from: data)
         } catch {
             throw .invalidRequestStructure(details: "speech: body must be valid JSON matching /v1/audio/speech")
         }
-        return try wire.toSpeechRequest()
+        return try wire.toSpeechRequest(allowedReferenceDirectories: allowedReferenceDirectories)
     }
 }
 
@@ -100,9 +101,25 @@ extension AudioSpeechController {
             case referenceAudio = "reference_audio"
         }
 
-        func toSpeechRequest() throws(BasaltError) -> SpeechRequest {
+        func toSpeechRequest(allowedReferenceDirectories: [URL] = []) throws(BasaltError) -> SpeechRequest {
             guard let input else {
                 throw .invalidRequestStructure(details: "speech: input text is required")
+            }
+            let resolvedRef: String?
+            if let referenceAudio {
+                let clean = referenceAudio.trimmingCharacters(in: .whitespacesAndNewlines)
+                if clean.isEmpty {
+                    resolvedRef = nil
+                } else {
+                    let target = MCPImages.resolved(URL(fileURLWithPath: clean))
+                    guard allowedReferenceDirectories.contains(where: { MCPImages.contains(MCPImages.resolved($0), target) }) else {
+                        throw .invalidRequestStructure(
+                            details: "speech: client reference_audio paths are disabled on /v1/audio/speech unless inside an allowed reference directory; configure pipeline.speak.reference_audio on the server")
+                    }
+                    resolvedRef = target.path
+                }
+            } else {
+                resolvedRef = nil
             }
             let format = try Self.parseFormat(responseFormat)
             let stream = try Self.parseStream(streamFormat)
@@ -119,7 +136,7 @@ extension AudioSpeechController {
                 instruct: instruct,
                 exaggeration: exaggeration,
                 preferANE: preferANE ?? false,
-                referenceAudio: referenceAudio
+                referenceAudio: resolvedRef
             )
             return request
         }
@@ -178,7 +195,7 @@ extension AudioSpeechController {
         started: ContinuousClock.Instant
     ) async throws -> Response {
         if request.streamFormat == .sse {
-            return sseResponse(stream: stream, decision: decision, started: started)
+            return sseResponse(stream: stream, request: request, decision: decision, started: started)
         }
         if request.responseFormat == .wav {
             return try await wavResponse(stream: stream, decision: decision, started: started)
@@ -248,12 +265,14 @@ extension AudioSpeechController {
 
     private static func sseResponse(
         stream: AsyncThrowingStream<AudioChunk, any Error>,
+        request: SpeechRequest,
         decision: SpeechRouteDecision,
         started: ContinuousClock.Instant
     ) -> Response {
+        let forces24k = request.responseFormat == .pcm24k
         let body = AsyncStream<ByteBuffer> { continuation in
             let task = Task {
-                await streamSSE(stream: stream, decision: decision, started: started, continuation: continuation)
+                await streamSSE(stream: stream, forces24k: forces24k, decision: decision, started: started, continuation: continuation)
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -263,6 +282,7 @@ extension AudioSpeechController {
 
     private static func streamSSE(
         stream: AsyncThrowingStream<AudioChunk, any Error>,
+        forces24k: Bool,
         decision: SpeechRouteDecision,
         started: ContinuousClock.Instant,
         continuation: AsyncStream<ByteBuffer>.Continuation
@@ -273,7 +293,10 @@ extension AudioSpeechController {
         var rate = SpeechRequest.defaultSampleRate
         var ttfaMs: Double?
         do {
-            for try await chunk in stream {
+            for try await rawChunk in stream {
+                let chunk = forces24k && rawChunk.sampleRate != SpeechRequest.defaultSampleRate && !rawChunk.samples.isEmpty
+                    ? rawChunk.resampled(to: SpeechRequest.defaultSampleRate)
+                    : rawChunk
                 if chunk.sampleRate > 0 { rate = chunk.sampleRate }
                 guard !chunk.samples.isEmpty else { continue }
                 if ttfaMs == nil { ttfaMs = milliseconds(from: started, to: .now) }

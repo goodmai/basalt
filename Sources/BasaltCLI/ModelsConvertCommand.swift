@@ -225,6 +225,8 @@ extension ConvertSubcommand {
             precision: precision, format: format,
             adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let existedBefore = FileManager.default.fileExists(atPath: outURL.path)
+        var createdOutput = false
 
         let start = ContinuousClock.now
         let summary: WeightConverter.Summary
@@ -232,12 +234,16 @@ extension ConvertSubcommand {
         let macaqSummary: MACaQSummary?
         do {
             summary = try converter.run(source: sourceURL, output: outURL)
+            createdOutput = true
             macaqSummary = try await runOptionalMACaQRefine(output: outURL, teacher: teacherURL, calibrationText: calibrationText)
             pvSummary = experimentalPvTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
         } catch {
-            if experimentalPvTune || experimentalMacaqRefine { try? FileManager.default.removeItem(at: outURL) }
+            if createdOutput, (experimentalPvTune || experimentalMacaqRefine),
+               Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
+                try? FileManager.default.removeItem(at: outURL)
+            }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }
@@ -283,11 +289,14 @@ extension ConvertSubcommand {
         let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
         let calibrationText = try readCalibrationText()
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let existedBefore = FileManager.default.fileExists(atPath: outURL.path)
+        var createdOutput = false
         let start = ContinuousClock.now
         do {
             let result = try await GSQRCOConverter.convertQTIPBudgetDirectory(
                 source: sourceURL, output: outURL, targetBPW: bpw, calibrationText: calibrationText
             ) { print("  [qtip-budget] \($0)") }
+            createdOutput = true
             let pvSummary = experimentalPvTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
@@ -303,7 +312,10 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
+            if createdOutput, experimentalPvTune,
+               Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
+                try? FileManager.default.removeItem(at: outURL)
+            }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }
@@ -319,11 +331,14 @@ extension ConvertSubcommand {
         let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
         let calibrationText = try readCalibrationText()
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
+        let existedBefore = FileManager.default.fileExists(atPath: outURL.path)
+        var createdOutput = false
         let start = ContinuousClock.now
         do {
             let result = try await QTIPNativeLoader.convertDirectory(
                 source: sourceURL, output: outURL, rate: rate, calibrationText: calibrationText
             ) { print("  [qtip] \($0)") }
+            createdOutput = true
             let pvSummary = experimentalPvTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
@@ -338,10 +353,20 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if experimentalPvTune { try? FileManager.default.removeItem(at: outURL) }
+            if createdOutput, experimentalPvTune,
+               Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
+                try? FileManager.default.removeItem(at: outURL)
+            }
             printError(error.localizedDescription)
             throw ExitCode.failure
         }
+    }
+
+    static func shouldCleanFailedOutput(source: URL, output: URL, existedBefore: Bool) -> Bool {
+        guard !existedBefore else { return false }
+        let src = source.standardizedFileURL.resolvingSymlinksInPath().path
+        let out = output.standardizedFileURL.resolvingSymlinksInPath().path
+        return out != src && !out.hasPrefix(src + "/") && !src.hasPrefix(out + "/")
     }
 
     func importGGUF() throws {

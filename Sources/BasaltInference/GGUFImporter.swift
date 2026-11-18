@@ -97,11 +97,13 @@ package struct GGUFImporter: Sendable {
     }
 
     static func macaqHadamardBlock(in file: GGUFFile) -> Int? {
-        switch file.metadata["macaq.hadamard_block"] {
-        case .uint(let v): Int(v)
-        case .int(let v): Int(v)
+        let raw: Int? = switch file.metadata["macaq.hadamard_block"] {
+        case .uint(let v): Int(exactly: v)
+        case .int(let v): Int(exactly: v)
         default: nil
         }
+        guard let b = raw, b > 1, b <= 2048, (b & (b - 1)) == 0 else { return nil }
+        return b
     }
 
     func packed(_ tensor: GGUFTensor, _ plan: GGUFTensorPlan, base: String) -> [String: MLXArray] {
@@ -128,12 +130,12 @@ package struct GGUFImporter: Sendable {
         let rows = tensor.count / tensor.rowLength
         let targetShape = tensor.dims.count == 1 ? [tensor.count] : Array(tensor.dims.reversed())
         var weight = MLXArray(file.floats(tensor), targetShape)
-        if let preScale, tensor.dims.count == 2 {
+        if let preScale, tensor.dims.count == 2, preScale.count == tensor.rowLength {
             let pArr = MLXArray(file.floats(preScale), [1, preScale.count])
-            if let b = macaqBlock, b > 1 {
+            if let b = macaqBlock, b > 1, tensor.rowLength.isMultiple(of: b) {
                 weight = MACaQMath.rotateBlocks(weight, blockSize: b)
+                weight = weight * pArr
             }
-            weight = weight * pArr
         }
         switch plan.transform {
         case .none: break

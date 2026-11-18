@@ -25,8 +25,8 @@ struct ImagesController: Sendable {
     }
 
     private func resolveSynthesizer() async -> (any ImageSynthesizer)? {
-        if let synthesizer { return synthesizer }
-        return await pipelines?.system(ComposeSpec.defaultPipeline)?.image
+        if let live = await pipelines?.system(ComposeSpec.defaultPipeline)?.image { return live }
+        return synthesizer
     }
 
     func models(request: Request, context: BasicRequestContext) async throws -> Response {
@@ -263,8 +263,8 @@ extension ImagesController {
             continuation.yield(ByteBuffer(string: "data: [DONE]\n\n"))
         } catch {
             let message = ModelsController.publicMessage(for: error)
-            if let json = try? JSONSerialization.data(withJSONObject: ["type": "error", "error": ["message": message]]) {
-                continuation.yield(ByteBuffer(string: "data: \(String(decoding: json, as: UTF8.self))\n\n"))
+            if let json = try? JSONSerialization.data(withJSONObject: ["type": "error", "message": message, "error": ["message": message]]) {
+                continuation.yield(ByteBuffer(string: "event: error\ndata: \(String(decoding: json, as: UTF8.self))\n\n"))
             }
         }
         continuation.finish()

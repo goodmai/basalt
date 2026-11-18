@@ -9,6 +9,7 @@ struct PackedLayer: Sendable {
         case dense
         case quantized(QuantizationMode)
         case nf4
+        case macaq(QuantizationMode, Int, MaterializedArray)
     }
 
     let path: String
@@ -32,6 +33,13 @@ struct PackedLayer: Sendable {
             groupSize = nf4.groupSize
             bits = 4
             kind = .nf4
+        } else if let mac = layer as? MACaQQuantizedLinear {
+            scales = materialize(mac.scales)
+            biases = mac.biases.map { materialize($0) }
+            globalScale = nil
+            groupSize = mac.groupSize
+            bits = mac.bits
+            kind = .macaq(mac.mode, mac.hadamardBlock, materialize(mac.preScale))
         } else if let quantized = layer as? QuantizedLinear {
             scales = materialize(quantized.scales)
             biases = quantized.biases.map { materialize($0) }
@@ -62,6 +70,13 @@ struct PackedLayer: Sendable {
                 return Linear(weight: packed, bias: live(bias))
             }
             return restored
+        case .macaq(let mode, let hadamardBlock, let preScale):
+            guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
+            var spec = MACaQLayerSpec(bits: bits, groupSize: groupSize, mode: mode, hadamardBlock: hadamardBlock)
+            spec.scaleDType = scales.dtype == .float16 ? "float16" : "bfloat16"
+            spec.hasBias = bias != nil
+            let packedWeights = MACaQPackedWeights(weight: packed, scales: scales, biases: live(biases))
+            return MACaQQuantizedLinear(packed: packedWeights, bias: live(bias), preScale: live(preScale) ?? preScale, spec: spec)
         case .quantized(let mode):
             guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
             return QuantizedLinear(
@@ -126,7 +141,8 @@ enum TensorPacker {
         let path = String(name.dropLast(".weight".count))
         let module = name.hasSuffix(".weight") ? model.namedModules().first(where: { $0.0 == path })?.1 : nil
         guard let layer = module as? Linear,
-              type(of: layer) == Linear.self || type(of: layer) == QuantizedLinear.self || type(of: layer) == NF4Linear.self
+              type(of: layer) == Linear.self || type(of: layer) == QuantizedLinear.self
+                  || type(of: layer) == NF4Linear.self || type(of: layer) == MACaQQuantizedLinear.self
         else {
             let owner = module.map { " (its module is a \(type(of: $0)))" } ?? ""
             throw refused("\(name) is not the weight of a Linear, QuantizedLinear or NF4Linear layer\(owner); a pack swaps one whole linear layer")
@@ -174,6 +190,9 @@ enum TensorPacker {
         if let nf4 = layer as? NF4Linear {
             return NF4Metal.dequantized(nf4.weight, scales: nf4.scales, groupSize: nf4.groupSize)
         }
+        if let mac = layer as? MACaQQuantizedLinear {
+            return mac.unrotatedDenseWeight()
+        }
         guard let layer = layer as? QuantizedLinear else { return layer.weight }
         return dequantized(
             layer.weight, scales: layer.scales, biases: layer.biases, groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode,
@@ -184,6 +203,7 @@ enum TensorPacker {
 
     static func describe(_ layer: Linear) -> String {
         if let nf4 = layer as? NF4Linear { return "4-bit nf4 g\(nf4.groupSize)" }
+        if let mac = layer as? MACaQQuantizedLinear { return "\(mac.bits)-bit macaq-\(mac.mode.rawValue) g\(mac.groupSize) h\(mac.hadamardBlock)" }
         return (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"
     }
 

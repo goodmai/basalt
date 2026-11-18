@@ -77,7 +77,10 @@ public enum NF4Metal {
         let inputs = codes.dim(-1) * 8
         let outputs = codes.dim(0)
         let leading = Array(x.shape.dropLast())
-        let rows = inputs > 0 ? x.size / inputs : 0
+        guard inputs > 0, outputs > 0, x.dim(-1) == inputs, scales.dim(-1) * groupSize == inputs else {
+            return outputs == 0 ? MLXArray.zeros(leading + [0], dtype: x.dtype) : MLX.matmul(x, dequantized(codes, scales: scales, groupSize: groupSize, dtype: x.dtype).T)
+        }
+        let rows = x.size / inputs
         guard rows > 0 else {
             return MLXArray.zeros(leading + [outputs], dtype: x.dtype)
         }
@@ -107,8 +110,8 @@ public enum NF4Metal {
         let inputs = codes.dim(-1) * 8
         let outputs = codes.dim(1)
         let rows = x.ndim >= 2 ? x.dim(-2) : 0
-        guard batch > 0, rows > 0 else {
-            return MLXArray.zeros(batchShape + [rows, outputs], dtype: x.dtype)
+        guard batch > 0, rows > 0, outputs > 0, inputs > 0, x.dim(-1) == inputs, scales.dim(-1) * groupSize == inputs else {
+            return MLXArray.zeros(batchShape + [max(0, rows), max(0, outputs)], dtype: x.dtype)
         }
         let xExpanded = x.shape == (batchShape + [rows, inputs]) ? x : broadcast(x, to: batchShape + [rows, inputs])
         if rows <= maxKernelRows, groupSizes.contains(groupSize), dtypes.contains(x.dtype), codes.ndim == 3 {
@@ -121,13 +124,18 @@ public enum NF4Metal {
                 grid: (32, paddedGroups, batch),
                 threadGroup: (32, tgRows, 1),
                 outputShapes: [[batch, rows, outputs]],
-                outputDTypes: [x.dtype]
+                outputDTypes: [x.dtype],
+                initValue: 0
             )[0]
             return out.reshaped(batchShape + [rows, outputs])
         }
+        let numExperts = codes.dim(0)
         let picks = rhsIndices.reshaped(batch).asType(.int32).asArray(Int32.self)
         let x3D = xExpanded.reshaped(batch, rows, inputs)
-        let pieces = picks.enumerated().map { idx, expert in
+        let pieces = picks.enumerated().map { idx, expert -> MLXArray in
+            guard expert >= 0, Int(expert) < numExperts else {
+                return MLXArray.zeros([1, rows, outputs], dtype: x.dtype)
+            }
             let dense = dequantized(codes[Int(expert)], scales: scales[Int(expert)], groupSize: groupSize, dtype: x.dtype)
             return MLX.matmul(x3D[idx], dense.T).expandedDimensions(axis: 0)
         }

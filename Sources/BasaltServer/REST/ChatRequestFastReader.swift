@@ -231,15 +231,20 @@ extension ChatRequestFastReader {
         var cursor = ObjectCursor(val)
         let type = try cursor.string("type")
         let role = try cursor.string("role")
-        let content = decodeContent(cursor.nonNull("content"))
+        let content = try decodeContent(cursor.nonNull("content"))
         let name = try cursor.string("name")
         let arguments = try cursor.string("arguments")
         let input = try cursor.string("input")
-        let output = decodeContent(cursor.nonNull("output"))
+        let output = try decodeContent(cursor.nonNull("output"))
         let toolCalls = try decodeToolCalls(cursor.nonNull("tool_calls"))
         let callId = try cursor.string("call_id")
         let toolCallId = try cursor.string("tool_call_id")
-        let reasoning = try cursor.string("reasoning")
+        let reasoning: String?
+        if let primary = try cursor.string("reasoning") {
+            reasoning = primary
+        } else {
+            reasoning = try cursor.string("reasoning_content")
+        }
         return OpenAIController.ChatMessage(
             type: type, role: role, content: content, name: name, arguments: arguments,
             input: input, output: output, toolCalls: toolCalls,
@@ -248,18 +253,19 @@ extension ChatRequestFastReader {
 
     private static func decodeContent(
         _ val: UnsafeMutablePointer<yyjson_val>?
-    ) -> OpenAIController.MessageContent? {
+    ) throws(DecodeError) -> OpenAIController.MessageContent? {
         guard let val else { return nil }
         if yyjson_is_str(val) {
             return .text(ObjectCursor.uncheckedString(val))
         }
-        guard yyjson_is_arr(val) else { return .blocks([]) }
+        guard yyjson_is_arr(val) else {
+            throw DecodeError(message: "expected string or array for message content")
+        }
         var blocks: [OpenAIController.MessageContent.ContentBlock] = []
         blocks.reserveCapacity(yyjson_arr_size(val))
         var iter = yyjson_arr_iter_with(val)
         while let elem = yyjson_arr_iter_next(&iter) {
-            guard let block = try? decodeContentBlock(elem) else { return .blocks([]) }
-            blocks.append(block)
+            blocks.append(try decodeContentBlock(elem))
         }
         return .blocks(blocks)
     }
@@ -385,6 +391,14 @@ extension ChatRequestFastReader {
     private static func guidedFormat(
         _ root: UnsafeMutablePointer<yyjson_val>
     ) throws(OpenAIController.InvalidResponseFormat) -> ResponseFormat? {
+        let rawRegex = rawField(root, "guided_regex")
+        let rawGrammar = rawField(root, "guided_grammar")
+        if let rawRegex, !yyjson_is_null(rawRegex), !yyjson_is_str(rawRegex) {
+            throw OpenAIController.InvalidResponseFormat(message: "guided_regex must be a string")
+        }
+        if let rawGrammar, !yyjson_is_null(rawGrammar), !yyjson_is_str(rawGrammar) {
+            throw OpenAIController.InvalidResponseFormat(message: "guided_grammar must be a string")
+        }
         let regex = strField(root, "guided_regex")
         let grammar = strField(root, "guided_grammar")
         let count = (regex != nil ? 1 : 0) + (grammar != nil ? 1 : 0)

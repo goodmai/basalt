@@ -58,20 +58,29 @@ package enum ReferenceAudioConditioner {
         maxSeconds: Double = 10.0
     ) throws(BasaltError) -> [Float] {
         try SpeechRequest.validateReferenceAudio(path)
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw .invalidRequestStructure(details: "speech: reference_audio file does not exist at '\(path)'")
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else {
+            throw .invalidRequestStructure(details: "speech: reference_audio file cannot be opened at '\(path)'")
         }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else {
+            throw .invalidRequestStructure(details: "speech: reference_audio must be a regular file")
+        }
+        guard st.st_size > 0, st.st_size <= Int64(maxReferenceBytes) else {
+            throw .invalidRequestStructure(details: "speech: reference_audio must be non-empty and at most 16 MB")
+        }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         let data: Data
         do {
-            data = try Data(contentsOf: url)
+            data = try handle.read(upToCount: maxReferenceBytes) ?? Data()
         } catch {
             throw .invalidRequestStructure(details: "speech: could not read reference_audio: \(error.localizedDescription)")
         }
         guard !data.isEmpty, data.count <= maxReferenceBytes else {
             throw .invalidRequestStructure(details: "speech: reference_audio must be non-empty and at most 16 MB")
         }
-        let ext = url.pathExtension.lowercased()
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
         let rawSamples: [Float]
         let rawRate: Int
         if ext == "wav" {

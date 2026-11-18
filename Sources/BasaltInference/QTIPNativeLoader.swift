@@ -437,7 +437,7 @@ extension QTIPNativeLoader {
         onStep: (@Sendable (String) -> Void)? = nil
     ) async throws -> (summary: QTIPQuantizeSummary, shards: Int, bytesAfter: Int) {
         try validateOutput(source: source, output: output)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: source.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }
@@ -445,7 +445,7 @@ extension QTIPNativeLoader {
         var qConfig = config ?? QTIPConfig(rate: rate)
         qConfig.rate = rate
         let finalCfg = qConfig
-        let batches = await container.perform { ctx in
+        let batches = await container.performEvaluating(nonSendable: ()) { ctx, _ in
             let encoded = ctx.tokenizer.encode(text: corpus, addSpecialTokens: false)
             let seqLen = max(1, finalCfg.calibrationSeqLen)
             let usable = min(finalCfg.calibrationBatches, encoded.count / seqLen)
@@ -454,7 +454,7 @@ extension QTIPNativeLoader {
             }
         }
         do {
-            return try await container.perform { ctx in
+            return try await container.performEvaluating(nonSendable: ()) { ctx, _ in
                 let summary = try QTIPQuantizer.quantizeModel(
                     ctx.model, calibrationTokenBatches: batches, config: finalCfg, onStep: onStep)
                 let written = try writeDirectory(

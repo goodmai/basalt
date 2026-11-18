@@ -150,22 +150,41 @@ extension EngineClient {
             pending.append(byte)
             guard byte == UInt8(ascii: "\n") else { continue }
             for event in parser.feed(pending) {
-                switch event.name {
-                case "progress":
-                    if let json = (try? JSONSerialization.jsonObject(with: Data(event.data.utf8))) as? [String: Any] {
-                        let done = (json["done"] as? NSNumber)?.int64Value ?? 0
-                        let total = (json["total"] as? NSNumber)?.int64Value ?? 0
-                        progress(done, total)
-                    }
-                case "done":
-                    return
-                case "error":
-                    throw refusedError(status: 502, data: Data(event.data.utf8))
-                default:
-                    break
-                }
+                if try handleDownloadEvent(event, progress: progress) { return }
             }
             pending.removeAll(keepingCapacity: true)
+        }
+        if !pending.isEmpty {
+            pending.append(UInt8(ascii: "\n"))
+            pending.append(UInt8(ascii: "\n"))
+            for event in parser.feed(pending) {
+                if try handleDownloadEvent(event, progress: progress) { return }
+            }
+        }
+        for event in parser.feed([UInt8(ascii: "\n")]) {
+            if try handleDownloadEvent(event, progress: progress) { return }
+        }
+        throw EngineError.transport("model download stream closed before completion")
+    }
+
+    private static func handleDownloadEvent(
+        _ event: SSEEvent,
+        progress: @escaping @Sendable (Int64, Int64) -> Void
+    ) throws -> Bool {
+        switch event.name {
+        case "progress":
+            if let json = (try? JSONSerialization.jsonObject(with: Data(event.data.utf8))) as? [String: Any] {
+                let done = (json["done"] as? NSNumber)?.int64Value ?? 0
+                let total = (json["total"] as? NSNumber)?.int64Value ?? 0
+                progress(done, total)
+            }
+            return false
+        case "done":
+            return true
+        case "error":
+            throw refusedError(status: 502, data: Data(event.data.utf8))
+        default:
+            return false
         }
     }
 }
