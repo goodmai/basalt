@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),
         .package(url: "https://github.com/apple/swift-http-types.git",     from: "1.4.0"),
         .package(url: "https://github.com/apple/swift-log.git",            from: "1.6.2"),
-        .package(url: "https://github.com/apple/swift-metrics.git",        exact: "2.12.0"),
+        .package(url: "https://github.com/apple/swift-metrics.git",        exact: "2.13.0"),
         .package(url: "https://github.com/apple/swift-nio.git",            from: "2.104.0"),
         // Provides the `Tokenizers` module used by MLXHuggingFace macros
         .package(url: "https://github.com/huggingface/swift-transformers",  from: "1.3.5"),
