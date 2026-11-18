@@ -68,8 +68,7 @@ enum MiddleKeys {
                 grouped, expandedDimensions(parts.0, axis: 2), scales: expandedDimensions(parts.1, axis: 2),
                 biases: parts.2.map { expandedDimensions($0, axis: 2) }, transpose: true, groupSize: rows.groupSize, bits: rows.bits)
         case .polar(let rows):
-            guard let keys = rows.dequantizedRows(dtype: grouped.dtype) else { return nil }
-            return matmul(grouped, expandedDimensions(keys, axis: 2).swappedAxes(-1, -2))
+            return rows.scores(grouped)
         }
     }
 }
