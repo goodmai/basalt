@@ -287,3 +287,15 @@
 "A-SINQ" = "A-SINQ";
 "RTN" = "RTN";
 "local/model-name" = "local/имя-модели";
+
+"Publishing" = "Публикация";
+"Publish…" = "Опубликовать…";
+"Publish to Hugging Face" = "Опубликовать на Hugging Face";
+"Target Repository ID" = "Целевой репозиторий (org/name)";
+"owner/model-name" = "owner/имя-модели";
+"Private Repository" = "Приватный репозиторий";
+"Commit Message" = "Сообщение коммита";
+"Upload MLX checkpoint via Basalt" = "Выгрузка MLX-модели через Basalt";
+"Publish Model" = "Опубликовать модель";
+"Dismiss" = "Скрыть";
+"Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)" = "Поиск на Hugging Face или org/repo (например mlx-community/Qwen3-4B-4bit)";

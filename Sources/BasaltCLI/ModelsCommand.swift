@@ -3,9 +3,6 @@ import ArgumentParser
 import BasaltCore
 import BasaltInference
 
-// MARK: — models (subcommand group)
-
-@available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 struct ModelsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "models",
@@ -13,6 +10,7 @@ struct ModelsCommand: AsyncParsableCommand {
         subcommands: [
             ListSubcommand.self,
             DownloadSubcommand.self,
+            PublishSubcommand.self,
             InfoSubcommand.self,
             CacheSubcommand.self,
             CheckSubcommand.self,

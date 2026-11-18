@@ -5,10 +5,20 @@ import Hummingbird
 import Synchronization
 
 package struct ModelHubOperations: Sendable {
+    package typealias SearchClosure = @Sendable (String, Int) async throws -> [HFModelInfo]
+    package typealias PublishClosure = @Sendable (URL, HubPublishRequest, @escaping HuggingFaceHub.Progress) async throws -> HubPublishResult
+
     package var cacheRoot: URL
-    package var download: @Sendable (String, @escaping HuggingFaceHub.Progress) async throws -> URL
     package var converter: (any ModelConversionService)?
     package var conversionCoordinator: ConversionCoordinator
+    package var search: SearchClosure = { query, limit in
+        try await HuggingFaceHub().searchCatalog(query: query, limit: limit)
+    }
+    package var publish: PublishClosure = { dir, req, onFile in
+        let opts = HubPublishOptions(repoId: req.repoId, isPrivate: req.isPrivate, commitMessage: req.commitMessage)
+        return try await HuggingFaceHub().publishDirectory(at: dir, options: opts, onFile: onFile)
+    }
+    package var download: @Sendable (String, @escaping HuggingFaceHub.Progress) async throws -> URL
 
     package init(
         cacheRoot: URL = ModelCache.root,
@@ -22,6 +32,16 @@ package struct ModelHubOperations: Sendable {
         self.download = download
     }
 
+    package func withCatalogAndPublish(
+        search: @escaping SearchClosure,
+        publish: @escaping PublishClosure
+    ) -> ModelHubOperations {
+        var copy = self
+        copy.search = search
+        copy.publish = publish
+        return copy
+    }
+
     package static func live(
         hub: HuggingFaceHub = HuggingFaceHub(),
         cacheRoot: URL = ModelCache.root,
@@ -30,6 +50,15 @@ package struct ModelHubOperations: Sendable {
         ModelHubOperations(cacheRoot: cacheRoot, converter: converter) { repoId, onFile in
             try await hub.download(repoId: repoId, onFile: onFile)
         }
+        .withCatalogAndPublish(
+            search: { query, limit in
+                try await hub.searchCatalog(query: query, limit: limit)
+            },
+            publish: { dir, req, onFile in
+                let opts = HubPublishOptions(repoId: req.repoId, isPrivate: req.isPrivate, commitMessage: req.commitMessage)
+                return try await hub.publishDirectory(at: dir, options: opts, onFile: onFile)
+            }
+        )
     }
 }
 
@@ -45,13 +74,25 @@ struct ModelsHubController: Sendable {
         let model: String
         let done: Int64
         let total: Int64
+        let bytesPerSecond: Int64
+        let etaSeconds: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case model
+            case done
+            case total
+            case bytesPerSecond = "bytes_per_second"
+            case etaSeconds = "eta_seconds"
+        }
     }
 
     let orchestrator: any ModelOrchestrating
     let operations: ModelHubOperations
 
     func add(to group: RouterGroup<BasicRequestContext>) {
+        group.get("/models/hub", use: searchHubModels)
         group.post("/models/download", use: downloadModel)
+        group.post("/models/publish", use: publishModel)
         group.delete("/models/{id}", use: deleteModel)
         group.delete("/models/{id}/{name}", use: deleteModel)
     }
@@ -88,19 +129,29 @@ struct ModelsHubController: Sendable {
         }
     }
 
-    private func streamDownload(_ hfId: String) -> Response {
+    func streamDownload(_ hfId: String) -> Response {
         let operations = operations
         let body = AsyncStream<ByteBuffer> { continuation in
             let task = Task {
-                let files = Mutex<[String: (Int64, Int64)]>([:])
+                let throttle = Mutex(HubProgressThrottle())
                 let encoder = JSONEncoder()
                 do {
                     _ = try await operations.download(hfId) { file, done, total in
-                        let sum = files.withLock { state -> (Int64, Int64) in
-                            state[file] = (done, total)
-                            return state.values.reduce((Int64(0), Int64(0))) { ($0.0 + $1.0, $0.1 + $1.1) }
+                        let nowNs = DispatchTime.now().uptimeNanoseconds
+                        let telemetry = throttle.withLock { state in
+                            state.record(file: file, done: done, total: total, at: nowNs)
                         }
-                        if let payload = try? encoder.encode(ProgressEvent(model: hfId, done: sum.0, total: sum.1)) {
+                        if let telemetry,
+                           let payload = try? encoder.encode(
+                               ProgressEvent(
+                                   model: hfId,
+                                   done: telemetry.done,
+                                   total: telemetry.total,
+                                   bytesPerSecond: telemetry.bytesPerSecond,
+                                   etaSeconds: telemetry.etaSeconds
+                               )
+                           )
+                        {
                             continuation.yield(ByteBuffer(string: "event: progress\ndata: \(String(decoding: payload, as: UTF8.self))\n\n"))
                         }
                     }
@@ -146,7 +197,7 @@ struct ModelsHubController: Sendable {
         ])
     }
 
-    private static func json(_ body: [String: Any]) -> Response {
+    static func json(_ body: [String: Any]) -> Response {
         let data = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
         return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: ByteBuffer(bytes: data)))
     }
