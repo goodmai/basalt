@@ -109,7 +109,7 @@ extension MLXInferenceEngine {
             return anatomy.layers[index]
         }
         switch intervention {
-        case .steer(let index, let vector, let scale, _):
+        case .steer(let index, let vector, let scale, _, let contextGate):
             _ = try layer(index)
             guard vector.count == anatomy.hiddenSize else {
                 throw .invalidRequestStructure(details: "the steering vector has \(vector.count) values; the hidden size is \(anatomy.hiddenSize)")
@@ -117,6 +117,7 @@ extension MLXInferenceEngine {
             guard scale.isFinite, vector.allSatisfy(\.isFinite) else {
                 throw .invalidRequestStructure(details: "the steering vector and its scale must be finite")
             }
+            if let contextGate { try contextGate.validate(hiddenSize: anatomy.hiddenSize) }
         case .ablateHead(let index, let head):
             let heads = try layer(index).heads ?? 0
             guard (0 ..< heads).contains(head) else {
@@ -134,8 +135,8 @@ extension MLXInferenceEngine {
 
     static func describe(_ intervention: Intervention) -> String {
         switch intervention {
-        case .steer(let layer, let vector, let scale, let geometry):
-            let suffix = geometry == .geodesic ? " (geodesic)" : ""
+        case .steer(let layer, let vector, let scale, let geometry, let contextGate):
+            let suffix = (geometry == .geodesic ? " (geodesic)" : "") + (contextGate != nil ? " [context-gated]" : "")
             return "steer the residual after layer \(layer) by \(scale) × a \(vector.count)-value vector\(suffix)"
         case .ablateHead(let layer, let head):
             return "ablate head \(head) of layer \(layer)"
@@ -217,8 +218,8 @@ final class InterventionProbe: ForwardProbe {
         var conditions: [ConditionalEdit] = []
         for intervention in interventions {
             switch intervention {
-            case .steer(let layer, let vector, let scale, let geometry):
-                steering[layer, default: []].append(SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry))
+            case .steer(let layer, let vector, let scale, let geometry, let contextGate):
+                steering[layer, default: []].append(SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry, contextGate: contextGate))
             case .ablateHead(let layer, let head):
                 heads[layer, default: Array(repeating: true, count: anatomy.layers[layer].heads ?? 0)][head] = false
             case .ablateExpert(let layer, let expert):

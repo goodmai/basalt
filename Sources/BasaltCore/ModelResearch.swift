@@ -302,7 +302,7 @@ public enum SteerGeometry: String, Sendable, Codable, Equatable, CaseIterable {
 }
 
 public enum Intervention: Sendable, Codable, Equatable {
-    case steer(layer: Int, vector: [Float], scale: Float, geometry: SteerGeometry = .additive)
+    case steer(layer: Int, vector: [Float], scale: Float, geometry: SteerGeometry = .additive, contextGate: ContextSteerGate? = nil)
     case ablateHead(layer: Int, head: Int)
     case ablateExpert(layer: Int, expert: Int)
     indirect case conditional(ConditionalIntervention)

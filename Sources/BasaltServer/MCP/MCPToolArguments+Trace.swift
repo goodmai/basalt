@@ -11,22 +11,32 @@ extension ContrastRequest {
         return prompts
     }
 
+    static func optionalPrompts(_ key: String, in args: [String: Any]?, _ range: ClosedRange<Int>) throws(MCPFailure) -> [String]? {
+        guard let raw = MCPArguments.present(key, in: args) else { return nil }
+        guard let prompts = raw as? [String], range.contains(prompts.count) else {
+            throw .invalidParams("\(key) must be an array of \(range) strings")
+        }
+        return prompts
+    }
+
     init(mcp args: [String: Any]?) throws(MCPFailure) {
         let positive = try Self.prompts("positive", in: args, Self.classPrompts)
         let negative = try Self.prompts("negative", in: args, Self.classPrompts)
         let heldOut = try Self.prompts("heldOut", in: args, Self.heldOutPrompts)
-        self.init(
-            positive: positive,
-            negative: negative,
-            heldOut: heldOut,
-            layers: try MCPArguments.integers("layers", in: args),
-            geometry: try SteerGeometry.parse(in: args)
-        )
-        topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? topHeads
+        let layers = try MCPArguments.integers("layers", in: args)
+        let geometry = try SteerGeometry.parse(in: args)
+        var request = ContrastRequest(positive: positive, negative: negative, heldOut: heldOut, layers: layers, geometry: geometry)
+        request.topHeads = try MCPArguments.integer("topHeads", in: args, Self.headLimit) ?? request.topHeads
         if let scales = try MCPArguments.numbers("scales", in: args) {
             guard Self.scaleCount.contains(scales.count) else { throw .invalidParams("scales must hold \(Self.scaleCount) numbers") }
-            self.scales = scales
+            request.scales = scales
         }
+        request.protectedPrompts = try Self.optionalPrompts("protectedPrompts", in: args, 1...Self.classPrompts.upperBound) ?? []
+        request.nullspaceMaxRank = try MCPArguments.integer("nullspaceMaxRank", in: args, 1...Int.max)
+        request.contextGate = try ContextSteerGate.parse(in: args)
+        request.evaluatePolarityFlips = try MCPArguments.optionalBoolean("evaluatePolarityFlips", in: args) ?? false
+        request.polarityProbes = try PolarityProbe.parseList(in: args)
+        self = request
     }
 }
 
@@ -34,12 +44,22 @@ extension SteeringCommit {
     init(mcp args: [String: Any]?) throws(MCPFailure) {
         var gate = GateRequest(heldOut: try ContrastRequest.prompts("heldOut", in: args, ContrastRequest.heldOutPrompts))
         try gate.readLimits(args)
-        self.init(
-            layer: try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative)),
-            direction: try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args)),
-            scale: try MCPArguments.required("scale", MCPArguments.number("scale", in: args)),
-            gate: gate)
-        positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
+        let layer = try MCPArguments.required("layer", MCPArguments.integer("layer", in: args, ResearchCall.nonNegative))
+        let direction = try MCPArguments.required("direction", MCPArguments.numbers("direction", in: args))
+        let scale = try MCPArguments.required("scale", MCPArguments.number("scale", in: args))
+        var commit = SteeringCommit(layer: layer, direction: direction, scale: scale, gate: gate)
+        commit.positive = try ContrastRequest.prompts("positive", in: args, 1...ContrastRequest.classPrompts.upperBound)
+        commit.negative = try ContrastRequest.optionalPrompts("negative", in: args, 1...ContrastRequest.classPrompts.upperBound) ?? []
+        commit.protectedPrompts = try ContrastRequest.optionalPrompts("protectedPrompts", in: args, 1...ContrastRequest.classPrompts.upperBound) ?? []
+        commit.nullspaceMaxRank = try MCPArguments.integer("nullspaceMaxRank", in: args, 1...Int.max)
+        commit.polarityProbes = try PolarityProbe.parseList(in: args)
+        if let maxAnti = try MCPArguments.number("maxAntiSteeringRate", in: args) {
+            guard (0 ... 1).contains(maxAnti) else {
+                throw .invalidParams("maxAntiSteeringRate must be in 0...1")
+            }
+            commit.maxAntiSteeringRate = maxAnti
+        }
+        self = commit
     }
 }
 

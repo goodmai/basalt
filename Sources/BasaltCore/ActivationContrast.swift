@@ -67,12 +67,20 @@ public struct ActivationContrastReport: Sendable, Codable {
     public var layers: [DirectionLayer]
     public var bestLayer: Int
     public var direction: [Float]
+    public var headKurtosis: Float?
 
-    public init(components: [ComponentContrast], layers: [DirectionLayer], bestLayer: Int, direction: [Float]) {
+    public init(
+        components: [ComponentContrast],
+        layers: [DirectionLayer],
+        bestLayer: Int,
+        direction: [Float],
+        headKurtosis: Float? = nil
+    ) {
         self.components = components
         self.layers = layers
         self.bestLayer = bestLayer
         self.direction = direction
+        self.headKurtosis = headKurtosis
     }
 }
 
@@ -111,6 +119,52 @@ public enum ActivationStatistics {
             for y in b { wins += x > y ? 1 : x == y ? 0.5 : 0 }
         }
         return wins / Float(a.count * b.count)
+    }
+
+    public static func excessKurtosis(_ values: [Float]) -> Float {
+        guard values.count >= 2 else { return 0 }
+        let n = Double(values.count)
+        let mean = values.reduce(0.0) { $0 + Double($1) } / n
+        var m2 = 0.0, m4 = 0.0
+        for value in values {
+            let d = Double(value) - mean
+            let d2 = d * d
+            m2 += d2
+            m4 += d2 * d2
+        }
+        m2 /= n
+        m4 /= n
+        guard m2 > 1e-24 else { return 0 }
+        return Float(m4 / (m2 * m2) - 3.0)
+    }
+
+    public static func sampleExcessKurtosis(_ values: [Float]) -> Float {
+        guard values.count >= 4 else { return excessKurtosis(values) }
+        let n = Double(values.count)
+        let mean = values.reduce(0.0) { $0 + Double($1) } / n
+        var s2 = 0.0, s4 = 0.0
+        for value in values {
+            let d = Double(value) - mean
+            let d2 = d * d
+            s2 += d2
+            s4 += d2 * d2
+        }
+        let variance = s2 / (n - 1.0)
+        guard variance > 1e-24 else { return 0 }
+        let scale = (n * (n + 1.0)) / ((n - 1.0) * (n - 2.0) * (n - 3.0))
+        let bias = (3.0 * (n - 1.0) * (n - 1.0)) / ((n - 2.0) * (n - 3.0))
+        return Float(scale * (s4 / (variance * variance)) - bias)
+    }
+
+    public static func headKurtosis(a: [TracedSample], b: [TracedSample], onsetWindow: Int) -> Float? {
+        guard let layout = (a + b).first?.table.layout else { return nil }
+        let heads = layout.floats.flatMap { segment -> [(Int, Int)] in
+            guard segment.field == .heads else { return [] }
+            return (0 ..< segment.width).map { (segment.layer, $0) }
+        }
+        guard heads.count >= 2 else { return nil }
+        let effects = heads.map { layer, index in abs(contrast(layer: layer, kind: .head, index: index, a: a, b: b, onsetWindow: onsetWindow).cohensD) }
+        return excessKurtosis(effects)
     }
 
     public static func rank(a: [TracedSample], b: [TracedSample], onsetWindow: Int, topK: Int) -> [ComponentContrast] {

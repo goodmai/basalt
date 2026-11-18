@@ -170,6 +170,11 @@ public struct ContrastRequest: Sendable, Codable, Equatable {
     public var topHeads = 8
     public var scales: [Float] = [2, 4, 8]
     public var geometry: SteerGeometry = .additive
+    public var protectedPrompts: [String] = []
+    public var nullspaceMaxRank: Int?
+    public var contextGate: ContextSteerGate?
+    public var polarityProbes: [PolarityProbe]?
+    public var evaluatePolarityFlips = false
 
     public static let classPrompts = 2...32
     public static let heldOutPrompts = 1...16
@@ -216,12 +221,23 @@ public struct SteerTrial: Sendable, Codable, Equatable {
     public var klDivergence: Float
     public var fisherRaoDistance: Float
     public var projectionShift: Float
+    public var meanLogitDiff: Float
+    public var antiSteeringRate: Float
 
-    public init(scale: Float, klDivergence: Float, projectionShift: Float, fisherRaoDistance: Float = 0) {
+    public init(
+        scale: Float,
+        klDivergence: Float,
+        projectionShift: Float,
+        fisherRaoDistance: Float = 0,
+        meanLogitDiff: Float = 0,
+        antiSteeringRate: Float = 0
+    ) {
         self.scale = scale
         self.klDivergence = klDivergence
         self.fisherRaoDistance = fisherRaoDistance
         self.projectionShift = projectionShift
+        self.meanLogitDiff = meanLogitDiff
+        self.antiSteeringRate = antiSteeringRate
     }
 }
 
@@ -229,8 +245,14 @@ public struct ContrastReport: Sendable, Codable {
     public var layers: [DirectionLayer]
     public var bestLayer: Int
     public var direction: [Float]
+    public var rawDirection: [Float]?
     public var heads: [HeadEffect]
     public var trials: [SteerTrial]
+    public var headKurtosis: Float?
+    public var gqaGroups: [GQAGroupEffect] = []
+    public var recommendedIntervention: HeadInterventionMode?
+    public var steerability: SteerabilitySummary?
+    public var nullspaceRank: Int?
 
     public init(layers: [DirectionLayer], bestLayer: Int, direction: [Float], heads: [HeadEffect], trials: [SteerTrial]) {
         self.layers = layers
@@ -247,6 +269,11 @@ public struct SteeringCommit: Sendable, Codable, Equatable {
     public var scale: Float
     public var gate: GateRequest
     public var positive: [String] = []
+    public var negative: [String] = []
+    public var protectedPrompts: [String] = []
+    public var nullspaceMaxRank: Int?
+    public var polarityProbes: [PolarityProbe]?
+    public var maxAntiSteeringRate: Float?
 
     public init(layer: Int, direction: [Float], scale: Float, gate: GateRequest) {
         self.layer = layer

@@ -20,8 +20,8 @@ final class ConditionalEdit {
         case .ablateExpert(let layer, let expert): column = Self.oneHot(expert, count: anatomy.layers[layer].experts ?? 0)
         case .steer, .conditional: column = nil
         }
-        if case .steer(_, let vector, let scale, let geometry) = rule.action {
-            steer = SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry)
+        if case .steer(_, let vector, let scale, let geometry, let contextGate) = rule.action {
+            steer = SteerStep(direction: MLXArray(vector), scale: scale, geometry: geometry, contextGate: contextGate)
         } else {
             steer = nil
         }
@@ -39,7 +39,7 @@ final class ConditionalEdit {
         if case .projection(let trigger, _, let threshold) = rule.trigger, trigger == layer, let direction {
             update(matmul(hidden[0].asType(.float32), direction) .> threshold)
         }
-        guard case .steer(let target, _, _, _) = rule.action, target == layer, let active, let steer else { return hidden }
+        guard case .steer(let target, _, _, _, _) = rule.action, target == layer, let active, let steer else { return hidden }
         let edited = GeodesicSteer.apply(hidden: hidden, step: steer)
         return which(active[.newAxis, 0..., .newAxis] .> 0, edited, hidden)
     }
