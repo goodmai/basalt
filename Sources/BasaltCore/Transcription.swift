@@ -52,6 +52,23 @@ public struct TranscriptionRequest: Sendable, Equatable {
     }
 }
 
+public struct WordTimestamp: Sendable, Codable, Equatable {
+    public let word: String
+    public let start: Double
+    public let end: Double
+    public let probability: Float
+
+    public init(word: String, start: Double, end: Double, probability: Float = 1.0) {
+        let clampedStart = max(0, start.isFinite ? start : 0)
+        let clampedEnd = max(clampedStart, end.isFinite ? end : clampedStart)
+        let clampedProb = probability.isFinite ? min(1, max(0, probability)) : 0
+        self.word = word
+        self.start = clampedStart
+        self.end = clampedEnd
+        self.probability = clampedProb
+    }
+}
+
 public struct Transcription: Sendable, Equatable {
     public struct Segment: Sendable, Equatable {
         public let start: Double
@@ -68,11 +85,13 @@ public struct Transcription: Sendable, Equatable {
     public let text: String
     public let language: String?
     public let segments: [Segment]
+    public let words: [WordTimestamp]
 
-    public init(text: String, language: String? = nil, segments: [Segment] = []) {
+    public init(text: String, language: String? = nil, segments: [Segment] = [], words: [WordTimestamp] = []) {
         self.text = text
         self.language = language
         self.segments = segments
+        self.words = words
     }
 }
 

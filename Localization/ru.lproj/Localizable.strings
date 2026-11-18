@@ -295,7 +295,6 @@
 "MoE-RW (Router-Weighted Hessian)" = "MoE-RW (гессиан с весами роутера)";
 "RTN" = "RTN";
 "local/model-name" = "local/имя-модели";
-
 "Publishing" = "Публикация";
 "Publish…" = "Опубликовать…";
 "Publish to Hugging Face" = "Опубликовать на Hugging Face";
@@ -307,3 +306,9 @@
 "Publish Model" = "Опубликовать модель";
 "Dismiss" = "Скрыть";
 "Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)" = "Поиск на Hugging Face или org/repo (например mlx-community/Qwen3-4B-4bit)";
+
+"Voice Options" = "Параметры голоса";
+"Noise Suppression" = "Подавление шума";
+"Semantic Turn-Taking" = "Семантическая смена реплики";
+"Duplex Speech-to-Speech" = "Дуплекс речь-в-речь";
+"Thinking pause…" = "Пауза на размышление…";

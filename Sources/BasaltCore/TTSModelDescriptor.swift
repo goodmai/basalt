@@ -6,12 +6,14 @@ public enum TTSModelFamily: String, Sendable, Codable, Equatable, CaseIterable {
     case chatterbox = "chatterbox"
     case cosyVoice3 = "cosyvoice3"
     case zonos3Mini = "zonos3_mini"
+    case soprano80M = "soprano_80m"
+    case pocketTTS = "pocket_tts"
     case appleSpeech = "apple_speech"
 
     public var defaultSampleRate: Int {
         switch self {
         case .zonos3Mini: Zonos3Catalog.sampleRate
-        case .kokoro82M, .qwen3TTS, .chatterbox, .cosyVoice3, .appleSpeech: SpeechRequest.defaultSampleRate
+        case .kokoro82M, .qwen3TTS, .chatterbox, .cosyVoice3, .soprano80M, .pocketTTS, .appleSpeech: SpeechRequest.defaultSampleRate
         }
     }
 
@@ -22,14 +24,16 @@ public enum TTSModelFamily: String, Sendable, Codable, Equatable, CaseIterable {
         case .chatterbox: 130
         case .cosyVoice3: 110
         case .zonos3Mini: 85
+        case .soprano80M: 32
+        case .pocketTTS: 38
         case .appleSpeech: 20
         }
     }
 
     public var licenseSPDX: String {
         switch self {
-        case .kokoro82M, .qwen3TTS, .cosyVoice3, .zonos3Mini: "Apache-2.0"
-        case .chatterbox: "MIT"
+        case .kokoro82M, .qwen3TTS, .cosyVoice3, .zonos3Mini, .soprano80M: "Apache-2.0"
+        case .chatterbox, .pocketTTS: "MIT"
         case .appleSpeech: "Apple-System"
         }
     }
@@ -182,6 +186,8 @@ extension TTSModelFamily {
         case "qwen3_tts", "qwen3-tts", "qwen3_tts_talker": return .qwen3TTS
         case "chatterbox", "chatterbox_tts", "chatterbox_turbo", "chatterbox_multilingual": return .chatterbox
         case "zonos3_mini", "zonos3", "zonos-3", "zonos_3": return .zonos3Mini
+        case "soprano", "soprano_80m", "soprano-80m": return .soprano80M
+        case "pocket_tts", "pocket-tts", "marvis_tts": return .pocketTTS
         default: return detectFromConfigStructure(config)
         }
     }
@@ -193,25 +199,20 @@ extension TTSModelFamily {
         if config["istftnet"] != nil || config["plbert"] != nil { return .kokoro82M }
         if config["talker_config"] != nil, config["codec_rate_hz"] as? Int == 12 { return .qwen3TTS }
         if config["fsq_speech_tokens"] as? Int == 6_561 { return .cosyVoice3 }
+        if config["vocos_layers"] != nil { return .soprano80M }
         return nil
     }
+}
 
+extension TTSModelFamily {
     private static func detectFromIdentifier(_ lower: String) -> TTSModelFamily? {
-        if matchesCosyVoice3ID(lower) {
-            return .cosyVoice3
-        }
-        if matchesZonos3ID(lower) {
-            return .zonos3Mini
-        }
-        if lower.contains("kokoro") {
-            return .kokoro82M
-        }
-        if lower.contains("qwen3-tts") || lower.contains("qwen3_tts") {
-            return .qwen3TTS
-        }
-        if lower.contains("chatterbox") {
-            return .chatterbox
-        }
+        if matchesCosyVoice3ID(lower) { return .cosyVoice3 }
+        if matchesZonos3ID(lower) { return .zonos3Mini }
+        if lower.contains("kokoro") { return .kokoro82M }
+        if lower.contains("qwen3-tts") || lower.contains("qwen3_tts") { return .qwen3TTS }
+        if lower.contains("chatterbox") { return .chatterbox }
+        if lower.contains("soprano") { return .soprano80M }
+        if lower.contains("pocket-tts") || lower.contains("pocket_tts") || lower.contains("pockettts") { return .pocketTTS }
         return nil
     }
 }
@@ -418,5 +419,21 @@ public enum TTSVoiceCatalog {
 
     public static func zonos3Voices(model: String, compute: SpeechComputeBackend = .mlx) -> [VoiceSpec] {
         Zonos3Catalog.voices(model: model, compute: compute)
+    }
+}
+
+extension TTSVoiceCatalog {
+    public static func sopranoVoices(model: String, compute: SpeechComputeBackend = .mlx) -> [VoiceSpec] {
+        [
+            VoiceSpec(id: "alloy", name: "Soprano Alloy", language: "en", model: model, compute: compute),
+            VoiceSpec(id: "aria", name: "Soprano Aria", language: "en", model: model, compute: compute),
+        ]
+    }
+
+    public static func pocketVoices(model: String, compute: SpeechComputeBackend = .mlx) -> [VoiceSpec] {
+        [
+            VoiceSpec(id: "alba", name: "Alba", language: "en", model: model, compute: compute),
+            VoiceSpec(id: "marius", name: "Marius", language: "fr", model: model, compute: compute),
+        ]
     }
 }

@@ -77,12 +77,35 @@ public enum SpeechSynthesizerLoader {
                 candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 85),
                 family: .zonos3Mini
             )
+        case .soprano80M, .pocketTTS:
+            return try loadSub200MBSynthesizer(family: family, identifier: identifier, directory: directory)
         case .appleSpeech:
             throw .modelConfigurationInvalid(
                 path: directory.path,
                 reason: "apple-speech is a system synthesizer and cannot be loaded from a model directory"
             )
         }
+    }
+
+    private static func loadSub200MBSynthesizer(
+        family: TTSModelFamily,
+        identifier: String,
+        directory: URL
+    ) throws(BasaltError) -> LoadedSynthesizer {
+        if family == .soprano80M {
+            let synth = try Soprano80MSynthesizer(directory: directory, modelID: identifier)
+            return LoadedSynthesizer(
+                synthesizer: synth,
+                candidate: SpeechCandidate(id: identifier, model: synth.config.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 32),
+                family: .soprano80M
+            )
+        }
+        let synth = try PocketTTSSynthesizer(directory: directory, modelID: identifier)
+        return LoadedSynthesizer(
+            synthesizer: synth,
+            candidate: SpeechCandidate(id: identifier, model: synth.modelID, compute: .mlx, isAvailable: true, estimatedTTFAMs: 38),
+            family: .pocketTTS
+        )
     }
 
     public static func inspectOnDemand(
@@ -114,6 +137,8 @@ public enum SpeechSynthesizerLoader {
         case .chatterbox: TTSVoiceCatalog.chatterboxVoices(model: identifier, compute: .mlx)
         case .cosyVoice3: TTSVoiceCatalog.cosyVoice3Voices(model: identifier, compute: .mlx)
         case .zonos3Mini: TTSVoiceCatalog.zonos3Voices(model: identifier, compute: .mlx)
+        case .soprano80M: TTSVoiceCatalog.sopranoVoices(model: identifier, compute: .mlx)
+        case .pocketTTS: TTSVoiceCatalog.pocketVoices(model: identifier, compute: .mlx)
         case .appleSpeech: []
         }
         return (candidate, voices)
