@@ -50,61 +50,123 @@ public enum DiffFormat: Sendable, Equatable {
     case auto       // Auto-detect
 }
 
-// MARK: - Diff Parser
-
 public struct DiffParser: Sendable {
     public init() {}
-    
+
     public static func parseUnifiedDiff(_ diff: String) -> [DiffHunk] {
         guard !diff.isEmpty else { return [] }
+        let rawLines = diff.components(separatedBy: .newlines)
+        var parser = HunkState()
+        var index = 0
+        while index < rawLines.count {
+            index += parser.consume(at: index, in: rawLines)
+        }
+        parser.flush()
+        return parser.hunks
+    }
+
+    private struct HunkState {
         var hunks: [DiffHunk] = []
         var oldFile: String?
         var newFile: String?
         var header: String?
         var lines: [DiffLine] = []
-        func flush() {
-            if let header, !lines.isEmpty { hunks.append(DiffHunk(oldFile: oldFile, newFile: newFile, header: header, lines: lines)) }
+        var remaining = (old: 0, new: 0)
+
+        mutating func flush() {
+            if let header, !lines.isEmpty {
+                hunks.append(DiffHunk(oldFile: oldFile, newFile: newFile, header: header, lines: lines))
+            }
         }
-        for line in diff.components(separatedBy: .newlines) {
-            if line.hasPrefix("--- ") {
+
+        mutating func consume(at index: Int, in rawLines: [String]) -> Int {
+            let line = rawLines[index]
+            if line.hasPrefix("diff --git ") {
                 flush()
-                header = nil
-                lines = []
+                (oldFile, newFile, header, lines, remaining) = (nil, nil, nil, [], (0, 0))
+                return 1
+            }
+            if header == nil, line.hasPrefix("index ") { return 1 }
+            if DiffParser.isFileHeader(at: index, in: rawLines, hasHunk: header != nil, remaining: remaining) {
+                flush()
+                (header, lines, remaining) = (nil, [], (0, 0))
                 oldFile = String(line.dropFirst(4))
-            } else if line.hasPrefix("+++ ") {
+                guard index + 1 < rawLines.count, rawLines[index + 1].hasPrefix("+++ ") else { return 1 }
+                newFile = String(rawLines[index + 1].dropFirst(4))
+                return 2
+            }
+            if header == nil, line.hasPrefix("+++ ") {
                 newFile = String(line.dropFirst(4))
-            } else if line.hasPrefix("diff --git ") || line.hasPrefix("index ") {
-                continue
-            } else if line.hasPrefix("@@") {
+                return 1
+            }
+            if line.hasPrefix("@@") {
                 flush()
                 header = line
                 lines = []
-            } else if header != nil, let parsed = diffLine(line) {
+                remaining = DiffParser.hunkCounts(line) ?? (0, 0)
+                return 1
+            }
+            if header != nil, let parsed = DiffParser.hunkLine(line, remaining: &remaining) {
                 lines.append(parsed)
             }
+            return 1
         }
-        flush()
-        return hunks
+    }
+
+    static func isFileHeader(at index: Int, in rawLines: [String], hasHunk: Bool, remaining: (old: Int, new: Int)) -> Bool {
+        guard rawLines[index].hasPrefix("--- ") else { return false }
+        if !hasHunk || (remaining.old <= 0 && remaining.new <= 0) { return true }
+        return index + 2 < rawLines.count && rawLines[index + 1].hasPrefix("+++ ") && rawLines[index + 2].hasPrefix("@@")
+    }
+
+    static func hunkCounts(_ header: String) -> (old: Int, new: Int)? {
+        let parts = header.split(separator: " ")
+        guard parts.count >= 3, parts[0] == "@@", parts[1].hasPrefix("-"), parts[2].hasPrefix("+") else { return nil }
+        func spanCount(_ token: Substring) -> Int? {
+            let nums = token.dropFirst().split(separator: ",", maxSplits: 1)
+            guard !nums.isEmpty, Int(nums[0]) != nil else { return nil }
+            return nums.count == 2 ? Int(nums[1]) : 1
+        }
+        guard let old = spanCount(parts[1]), let new = spanCount(parts[2]) else { return nil }
+        return (old, new)
+    }
+
+    static func hunkLine(_ line: String, remaining: inout (old: Int, new: Int)) -> DiffLine? {
+        if line.isEmpty || line.hasPrefix("\\ ") { return nil }
+        if line.hasPrefix("+"), remaining.new > 0 || !line.hasPrefix("+++") {
+            remaining.new = max(0, remaining.new - 1)
+            return DiffLine(type: .addition, text: String(line.dropFirst()))
+        }
+        if line.hasPrefix("-"), remaining.old > 0 || !line.hasPrefix("---") {
+            remaining.old = max(0, remaining.old - 1)
+            return DiffLine(type: .deletion, text: String(line.dropFirst()))
+        }
+        if line.hasPrefix(" ") {
+            remaining.old = max(0, remaining.old - 1)
+            remaining.new = max(0, remaining.new - 1)
+            return DiffLine(type: .context, text: String(line.dropFirst()))
+        }
+        return DiffLine(type: .context, text: line)
     }
 
     static func diffLine(_ line: String) -> DiffLine? {
+        if line.hasPrefix("\\ ") { return nil }
         switch line.first {
-        case "+" where !line.hasPrefix("+++"): DiffLine(type: .addition, text: String(line.dropFirst()))
-        case "-" where !line.hasPrefix("---"): DiffLine(type: .deletion, text: String(line.dropFirst()))
-        case " ": DiffLine(type: .context, text: String(line.dropFirst()))
-        case nil: nil
-        default: DiffLine(type: .context, text: line)
+        case "+" where !line.hasPrefix("+++"): return DiffLine(type: .addition, text: String(line.dropFirst()))
+        case "-" where !line.hasPrefix("---"): return DiffLine(type: .deletion, text: String(line.dropFirst()))
+        case " ": return DiffLine(type: .context, text: String(line.dropFirst()))
+        case nil: return nil
+        default: return DiffLine(type: .context, text: line)
         }
     }
-    
-    /// Auto-detect diff format
+
     public static func detectFormat(_ diff: String) -> DiffFormat {
         if diff.contains("---") && diff.contains("+++") && diff.contains("@@") {
             return .unified
         } else if diff.contains("***") && diff.contains("---") {
             return .context
         }
-        return .unified // Default to unified
+        return .unified
     }
 }
 

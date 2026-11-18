@@ -54,6 +54,7 @@ struct ServeNetworkOptions: ParsableArguments {
     var configPath: String? { configFile ?? ServeCommand.defaultConfigFileIfPresent() }
 
     func validateRates() throws {
+        if let port { _ = try NetworkSettings.validPort(port, key: "--port") }
         _ = try NetworkSettings.nonNegativeRate(rateLimit, key: "--rate-limit", unit: " of requests per minute")
         _ = try NetworkSettings.nonNegativeRate(rateBurst, key: "--rate-burst")
     }
@@ -78,13 +79,14 @@ struct NetworkSettings: Sendable, Equatable {
     }
 
     static func resolve(_ flags: Flags, file: ConfigSection) throws -> NetworkSettings {
+        let port = try validPort(flags.port ?? file.value("port", as: Int.self) ?? 8080, key: flags.port != nil ? "--port" : "port")
         let rateLimit = try nonNegativeRate(
             flags.rateLimit ?? file.value("rate_limit", as: Int.self), key: "rate_limit", unit: " of requests per minute")
         let rateBurst = try nonNegativeRate(flags.rateBurst ?? file.value("rate_burst", as: Int.self), key: "rate_burst")
         let allowedOrigins = try Self.allowedOrigins(flags.allowedOrigins, in: file)
         let virtualKeys = try Self.virtualKeys(in: file)
         return NetworkSettings(
-            port: try flags.port ?? file.value("port", as: Int.self) ?? 8080,
+            port: port,
             host: try flags.host ?? file.value("host", as: String.self) ?? "127.0.0.1",
             apiKey: try nonBlank(flags.apiKey) ?? file.value("api_key", as: String.self),
             rateLimit: rateLimit,
@@ -92,6 +94,13 @@ struct NetworkSettings: Sendable, Equatable {
             allowedOrigins: allowedOrigins,
             virtualKeys: virtualKeys
         )
+    }
+
+    static func validPort(_ port: Int, key: String) throws -> Int {
+        guard (0 ... 65_535).contains(port) else {
+            throw ValidationError("\(key) must be in 0...65535, got \(port)")
+        }
+        return port
     }
 
     static func nonBlank(_ key: String?) -> String? {
@@ -126,7 +135,7 @@ struct NetworkSettings: Sendable, Equatable {
             throw ValidationError("virtual_keys: every entry needs \"id\" and a \"key\" of at least 16 characters")
         }
         let budget = entry["max_budget"].flatMap { $0 is NSNull ? nil : $0 }
-        if let budget, (budget as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() || $0.doubleValue < 0 }) ?? true {
+        if let budget, (budget as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() || !$0.doubleValue.isFinite || $0.doubleValue < 0 }) ?? true {
             throw ValidationError("virtual_keys[\(id)].max_budget must be a non-negative number of USD, got \(budget)")
         }
         return VirtualKey(key: key, id: id, maxBudget: (budget as? NSNumber)?.doubleValue)

@@ -102,8 +102,14 @@ mask_id = int(ecfg.get("mask_token_id", added.get("[MASK]", 50284)))
 raw = {}
 index_path = snapshot / "model.safetensors.index.json"
 shards = sorted(set(json.loads(index_path.read_text())["weight_map"].values())) if index_path.exists() else ["model.safetensors"]
+snap_resolved = snapshot.resolve()
 for shard in shards:
-    with safe_open(str(snapshot / shard), framework="pt") as f:
+    if "/" in shard or "\\" in shard or shard in (".", ".."):
+        raise ValueError(f"Unsafe shard name in weight_map: {shard}")
+    shard_path = (snapshot / shard).resolve()
+    if shard_path.parent != snap_resolved:
+        raise ValueError(f"Shard {shard} resolves outside snapshot directory")
+    with safe_open(str(shard_path), framework="pt") as f:
         for key in f.keys():
             raw[key] = f.get_tensor(key).float().numpy()
 

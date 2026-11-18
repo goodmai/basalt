@@ -6,7 +6,7 @@
 #   ./scripts/security_audit.sh                        full audit; exit 1 on any failed check
 #   ./scripts/security_audit.sh --osv-only [RESOLVED]  only the OSV scan (default Package.resolved)
 
-set -e
+set -eo pipefail
 
 # Query OSV for every pin in $1 (Package.resolved).
 #
@@ -147,7 +147,7 @@ echo ""
 
 # 3. Check for unsafe force unwraps in production code
 echo "3️⃣  Checking for force unwraps (!)..."
-FORCE_UNWRAPS=$(grep -r "!" Sources/ --include="*.swift" | grep -v "// " | grep -v "!=" | grep -v "try!" | wc -l)
+FORCE_UNWRAPS=$({ grep -r "!" Sources/ --include="*.swift" | grep -v "// " | grep -v "!=" | grep -v "try!" || true; } | wc -l)
 if [ "$FORCE_UNWRAPS" -gt 20 ]; then
     echo -e "${YELLOW}⚠️  WARNING: Found $FORCE_UNWRAPS potential force unwraps${NC}"
     echo "   (Review manually - some may be safe)"
@@ -168,7 +168,7 @@ echo ""
 
 # 5. Check for print/dump statements (information leakage)
 echo "5️⃣  Checking for debug print statements..."
-DEBUG_PRINTS=$(grep -r "print(\|dump(\|debugPrint(" Sources/ --include="*.swift" | grep -v "// " | wc -l)
+DEBUG_PRINTS=$({ grep -r "print(\|dump(\|debugPrint(" Sources/ --include="*.swift" | grep -v "// " || true; } | wc -l)
 if [ "$DEBUG_PRINTS" -gt 5 ]; then
     echo -e "${YELLOW}⚠️  WARNING: Found $DEBUG_PRINTS print/dump statements${NC}"
     echo "   (Use logger instead for production code)"

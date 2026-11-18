@@ -248,11 +248,15 @@ extension CalibrateDecideRunner {
         }
         let stateHash = SystemOneCalibrationCore.stateHash(for: state)
         var out: [String: [Double]] = [:]
-        for id in missing.keys.sorted() {
+        let sortedIDs = missing.keys.sorted()
+        for id in sortedIDs {
             guard let question = missing[id], let probs = CalibrateDatasetIO.extractProbabilities(answer: response.answers[id], question: question) else {
                 throw BasaltError.modelInferenceError(details: "teacher returned no probabilities for question '\(id)'")
             }
             out[id] = probs
+        }
+        for id in sortedIDs {
+            guard let question = missing[id], let probs = out[id] else { continue }
             let cached = CalibrationSample(stateHash: stateHash, questionID: id, kind: question.type, rawScores: logits[id] ?? [], teacherProbabilities: probs)
             try CalibrateDatasetIO.writeCached(cached, teacherID: teacher.id, question: question, cacheDir: config.cacheDir)
         }

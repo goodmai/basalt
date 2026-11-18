@@ -141,7 +141,12 @@ struct Benchmark: AsyncParsableCommand {
         let runs = try await timedRuns(orchestrator)
         printSummary(runs)
 
-        let last = try await orchestrator.generate(request: request())
+        let last: GenerationResponse
+        if let existing = runs.last {
+            last = existing
+        } else {
+            last = try await orchestrator.generate(request: request())
+        }
         let memMB = last.memory.activeBytes / 1_048_576
         if printOutput {
             let text = last.generatedText.isEmpty ? last.reasoningText.map { "[reasoning]\n" + $0 } ?? "" : last.generatedText
@@ -214,13 +219,18 @@ struct Benchmark: AsyncParsableCommand {
     }
 
     private func resolveModelPath() -> String {
-        // Shared with `serve` so both agree on which weights are loaded.
         ModelCache.resolve(repoId: model, quant: quant)?.path ?? model
     }
 }
 
 extension Benchmark {
     func validate() throws {
+        guard iterations >= 1 else { throw ValidationError("--iterations must be at least 1") }
+        guard tokens >= 1 else { throw ValidationError("--tokens must be at least 1") }
+        guard promptRepeat >= 1 else { throw ValidationError("--prompt-repeat must be at least 1") }
+        if let gpuCacheMB, gpuCacheMB < 0 {
+            throw ValidationError("--gpu-cache-mb must be 0 or positive")
+        }
         if let conflict = KVPrecision.flagConflict(kvBitsSet: kvBits != nil, fixed: kvBits, zones: kvZones) {
             throw ValidationError(conflict)
         }

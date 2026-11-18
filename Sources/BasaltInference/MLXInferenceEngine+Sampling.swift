@@ -125,9 +125,18 @@ struct LogitProbeRecorder: LogitProcessor {
     mutating func prompt(_ prompt: MLXArray) {}
 
     func process(logits: MLXArray) -> MLXArray {
-        let row = logits.reshaped(-1).asType(.float32)
+        guard logits.size > 0 else {
+            probe.record(ids: [], logprobs: [])
+            return logits
+        }
+        let row = logits.reshaped(-1, logits.dim(-1))[-1].asType(.float32)
         let logprobs = row - logSumExp(row)
-        let ids = argSort(-logprobs)[..<min(probe.topK, row.dim(0))]
+        let count = min(max(0, probe.topK), row.dim(0))
+        guard count > 0 else {
+            probe.record(ids: [], logprobs: [])
+            return logits
+        }
+        let ids = argSort(-logprobs)[..<count]
         probe.record(ids: ids.asArray(Int.self), logprobs: logprobs[ids].asArray(Float.self))
         return logits
     }

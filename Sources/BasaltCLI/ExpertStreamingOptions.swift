@@ -30,6 +30,8 @@ struct ExpertStreamingOptions: ParsableArguments {
         }
         guard let cacheGB else { return }
         guard enabled, !disabled else { throw ValidationError("--expert-cache-gb needs --expert-streaming") }
-        guard cacheGB > 0, cacheGB.isFinite else { throw ValidationError("--expert-cache-gb must be more than 0, got \(cacheGB)") }
+        guard cacheGB > 0, cacheGB <= 65_536, cacheGB.isFinite else {
+            throw ValidationError("--expert-cache-gb must be in (0, 65536], got \(cacheGB)")
+        }
     }
 }

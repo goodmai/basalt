@@ -40,7 +40,12 @@ package struct HubSnapshot: Sendable {
             (repoId, revision, prefix) = (nil, "main", "")
             return
         }
-        repoId = String(parts[index - 1].dropFirst("models--".count)).replacingOccurrences(of: "--", with: "/")
+        let rawRepo = parts[index - 1].dropFirst("models--".count)
+        if let separator = rawRepo.range(of: "--") {
+            repoId = "\(rawRepo[..<separator.lowerBound])/\(rawRepo[separator.upperBound...])"
+        } else {
+            repoId = String(rawRepo)
+        }
         revision = parts[index + 1]
         prefix = parts[(index + 2)...].map { "\($0)/" }.joined()
     }
@@ -49,7 +54,7 @@ package struct HubSnapshot: Sendable {
         let all = FileManager.default.enumerator(atPath: directory.path)?.allObjects as? [String] ?? []
         return all.filter { path in
             let name = (path as NSString).lastPathComponent
-            guard !(name.hasPrefix(".") && name.hasSuffix(".sha256")) else { return false }
+            guard name != ".DS_Store", !(name.hasPrefix(".") && name.hasSuffix(".sha256")) else { return false }
             let resolved = directory.appendingPathComponent(path).resolvingSymlinksInPath()
             return (try? resolved.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
         }.sorted()
