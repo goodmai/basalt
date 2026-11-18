@@ -133,7 +133,7 @@ extension CoreAISpeechBundle {
     }
 
     public func function(for count: Int) -> Function {
-        functions.first { $0.length >= count } ?? functions[functions.count - 1]
+        functions.first { $0.length >= count } ?? functions.last ?? Function(name: "main", length: max(1, count))
     }
 
     public func encodeTokens(_ text: String, length: Int) -> [Int32] {
@@ -149,7 +149,7 @@ extension CoreAISpeechBundle {
         }
         let clipped = Array(ids.prefix(length))
         let padded = clipped + Array(repeating: padToken, count: max(0, length - clipped.count))
-        return padded.map(Int32.init)
+        return padded.map { Int32(clamping: $0) }
     }
 
     private static func parseVoices(_ raw: Any?) -> [VoiceEntry] {

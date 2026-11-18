@@ -35,8 +35,13 @@ public struct ImageInput: Sendable, Codable, Hashable {
     public static func checkPixels(_ data: Data) throws(BasaltError) {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int else { return }
-        guard width <= maxPixels, height <= maxPixels, width * height <= maxPixels else {
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return }
+        guard width > 0, height > 0 else {
+            throw .invalidRequestStructure(details: "an image has invalid dimensions \(width)x\(height)")
+        }
+        let product = width.multipliedReportingOverflow(by: height)
+        guard !product.overflow, width <= maxPixels, height <= maxPixels, product.partialValue <= maxPixels else {
             throw .invalidRequestStructure(details: "an image of \(width)x\(height) pixels is over the limit of \(maxPixels / 1_000_000) megapixels")
         }
     }

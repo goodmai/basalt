@@ -219,12 +219,7 @@ public enum PhasorProbeEvaluator {
         var reports: [PhasorProbeReport] = []
         if !request.train.isEmpty {
             for layer in extracted.layers {
-                let dataset = PhasorLayerDataset(
-                    trainStates: request.train.compactMap { extracted.vectorsByPrompt[$0.prompt]?[layer] },
-                    trainLabels: request.train.map(\.sector),
-                    heldOutStates: request.heldOut.compactMap { extracted.vectorsByPrompt[$0.prompt]?[layer] },
-                    heldOutLabels: request.heldOut.map(\.sector)
-                )
+                guard let dataset = makeLayerDataset(layer: layer, request: request, extracted: extracted) else { continue }
                 reports.append(evaluateLayer(layer: layer, dataset: dataset, request: request))
             }
         }
@@ -243,6 +238,28 @@ public enum PhasorProbeEvaluator {
         let best = reports.max { ($0.heldOutAccuracy, $0.vsLinearDelta) < ($1.heldOutAccuracy, $1.vsLinearDelta) }?.layer
         let bestBinding = bindingReports.max { $0.zScore < $1.zScore }?.layer
         return PhasorProbeSummary(layers: reports, bestLayer: best, binding: bindingReports, bestBindingLayer: bestBinding)
+    }
+
+    private static func makeLayerDataset(
+        layer: Int,
+        request: PhasorProbeRequest,
+        extracted: ExtractedPhasorStates
+    ) -> PhasorLayerDataset? {
+        let trainPairs = request.train.compactMap { item -> ([Float], Int)? in
+            guard let vec = extracted.vectorsByPrompt[item.prompt]?[layer] else { return nil }
+            return (vec, item.sector)
+        }
+        guard !trainPairs.isEmpty else { return nil }
+        let heldOutPairs = request.heldOut.compactMap { item -> ([Float], Int)? in
+            guard let vec = extracted.vectorsByPrompt[item.prompt]?[layer] else { return nil }
+            return (vec, item.sector)
+        }
+        return PhasorLayerDataset(
+            trainStates: trainPairs.map(\.0),
+            trainLabels: trainPairs.map(\.1),
+            heldOutStates: heldOutPairs.map(\.0),
+            heldOutLabels: heldOutPairs.map(\.1)
+        )
     }
 
     private static func sectorAccuracy(

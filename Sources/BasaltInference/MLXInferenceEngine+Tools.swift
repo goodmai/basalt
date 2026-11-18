@@ -101,8 +101,9 @@ extension MLXInferenceEngine {
         }
     }
 
-    private static func sendable(_ value: Any) -> any Sendable {
+    static func sendable(_ value: Any) -> any Sendable {
         switch value {
+        case is NSNull:                 return Optional<String>.none as any Sendable
         case let dict as [String: Any]: return dict.mapValues { sendable($0) }
         case let array as [Any]:        return array.map { sendable($0) }
         case let number as NSNumber:
@@ -128,6 +129,7 @@ extension MLXInferenceEngine {
 
     static func toolCallOutput(_ call: ToolCall) -> ToolCallOutput {
         let arguments = (try? JSONEncoder().encode(call.function.arguments)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        return ToolCallOutput(id: "call_\(UUID().uuidString.prefix(24))", name: call.function.name, arguments: arguments)
+        let id = call.id.flatMap { $0.isEmpty ? nil : $0 } ?? "call_\(UUID().uuidString.prefix(24))"
+        return ToolCallOutput(id: id, name: call.function.name, arguments: arguments)
     }
 }

@@ -133,7 +133,7 @@ enum ServeConfigFile {
                 guard let value = node.int else { return mismatch(path, node, "an integer") }
                 tokens.append("\(flag)=\(value)")
             case .number(let flag):
-                guard let value = node.int.map(Double.init) ?? node.float else { return mismatch(path, node, "a number") }
+                guard let value = node.int.map(Double.init) ?? node.float, value.isFinite else { return mismatch(path, node, "a finite number") }
                 tokens.append("\(flag)=\(value)")
             case .text(let flag):
                 guard let value = node.scalar?.string else { return mismatch(path, node, "a string") }

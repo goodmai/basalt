@@ -63,14 +63,14 @@ struct OrthogonalProcrustes {
     static func load(from url: URL) throws -> (OrthogonalProcrustes, meanCosine: Float) {
         let arrays = try MLX.loadArrays(url: url)
         guard let q = arrays["q"], let meanX = arrays["mean_x"], let meanY = arrays["mean_y"], let cosine = arrays["mean_cosine"],
-              q.ndim == 2, meanX.shape == [q.dim(0)], meanY.shape == [q.dim(1)] else {
+              q.ndim == 2, q.dim(0) > 0, q.dim(1) > 0, meanX.shape == [q.dim(0)], meanY.shape == [q.dim(1)], cosine.size == 1 else {
             throw BasaltError.invalidRequestStructure(details: "procrustes: \(url.path) lacks q [dx, dy], mean_x [dx], mean_y [dy] or mean_cosine")
         }
         return (OrthogonalProcrustes(q: q, meanX: meanX, meanY: meanY), cosine.item(Float.self))
     }
 
     static func check(_ x: MLXArray, _ y: MLXArray) throws(BasaltError) {
-        guard x.ndim == 2, y.ndim == 2, x.dim(0) == y.dim(0), x.dim(0) > 0 else {
+        guard x.ndim == 2, y.ndim == 2, x.dim(0) == y.dim(0), x.dim(0) > 0, x.dim(1) > 0, y.dim(1) > 0 else {
             throw .invalidRequestStructure(details: "procrustes: pairs must be two 2-D matrices with the same positive row count, got \(x.shape) and \(y.shape)")
         }
     }

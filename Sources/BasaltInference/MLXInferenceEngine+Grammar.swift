@@ -62,9 +62,12 @@ extension MLXInferenceEngine {
         } else {
             fastForward = false
         }
+        guard epoch == modelEpoch else {
+            throw .inferenceError("the model changed while preparing the output constraint")
+        }
         let poolKey = format.kind + ":" + schema + (fastForward ? ":ff" : "")
         let grammar: GrammarConstraint
-        if epoch == modelEpoch, let idle = grammarPool.take(poolKey) {
+        if let idle = grammarPool.take(poolKey) {
             grammar = idle
         } else {
             do {

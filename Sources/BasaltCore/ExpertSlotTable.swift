@@ -95,7 +95,7 @@ public struct ExpertSlotTable: Sendable, Equatable {
             evictIfOccupied(slot: slot, evictions: &placement.evictions)
             (expertIn[slot], slotOf[expert], lastUse[slot]) = (expert, slot, clock)
             placement.loads.append(Load(expert: expert, slot: slot))
-            if prefetch { prefetched.insert(expert) }
+            if prefetch && !isSpeculative { prefetched.insert(expert) }
             if isSpeculative { speculative.insert(expert) }
         }
         placement.slots = experts.map { slotOf[$0]! }

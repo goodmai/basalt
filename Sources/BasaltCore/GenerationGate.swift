@@ -63,8 +63,13 @@ public actor GenerationGate {
             return id
         }
         guard hasPlace(for: priority) else { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
+        defer { cancelledBeforeQueued.remove(id) }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if closed {
+                    continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil))
+                    return
+                }
                 if cancelledBeforeQueued.remove(id) != nil {
                     continuation.resume(throwing: CancellationError())
                     return
@@ -123,21 +128,6 @@ public actor GenerationGate {
             promote()
         }
         return try await body()
-    }
-
-    public func admit(after body: @Sendable () async throws -> Void) async throws -> Int {
-        if exclusiveHeld || !running.isEmpty, exclusiveQueue.count >= maxQueue { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
-        await holdExclusively()
-        defer {
-            exclusiveHeld = false
-            promote()
-        }
-        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
-        try Task.checkCancellation()
-        try await body()
-        nextId += 1
-        running[nextId] = {}
-        return nextId
     }
 
     private func holdExclusively() async {
@@ -228,14 +218,7 @@ enum ExclusiveWaiter {
 
 extension GenerationGate {
     public func boundedExclusively<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
-        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
-        if exclusiveHeld || !running.isEmpty {
-            guard exclusiveQueue.count < maxQueue else { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
-            try await waitExclusively()
-        } else {
-            exclusiveHeld = true
-            queueTurn = true
-        }
+        try await acquireBoundedExclusively()
         defer {
             exclusiveHeld = false
             promote()
@@ -245,12 +228,43 @@ extension GenerationGate {
         return try await body()
     }
 
+    public func admit(after body: @Sendable () async throws -> Void) async throws -> Int {
+        try await acquireBoundedExclusively()
+        defer {
+            exclusiveHeld = false
+            promote()
+        }
+        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
+        try Task.checkCancellation()
+        try await body()
+        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
+        try Task.checkCancellation()
+        nextId += 1
+        running[nextId] = {}
+        return nextId
+    }
+
+    private func acquireBoundedExclusively() async throws {
+        guard !closed else { throw BasaltError.serverBusy(retryAfterSeconds: nil) }
+        if exclusiveHeld || !running.isEmpty {
+            guard exclusiveQueue.count < maxQueue else { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
+            try await waitExclusively()
+        } else {
+            exclusiveHeld = true
+            queueTurn = true
+        }
+    }
+
     private func waitExclusively() async throws {
         nextId += 1
         let id = nextId
         defer { cancelledBeforeQueued.remove(id) }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if closed {
+                    continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil))
+                    return
+                }
                 if cancelledBeforeQueued.remove(id) != nil {
                     continuation.resume(throwing: CancellationError())
                     return

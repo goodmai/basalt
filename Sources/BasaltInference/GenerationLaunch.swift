@@ -152,6 +152,7 @@ struct GenerationLauncher {
     }
 
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
+        try components.validate(parameters: params)
         let drafter = MTPSidecar.probing(request.drafter, processor: components.makeProcessor(parameters: params))
         let (reuse, boundary) = (prompt.reuse, prompt.boundary)
         let reused = reuse?.reusedTokens ?? 0
@@ -169,12 +170,13 @@ struct GenerationLauncher {
             cache = layers
             drafterState = state
         }
+        try Task.checkCancellation()
         let start = staged ? boundary : 0
         let iterator = try MTPSpeculativeTokenIterator(
             input: LMInput(tokens: input.text.tokens[.ellipsis, start...]), mainModel: context.model,
             drafter: drafter, mainCache: cache?.layers, drafterState: drafterState, parameters: params,
             blockSize: request.blockSize, components: components)
-        let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - start)
+        let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1) - (staged ? reused : 0))
         return MLXInferenceEngine.GenerationLaunch(
             stream: stream, task: task, cache: kept?.cache, reusedTokens: TokenCount(staged ? reused : 0),
             prefillSeconds: prefill, mtpPrefix: kept?.prefix, onyxReasoning: onyx)

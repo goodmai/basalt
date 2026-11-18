@@ -161,7 +161,7 @@ public final class LogitProbe: Sendable {
     private let recorded = Mutex<[Step]>([])
 
     public init(topK: Int) {
-        self.topK = topK
+        self.topK = max(0, topK)
     }
 
     public var steps: [Step] { recorded.withLock { $0 } }

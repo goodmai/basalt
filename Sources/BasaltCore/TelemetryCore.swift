@@ -218,8 +218,13 @@ public struct TelemetryCore: Sendable, Equatable {
         return confidenceCounter % confidenceEvery == 0 ? request.withConfidenceRecording() : request
     }
 
+    public static let maxDecisionModels = 64
+
     public mutating func recordDecision(_ response: SystemOneResponse, latencyMs: Double) {
-        decisions[response.model, default: DecisionTelemetry()].record(response, latencyMs: latencyMs)
+        let bucket = (decisions[response.model] != nil || decisions.count < Self.maxDecisionModels)
+            ? response.model
+            : "_other"
+        decisions[bucket, default: DecisionTelemetry()].record(response, latencyMs: latencyMs)
     }
 
     public mutating func recordCanary(passed: Bool, at date: Date = Date()) {
