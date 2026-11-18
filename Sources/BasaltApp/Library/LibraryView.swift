@@ -11,6 +11,15 @@ public struct LibraryView: View {
 
     public var body: some View {
         List {
+            if !store.state.conversions.isEmpty {
+                Section("Converting") {
+                    ForEach(store.state.conversions.keys.sorted(), id: \.self) { id in
+                        if let job = store.state.conversions[id] {
+                            ConversionRow(job: job, store: store)
+                        }
+                    }
+                }
+            }
             if !store.state.downloads.isEmpty {
                 Section("Downloading") {
                     ForEach(store.state.downloads.keys.sorted(), id: \.self) { id in
@@ -29,6 +38,13 @@ public struct LibraryView: View {
             downloadBar
         }
         .frame(minWidth: 560, minHeight: 360)
+        .sheet(
+            isPresented: Binding(
+                get: { store.state.convertDraft != nil },
+                set: { if !$0 { store.send(.closeConvert) } })
+        ) {
+            ConvertModelSheet(store: store)
+        }
         .confirmationDialog(
             "Delete \(deleting ?? "")?",
             isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
@@ -93,6 +109,10 @@ struct ModelRow: View {
             }
             Spacer()
             FitBadge(fit: fit)
+            Button("Convert…", systemImage: "arrow.triangle.2.circlepath") {
+                store.send(.openConvert(model))
+            }
+            .controlSize(.small)
             if model.isLoaded {
                 Text("Loaded").foregroundStyle(.green)
             } else {
@@ -101,6 +121,35 @@ struct ModelRow: View {
                 Button("Delete", systemImage: "trash", role: .destructive, action: delete)
                     .labelStyle(.iconOnly)
             }
+        }
+    }
+}
+
+struct ConversionRow: View {
+    let job: ConversionJobState
+    let store: LibraryStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(job.outputId).font(.subheadline.weight(.medium)).lineLimit(1)
+                Text(job.phase)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.16), in: .capsule)
+                Spacer()
+                if let kl0 = job.valKLBefore, let kl1 = job.valKLCurrent {
+                    Text(String(format: "KL %.4f → %.4f", kl0, kl1))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Button("Cancel") { store.send(.cancelConversion(job.outputId)) }
+            }
+            ProgressView(value: job.fraction)
+            Text(job.error ?? job.message)
+                .font(.caption)
+                .foregroundStyle(job.error != nil ? .red : .secondary)
         }
     }
 }

@@ -168,6 +168,7 @@ open .build/Basalt.app
 | Справочник `basalt compose` и замеры | [docs/compose.md](docs/compose.md) |
 | Basalt для Mac и ссылки `basalt://` | [docs/mac-app.md](docs/mac-app.md) |
 | Model X-ray, телеметрия, эксперименты, самообучение, дистилляция | [docs/research-tools.md](docs/research-tools.md) |
+| Математические и научные основы Basalt (85+ работ и благодарность авторам) | [docs/research-foundations.md](docs/research-foundations.md) |
 | Структура проекта, архитектура, скрипты, зависимости | [docs/architecture.md](docs/architecture.md) |
 | Архитектурные паттерны и модули (на русском) | [docs/ARCHITECTURE_PATTERNS_AND_MODULES.md](docs/ARCHITECTURE_PATTERNS_AND_MODULES.md) |
 | Облако: настройка OpenRouter, оптимизация расходов, сравнение моделей | [docs/cloud/OPENROUTER_SETUP.md](docs/cloud/OPENROUTER_SETUP.md) · [docs/cloud/COST_OPTIMIZATION.md](docs/cloud/COST_OPTIMIZATION.md) · [docs/cloud/MODEL_COMPARISON.md](docs/cloud/MODEL_COMPARISON.md) |

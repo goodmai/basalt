@@ -7,16 +7,27 @@ import Synchronization
 package struct ModelHubOperations: Sendable {
     package var cacheRoot: URL
     package var download: @Sendable (String, @escaping HuggingFaceHub.Progress) async throws -> URL
+    package var converter: (any ModelConversionService)?
+    package var conversionCoordinator: ConversionCoordinator
 
     package init(
         cacheRoot: URL = ModelCache.root,
+        converter: (any ModelConversionService)? = nil,
+        conversionCoordinator: ConversionCoordinator = ConversionCoordinator(),
         download: @escaping @Sendable (String, @escaping HuggingFaceHub.Progress) async throws -> URL
     ) {
-        (self.cacheRoot, self.download) = (cacheRoot, download)
+        self.cacheRoot = cacheRoot
+        self.converter = converter
+        self.conversionCoordinator = conversionCoordinator
+        self.download = download
     }
 
-    package static func live(hub: HuggingFaceHub = HuggingFaceHub(), cacheRoot: URL = ModelCache.root) -> ModelHubOperations {
-        ModelHubOperations(cacheRoot: cacheRoot) { repoId, onFile in
+    package static func live(
+        hub: HuggingFaceHub = HuggingFaceHub(),
+        cacheRoot: URL = ModelCache.root,
+        converter: (any ModelConversionService)? = nil
+    ) -> ModelHubOperations {
+        ModelHubOperations(cacheRoot: cacheRoot, converter: converter) { repoId, onFile in
             try await hub.download(repoId: repoId, onFile: onFile)
         }
     }

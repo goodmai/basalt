@@ -151,6 +151,7 @@ package struct RESTServer: Sendable {
         v1.get("/metrics") { _, _ in await Self.metricsResponse(orchestrator) }
         v1.post("/generate", use: controller.generate)
         v1.post("/generate/stream", use: controller.generateStream)
+        ModelsConvertController(operations: modelHub).add(to: v1)
     }
 
     private func addModelRoutes(to oai: RouterGroup<BasicRequestContext>, _ controller: ModelsController) {
@@ -158,6 +159,7 @@ package struct RESTServer: Sendable {
         oai.get("/models/current") { try await controller.currentModel(request: $0, context: $1) }
         oai.get("/models/preview") { try await controller.previewModel(request: $0, context: $1) }
         oai.post("/models/load", use: controller.loadModel)
+        ModelsConvertController(operations: modelHub).add(to: oai)
         ModelsHubController(orchestrator: orchestrator, operations: modelHub).add(to: oai)
     }
 

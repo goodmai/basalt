@@ -6,6 +6,7 @@ import Foundation
 extension WeightConverter.Format: ExpressibleByArgument {}
 extension GGUFImporter.Grid: ExpressibleByArgument {}
 extension SINQRecipe: ExpressibleByArgument {}
+extension PVTunePreset: ExpressibleByArgument {}
 
 struct ConvertSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -26,8 +27,20 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Argument(help: "Local MLX model directory, cached repo ID, or a .gguf file with --template")
     var source: String
 
-    @Option(name: .long, help: "New output directory; must not exist and must not be inside the source")
-    var out: String
+    @Option(name: .long, help: "New output directory; required unless --register-cache <org/repo> is supplied")
+    var out: String = ""
+
+    @Option(name: .long, help: "Unified any-to-any quantization target (#546): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
+    var to: String?
+
+    @Option(name: .customLong("register-cache"), help: "Register converted model in local Hugging Face cache as <org/repo> (#546)")
+    var registerCache: String?
+
+    @Flag(name: .customLong("pv-tune"), help: "Run end-to-end PV-Tuning discrete code flips and continuous scale/norm refinement (#546)")
+    var pvTune = false
+
+    @Option(name: .customLong("pv-preset"), help: "PV-Tuning budget preset (#546): fast, balanced (default) or thorough")
+    var pvPreset: PVTunePreset = .balanced
 
     @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, mixed:<low>:<high>:<group> with --budget-gb, nf4:<group>, or gsq-rco with --bits <bpw>")
     var quantize: String?
@@ -111,6 +124,11 @@ struct ConvertSubcommand: AsyncParsableCommand {
     var aSinq = false
 
     func validate() throws {
+        try validateDestinationOptions()
+        if to != nil {
+            try validateUnifiedToOptions()
+            return
+        }
         let gsqBPW = try gsqRCOBits()
         _ = try resolvedSINQRecipe()
         try validatePVOptions(isGSQRCO: gsqBPW != nil)
@@ -131,6 +149,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     }
 
     mutating func run() async throws {
+        if to != nil { return try await runUnifiedConversion() }
         if source.lowercased().hasSuffix(".gguf") { return try importGGUF() }
         if let spec = experimentalMacaq { return try await convertMACaQ(spec: spec) }
         if let bpw = try gsqRCOBits() { return try await convertGSQRCO(bpw: bpw) }
