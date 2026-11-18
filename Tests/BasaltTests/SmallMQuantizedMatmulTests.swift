@@ -55,11 +55,11 @@ struct SmallMQuantizedMatmulTests {
         }
     }
 
-    @Test("Rows outside 4...8, a width that is not a multiple of 64, 8-bit and mixed dtypes stay on the stock path")
+    @Test("Rows outside 2...16, a width that is not a multiple of 64, 8-bit and mixed dtypes stay on the stock path")
     func outsideContractFallsBack() {
         let wide = Self.layer(inputs: 512, outputs: 32, groupSize: 64, dtype: .bfloat16)
         let kernel = SmallMQuantizedLinear(replacing: wide)
-        for rows in [1, 2, 3, 9, 16] {
+        for rows in [1, 17, 32] {
             let x = Self.input(rows: rows, inputs: 512, dtype: .bfloat16)
             #expect(!SmallMQuantizedMatmul.handles(x, layer: kernel))
             #expect(Self.identical(kernel(x), wide(x)))
