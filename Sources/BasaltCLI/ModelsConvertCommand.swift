@@ -5,6 +5,7 @@ import Foundation
 
 extension WeightConverter.Format: ExpressibleByArgument {}
 extension GGUFImporter.Grid: ExpressibleByArgument {}
+extension SINQRecipe: ExpressibleByArgument {}
 
 struct ConvertSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -100,8 +101,18 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("macaq-alpha"), help: "With --experimental-macaq: channel-balance exponent alpha in [0, 1] (default 0.75)")
     var macaqAlpha: Float?
 
+    @Option(name: .customLong("quant-recipe"), help: "Quantization normalization recipe (#548): rtn (default), sinq (data-free Sinkhorn-Knopp dual-axis normalization absorbed into RMSNorm with zero runtime overhead), or a-sinq (activation-calibrated SINQ + EAQuant router invariance)")
+    var quantRecipe: SINQRecipe?
+
+    @Flag(name: .customLong("sinq"), help: "Shorthand for --quant-recipe sinq (#548): data-free No-overhead SINQ dual-axis normalization")
+    var sinq = false
+
+    @Flag(name: .customLong("a-sinq"), help: "Shorthand for --quant-recipe a-sinq (#548): activation-calibrated No-overhead A-SINQ + EAQuant")
+    var aSinq = false
+
     func validate() throws {
         let gsqBPW = try gsqRCOBits()
+        _ = try resolvedSINQRecipe()
         try validatePVOptions(isGSQRCO: gsqBPW != nil)
         try validateUniformQTIP()
         try validateBudgetQTIP(isGSQRCO: gsqBPW != nil)
@@ -152,14 +163,31 @@ extension ConvertSubcommand {
         return nil
     }
 
+    func resolvedSINQRecipe() throws -> SINQRecipe {
+        let flagCount = (sinq ? 1 : 0) + (aSinq ? 1 : 0) + (quantRecipe != nil ? 1 : 0)
+        if flagCount > 1 {
+            throw ValidationError("give at most one of --quant-recipe, --sinq or --a-sinq")
+        }
+        let chosen: SINQRecipe = sinq ? .sinq : (aSinq ? .asinq : (quantRecipe ?? .rtn))
+        if chosen != .rtn {
+            guard quantize != nil, quantize != "gsq-rco", !(quantize?.hasPrefix("gsq-rco:") == true),
+                  dequantize == nil, format == .mlx, !isGGUFSource,
+                  experimentalMacaq == nil, experimentalQtip == nil, experimentalQtipBudget == nil else {
+                throw ValidationError("--sinq / --a-sinq / --quant-recipe applies to MLX --quantize (affine, mixed, nf4 or mxfp4)")
+            }
+        }
+        return chosen
+    }
+
     func validatePVOptions(isGSQRCO: Bool) throws {
         if pvTeacher != nil, !experimentalPvTune && !experimentalMacaqRefine {
             throw ValidationError("--pv-teacher requires --experimental-pv-tune or --experimental-macaq-refine")
         }
         let usesCalibration = experimentalPvTune || experimentalMacaqRefine || experimentalMacaq != nil
             || experimentalQtip != nil || experimentalQtipBudget != nil || isGSQRCO
+            || aSinq || quantRecipe == .asinq
         if pvCalibration != nil, !usesCalibration {
-            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget or --quantize gsq-rco")
+            throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget, --a-sinq or --quantize gsq-rco")
         }
         if experimentalPvTune, format != .mlx || dequantize != nil || isGGUFSource {
             throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")
@@ -221,9 +249,11 @@ extension ConvertSubcommand {
         let sourceURL = try Self.resolveModelDirectory(source)
         let teacherURL = try pvTeacher.map(Self.resolveModelDirectory) ?? sourceURL
         let calibrationText = try readCalibrationText()
+        let recipe = try resolvedSINQRecipe()
         let converter = WeightConverter(
             precision: precision, format: format,
-            adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) })
+            adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) },
+            recipe: recipe)
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
         let existedBefore = FileManager.default.fileExists(atPath: outURL.path)
         var createdOutput = false
@@ -233,7 +263,7 @@ extension ConvertSubcommand {
         let pvSummary: PVTuneSummary?
         let macaqSummary: MACaQSummary?
         do {
-            summary = try converter.run(source: sourceURL, output: outURL)
+            summary = try await converter.runWithSINQ(source: sourceURL, output: outURL, calibrationText: calibrationText)
             createdOutput = true
             macaqSummary = try await runOptionalMACaQRefine(output: outURL, teacher: teacherURL, calibrationText: calibrationText)
             pvSummary = experimentalPvTune
@@ -253,6 +283,12 @@ extension ConvertSubcommand {
         print("  Bytes:     \(formatBytes(Int64(summary.bytesBefore))) → \(formatBytes(Int64(summary.bytesAfter)))")
         if let plan = summary.plan {
             print("  Plan:      \(plan.highLayers.count) of \(plan.layers) layers at the high bits, \(plan.unscored) unscored kept low")
+        }
+        if let sinq = summary.sinq, sinq.absorbedGroups > 0 {
+            print(String(
+                format: "  SINQ:      %d group(s), %d tensor(s), %d router(s), imbalance %.2f → %.2f",
+                sinq.absorbedGroups, sinq.normalizedTensors, sinq.routerProjectionsAdjusted,
+                sinq.meanImbalanceBefore, sinq.meanImbalanceAfter))
         }
         printMACaQRefineSummary(macaqSummary)
         if let pv = pvSummary {

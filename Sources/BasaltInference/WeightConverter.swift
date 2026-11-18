@@ -34,17 +34,28 @@ package struct WeightConverter: Sendable {
         package var bytesAfter = 0
         package var shards = 0
         package var plan: BitPlan?
+        package var sinq: SINQSummary?
     }
 
     package var precision: Precision
     package var format: Format
     package var adapter: URL?
+    package var recipe: SINQRecipe
+    package var sinqConfig: SINQConfig
     package var maxShardBytes = 5 << 30
 
-    package init(precision: Precision, format: Format = .mlx, adapter: URL? = nil) {
+    package init(
+        precision: Precision,
+        format: Format = .mlx,
+        adapter: URL? = nil,
+        recipe: SINQRecipe = .rtn,
+        sinqConfig: SINQConfig = SINQConfig()
+    ) {
         self.precision = precision
         self.format = format
         self.adapter = adapter
+        self.recipe = recipe
+        self.sinqConfig = sinqConfig
     }
 
     package static func precision(
@@ -109,7 +120,13 @@ package struct WeightConverter: Sendable {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         do {
             try converter.copySidecars(from: source, to: output, config: config)
-            var summary = try converter.stream(layout, lora: lora, to: output)
+            var summary: Summary
+            if converter.recipe == .rtn {
+                summary = try converter.stream(layout, lora: lora, to: output)
+            } else {
+                let inInfo = SINQStreamInputs(config: config, lora: lora, activationRMS: [:], calibrationTokens: 0)
+                (summary, _) = try converter.streamWithSINQ(layout, inputs: inInfo, to: output)
+            }
             summary.plan = bitPlan
             return summary
         } catch {
@@ -117,7 +134,9 @@ package struct WeightConverter: Sendable {
             throw error
         }
     }
+}
 
+extension WeightConverter {
     func stream(_ layout: SourceLayout, lora: LoRAUpdate?, to output: URL) throws -> Summary {
         var writer = ShardWriter(directory: output, maxBytes: maxShardBytes, metadata: ["format": format == .hf ? "pt" : "mlx"])
         var summary = Summary()
