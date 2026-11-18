@@ -60,6 +60,7 @@ public struct SystemOneRequest: Codable, Sendable, Equatable {
     public var abstainBelow: Double?
     public var minMargin: Double?
     public var media: [DecisionMedia]?
+    public var hasPerceivedContent: Bool?
 
     public init(state: String, questions: [String: SystemOneQuestion], calibrated: Bool? = nil, abstainBelow: Double? = nil, minMargin: Double? = nil) {
         (self.state, self.questions, self.calibrated) = (state, questions, calibrated)
@@ -135,6 +136,7 @@ public protocol DecisionEngine: Sendable {
     var modelID: String { get }
     var runsBesideDecode: Bool { get }
     var acceptsMedia: Bool { get }
+    var sharesPerceived: Bool { get }
     var onDevice: (any DecisionEngine)? { get }
     func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse
     func unload() async
@@ -143,6 +145,7 @@ public protocol DecisionEngine: Sendable {
 extension DecisionEngine {
     public var runsBesideDecode: Bool { false }
     public var acceptsMedia: Bool { false }
+    public var sharesPerceived: Bool { onDevice != nil }
     public var onDevice: (any DecisionEngine)? { self }
     public func unload() async {}
 }

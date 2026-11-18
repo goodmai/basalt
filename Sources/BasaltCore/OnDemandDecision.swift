@@ -1,6 +1,18 @@
 import Foundation
 
 public actor OnDemandDecision: DecisionEngine {
+    private enum Transition {
+        case load(Task<Result<any DecisionEngine, BasaltError>, Never>)
+        case unload(Task<Void, Never>)
+
+        func wait() async {
+            switch self {
+            case .load(let task): _ = await task.value
+            case .unload(let task): await task.value
+            }
+        }
+    }
+
     public nonisolated let modelID: String
     public nonisolated let path: String
     public nonisolated let idle: Duration
@@ -11,8 +23,9 @@ public actor OnDemandDecision: DecisionEngine {
     private let sleep: @Sendable (Duration) async throws -> Void
     private var core = OnDemandCore()
     private var current: (any DecisionEngine)?
-    private var transition: Task<Result<Void, BasaltError>, Never>?
+    private var transition: Transition?
     private var timer: Task<Void, Never>?
+    private var unloadEpoch = 0
     public private(set) var lastUsed: Date?
 
     public init(
@@ -25,6 +38,8 @@ public actor OnDemandDecision: DecisionEngine {
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
+    deinit { announce.finish() }
+
     public var phase: OnDemandCore.Phase { core.phase }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
@@ -34,19 +49,31 @@ public actor OnDemandDecision: DecisionEngine {
     }
 
     public func unload() async {
-        timer?.cancel()
-        timer = nil
-        _ = await transition?.value
-        if let engine = current {
+        unloadEpoch &+= 1
+        while true {
+            timer?.cancel()
+            timer = nil
+            if let transition {
+                await transition.wait()
+                continue
+            }
+            guard core.beginUnload() else { return }
+            announce.yield(core.phase)
+            let engine = current
             current = nil
-            await engine.unload()
+            let task = Task {
+                await withTaskCancellationShield { await engine?.unload() }
+                self.finishUnload()
+            }
+            transition = .unload(task)
+            await task.value
+            return
         }
-        core.unloaded()
-        announce.yield(core.phase)
     }
 
     public func acquire() async throws(BasaltError) -> any DecisionEngine {
         while true {
+            if Task.isCancelled { throw .cancelled }
             timer?.cancel()
             timer = nil
             switch core.enter() {
@@ -57,7 +84,7 @@ public actor OnDemandDecision: DecisionEngine {
                 }
                 core.unloaded()
             case .wait:
-                _ = await transition?.value
+                await transition?.wait()
             case .load:
                 try await performLoad()
             }
@@ -65,37 +92,59 @@ public actor OnDemandDecision: DecisionEngine {
     }
 
     private func performLoad() async throws(BasaltError) {
+        let epoch = unloadEpoch
         let loader = self.loader
-        let loadTask = Task { () async -> Result<any DecisionEngine, BasaltError> in
-            do {
-                return .success(try await loader())
-            } catch let error as BasaltError {
-                return .failure(error)
-            } catch {
-                return .failure(.modelInferenceError(details: error.localizedDescription))
-            }
+        let task = Task { () -> Result<any DecisionEngine, BasaltError> in
+            let outcome = await Self.runLoader(loader)
+            await self.finishLoad(outcome, epoch: epoch)
+            return outcome
         }
-        let gateTask = Task { () async -> Result<Void, BasaltError> in
-            (await loadTask.value).map { _ in () }
-        }
-        transition = gateTask
-        let outcome = await loadTask.value
-        _ = await gateTask.value
-        transition = nil
-        switch outcome {
-        case .success(let engine):
-            current = engine
-            core.loaded(true)
-            announce.yield(core.phase)
-        case .failure(let error):
-            core.loaded(false)
-            announce.yield(core.phase)
-            throw error
-        }
-        if Task.isCancelled {
-            schedule(core.generation)
+        transition = .load(task)
+        let outcome = await task.value
+        _ = try outcome.get()
+        if epoch != unloadEpoch || Task.isCancelled {
+            if core.phase == .loaded, core.users == 0 { schedule(core.generation) }
             throw .cancelled
         }
+    }
+
+    private static func runLoader(
+        _ loader: @Sendable () async throws -> any DecisionEngine
+    ) async -> Result<any DecisionEngine, BasaltError> {
+        do {
+            return .success(try await loader())
+        } catch let error as BasaltError {
+            return .failure(error)
+        } catch is CancellationError {
+            return .failure(.cancelled)
+        } catch {
+            return .failure(.modelInferenceError(details: error.localizedDescription))
+        }
+    }
+
+    private func finishLoad(_ outcome: Result<any DecisionEngine, BasaltError>, epoch: Int) async {
+        switch outcome {
+        case .success(let engine):
+            if epoch != unloadEpoch {
+                await withTaskCancellationShield { await engine.unload() }
+                transition = nil
+                core.loaded(false)
+            } else {
+                current = engine
+                transition = nil
+                core.loaded(true)
+            }
+        case .failure:
+            transition = nil
+            core.loaded(false)
+        }
+        announce.yield(core.phase)
+    }
+
+    private func finishUnload() {
+        transition = nil
+        core.unloaded()
+        announce.yield(core.phase)
     }
 
     public func release() {
@@ -114,16 +163,14 @@ public actor OnDemandDecision: DecisionEngine {
 
     func expire(_ generation: Int) async {
         guard core.expire(generation) else { return }
+        announce.yield(core.phase)
         let engine = current
         current = nil
-        let task = Task { () async -> Result<Void, BasaltError> in
-            await engine?.unload()
-            return .success(())
+        let task = Task {
+            await withTaskCancellationShield { await engine?.unload() }
+            self.finishUnload()
         }
-        transition = task
-        _ = await task.value
-        transition = nil
-        core.unloaded()
-        announce.yield(core.phase)
+        transition = .unload(task)
+        await task.value
     }
 }

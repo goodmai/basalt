@@ -110,6 +110,10 @@ extension ComposeHost {
     func restoreChat(_ path: String) async {
         let (loaded, current) = (await chat.isLoaded, await chat.modelPath)
         guard !loaded || current != path else { return }
-        try? await chat.loadModel(path: path)
+        do {
+            try await chat.loadModel(path: path)
+        } catch {
+            failures[spec.answer] = error.localizedDescription
+        }
     }
 }

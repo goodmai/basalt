@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 
 struct ComposeRecord: Codable, Sendable, Equatable {
@@ -12,6 +13,9 @@ struct ComposeRecord: Codable, Sendable, Equatable {
     static func url(_ name: String) -> URL { directory.appending(path: "\(name).json") }
 
     static func write(name: String, port: Int, file: String, pid: Int32 = ProcessInfo.processInfo.processIdentifier) throws -> String {
+        guard ComposeSpec.isValidSystemName(name) else {
+            throw BasaltError.invalidRequestStructure(details: "compose: invalid system name '\(name)'")
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let record = ComposeRecord(name: name, pid: pid, port: port, file: file, started: startTime(pid))
         try JSONEncoder().encode(record).write(to: url(name), options: .atomic)
@@ -19,16 +23,17 @@ struct ComposeRecord: Codable, Sendable, Equatable {
     }
 
     static func remove(_ name: String) {
-        guard read(name)?.pid == ProcessInfo.processInfo.processIdentifier else { return }
+        guard ComposeSpec.isValidSystemName(name), read(name)?.pid == ProcessInfo.processInfo.processIdentifier else { return }
         try? FileManager.default.removeItem(at: url(name))
     }
 
     static func read(_ name: String) -> ComposeRecord? {
-        (try? Data(contentsOf: url(name))).flatMap { try? JSONDecoder().decode(ComposeRecord.self, from: $0) }
+        guard ComposeSpec.isValidSystemName(name) else { return nil }
+        return (try? Data(contentsOf: url(name))).flatMap { try? JSONDecoder().decode(ComposeRecord.self, from: $0) }
     }
 
     static func running(_ name: String) -> ComposeRecord? {
-        guard let record = read(name) else { return nil }
+        guard ComposeSpec.isValidSystemName(name), let record = read(name) else { return nil }
         guard alive(record) else {
             try? FileManager.default.removeItem(at: url(name))
             return nil

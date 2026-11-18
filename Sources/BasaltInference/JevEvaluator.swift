@@ -44,10 +44,17 @@ public struct JevEvaluator: DecisionEngine {
                 throw BasaltError.modelConfigurationInvalid(path: directory.path, reason: "head.safetensors has no weight")
             }
             head = weight.asType(.float32).reshaped(-1).asArray(Float.self)
+            let headCount = head.count
             let scale = bundle.loraScale
-            let prompt = try await container.perform { context in
+            let prompt = try await container.performEvaluating(nonSendable: ()) { context, _ in
                 guard Self.supports(context.model) else {
                     throw BasaltError.modelConfigurationInvalid(path: base.path, reason: "the Jev base must be a Qwen3 or Qwen3.5 text checkpoint")
+                }
+                guard let normMod = context.model.namedModules().first(where: { $0.0 == "model.norm" })?.1,
+                      case .value(let normWeight)? = normMod.parameters()["weight"],
+                      normWeight.dim(-1) == headCount
+                else {
+                    throw BasaltError.modelConfigurationInvalid(path: directory.path, reason: "head.safetensors width \(headCount) does not match base model.norm width")
                 }
                 if FileManager.default.fileExists(atPath: adapterFile.path) {
                     try Self.apply(adapter: directory, file: adapterFile, to: context.model, scale: scale, float32: float32)
@@ -102,7 +109,7 @@ public struct JevEvaluator: DecisionEngine {
         let (bundle, head, header, tail) = (bundle, head, header, tail)
         let scored: (scores: [[Double]], usage: SystemOneUsage)
         do {
-            scored = try await container.perform { context in
+            scored = try await container.performEvaluating(nonSendable: ()) { context, _ in
                 let prefix = context.tokenizer.encode(text: header + "State:\n" + request.state, addSpecialTokens: false)
                 guard prefix.count <= bundle.maxPrefixTokens else { throw BasaltError.contextLengthExceeded(maxTokens: bundle.maxPrefixTokens, requested: prefix.count) }
                 let suffixes = questions.map { question in

@@ -42,6 +42,7 @@ struct PolarKeyRows {
         guard removed > 0, let codes else { return 0 }
         let kept = count - removed
         self.codes = kept == 0 ? nil : codes[.ellipsis, ..<kept, 0...]
+        if kept == 0 { sigma = nil }
         _ = rest?.trim(removed)
         return removed
     }

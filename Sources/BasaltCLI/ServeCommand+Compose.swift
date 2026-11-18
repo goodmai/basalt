@@ -72,7 +72,7 @@ extension ServeCommand {
             if case .cloud(_, let id) = model.source, let budget = model.budget { limits[id] = budget }
         }
         if let total = spec?.budget { limits[CloudGateCore.total] = total }
-        if let cloud = decision.cloudModel, let budget = decision.budgetPerDay { limits[cloud] = budget }
+        if let (_, cloud) = decision.cloud, let budget = decision.budgetPerDay { limits[cloud] = budget }
         return limits
     }
 
@@ -99,7 +99,16 @@ extension ServeCommand {
                 guard case .cloud(let provider, let id)? = spec.models[name]?.source else {
                     return locals[name].map { GatedDecisionEngine.serving($0, gate: gate, besideDecode: besideDecode) ?? $0 }
                 }
-                return GuardedDecisionEngine(try RemoteDecisionEngine(model: id, apiKey: key(spec, name), provider: CloudDecisionProvider(rawValue: provider) ?? .openRouter), gate: cloudGate)
+                let sharesMedia = spec.models[name]?.data == ComposeSpec.shareMedia
+                return GuardedDecisionEngine(
+                    try RemoteDecisionEngine(
+                        model: id,
+                        apiKey: key(spec, name),
+                        provider: CloudDecisionProvider(rawValue: provider) ?? .openRouter,
+                        sharesPerceived: sharesMedia
+                    ),
+                    gate: cloudGate
+                )
             }
             guard stages.count > 1 else { return stages.first }
             log("Decisions → \(spec.cascade.joined(separator: " → ")); confidence below \(spec.escalateBelow ?? decision.escalateBelow) goes on to the next stage")

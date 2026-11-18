@@ -79,7 +79,10 @@ public enum EngineReducer {
     }
 
     static func stop(_ state: inout EngineState) -> [EngineEffect] {
-        guard state.phase != .stopped else { return [] }
+        guard state.phase != .stopped else {
+            state.epoch += 1
+            return []
+        }
         let running = state.epoch
         (state.phase, state.epoch, state.crashes) = (.stopped, state.epoch + 1, [])
         return [.kill(epoch: running), .removeRecord]

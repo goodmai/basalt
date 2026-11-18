@@ -10,10 +10,20 @@ extension ComposeSpec {
         }
     }
 
+    public static func isValidSystemName(_ name: String) -> Bool {
+        guard !name.isEmpty, name != ".", name != ".." else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        return name.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
     public var issues: [Issue] {
         var issues: [Issue] = []
         if !ComposeSchema.versions.contains(version) { issues.append(Issue("version", "version 1 or 2 is supported")) }
-        if name.trimmingCharacters(in: .whitespaces).isEmpty { issues.append(Issue("name", "a compose file needs a name")) }
+        if name.trimmingCharacters(in: .whitespaces).isEmpty {
+            issues.append(Issue("name", "a compose file needs a name"))
+        } else if !Self.isValidSystemName(name) {
+            issues.append(Issue("name", "a compose system name uses letters, digits, ., _ and -"))
+        }
         for (pipeline, view) in views {
             let prefix = pipeline == Self.defaultPipeline ? "pipeline" : "pipelines.\(pipeline)"
             issues += (view.answerIssues + view.perceiveIssues + view.cascadeIssues + view.speakIssues + view.imagineIssues).map { issue in

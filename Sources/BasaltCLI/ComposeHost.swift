@@ -159,9 +159,11 @@ actor ComposeHost {
             if order == .loadFirst { for name in replaced { await Self.unload(previous[name]) } }
             await probe(diff.added + diff.reloaded + (diff.chat.map { [$0] } ?? []), in: next)
         } catch {
-            for model in fresh.values { await Self.unload(model) }
-            if diff.chat != nil { await restoreChat(chatPath) }
-            if order == .unloadFirst { await restore(replaced) }
+            await withTaskCancellationShield {
+                for model in fresh.values { await Self.unload(model) }
+                if diff.chat != nil { await restoreChat(chatPath) }
+                if order == .unloadFirst { await restore(replaced) }
+            }
             throw error as? BasaltError ?? .invalidRequestStructure(details: "compose apply: \(error.localizedDescription)")
         }
         return diff
@@ -169,7 +171,21 @@ actor ComposeHost {
 
     static func parse(_ request: ComposeApply) throws(BasaltError) -> ComposeSpec {
         var context = ComposeContext.machine
-        (context.base, context.variables, context.profiles) = (request.base.map { URL(fileURLWithPath: $0) }, request.variables ?? [:], request.profiles)
+        let resolvedBase: URL?
+        if let rawBase = request.base {
+            guard !rawBase.isEmpty, !rawBase.contains("\0") else {
+                throw .invalidRequestStructure(details: "compose apply: invalid base directory")
+            }
+            let candidate = URL(fileURLWithPath: rawBase).standardizedFileURL
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue else {
+                throw .invalidRequestStructure(details: "compose apply: base directory does not exist")
+            }
+            resolvedBase = candidate
+        } else {
+            resolvedBase = nil
+        }
+        (context.base, context.variables, context.profiles) = (resolvedBase, request.variables ?? [:], request.profiles)
         do {
             return try ComposeFile.parse(request.yaml, file: "compose apply", context: context)
         } catch {
@@ -186,7 +202,13 @@ actor ComposeHost {
     }
 
     func restore(_ names: [String]) async {
-        for name in names { if let model = try? await load(name, in: spec) { held[name] = model } }
+        for name in names {
+            do {
+                held[name] = try await load(name, in: spec)
+            } catch {
+                failures[name] = error.localizedDescription
+            }
+        }
         if let built = try? await systems(for: spec, held: held, defaultDecisions: nil) { await registry.replace(built) }
     }
 
@@ -198,7 +220,7 @@ actor ComposeHost {
     static func unload(_ held: ComposeHeld?) async {
         switch held {
         case .resident(let orchestrator): await orchestrator.unloadModel()
-        case .onDemand(let model): await model.model.unloadModel()
+        case .onDemand(let model): await model.unload()
         case .decision(let engine): await engine.unload()
         case .onDemandDecision(let decider): await decider.unload()
         case .speaker(let loaded): await loaded.synthesizer.unload()

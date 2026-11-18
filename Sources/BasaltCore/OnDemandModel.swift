@@ -41,8 +41,17 @@ public struct OnDemandCore: Sendable, Equatable {
         return true
     }
 
+    public mutating func beginUnload() -> Bool {
+        guard phase == .loaded else { return false }
+        phase = .unloading
+        users = 0
+        generation += 1
+        return true
+    }
+
     public mutating func unloaded() {
         phase = .unloaded
+        users = 0
         generation += 1
     }
 }
@@ -58,6 +67,7 @@ public actor OnDemandModel {
     private var core = OnDemandCore()
     private var transition: Task<Result<Void, BasaltError>, Never>?
     private var timer: Task<Void, Never>?
+    private var unloadEpoch = 0
     public private(set) var lastUsed: Date?
 
     public init(
@@ -69,12 +79,39 @@ public actor OnDemandModel {
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
+    deinit { announce.finish() }
+
     public var phase: OnDemandCore.Phase { core.phase }
+
+    public func unload() async {
+        unloadEpoch &+= 1
+        while true {
+            timer?.cancel()
+            timer = nil
+            if let transition {
+                _ = await transition.value
+                continue
+            }
+            guard core.beginUnload() else { return }
+            announce.yield(core.phase)
+            let task = Task { [model] () async -> Result<Void, BasaltError> in
+                await withTaskCancellationShield { await model.unloadModel() }
+                return .success(())
+            }
+            transition = task
+            _ = await task.value
+            transition = nil
+            core.unloaded()
+            announce.yield(core.phase)
+            return
+        }
+    }
 
     public func acquire() async throws(BasaltError) -> Duration {
         let started = ContinuousClock.now
         var loads = false
         while true {
+            if Task.isCancelled { throw .cancelled }
             timer?.cancel()
             timer = nil
             switch core.enter() {
@@ -85,27 +122,56 @@ public actor OnDemandModel {
                 _ = await transition?.value
             case .load:
                 loads = true
-                let task = Task { [model, path, adapters] () async -> Result<Void, BasaltError> in
-                    do throws(BasaltError) {
-                        try await model.loadModel(path: path)
-                        if !adapters.isEmpty { try await model.loadAdapters(adapters) }
-                        return .success(())
-                    } catch {
-                        return .failure(error)
-                    }
-                }
-                transition = task
-                let result = await task.value
-                transition = nil
-                core.loaded((try? result.get()) != nil)
-                announce.yield(core.phase)
-                try result.get()
-                if Task.isCancelled {
-                    schedule(core.generation)
-                    throw .cancelled
-                }
+                try await performLoad()
             }
         }
+    }
+
+    private func performLoad() async throws(BasaltError) {
+        let epoch = unloadEpoch
+        let (model, path, adapters) = (model, path, adapters)
+        let task = Task { () -> Result<Void, BasaltError> in
+            let outcome = await Self.loadBaseAndAdapters(model: model, path: path, adapters: adapters)
+            await self.finishLoad(outcome, epoch: epoch)
+            return outcome
+        }
+        transition = task
+        let result = await task.value
+        try result.get()
+        if epoch != unloadEpoch || Task.isCancelled {
+            if core.phase == .loaded, core.users == 0 { schedule(core.generation) }
+            throw .cancelled
+        }
+    }
+
+    private static func loadBaseAndAdapters(
+        model: any ModelOrchestrating, path: String, adapters: [String: URL]
+    ) async -> Result<Void, BasaltError> {
+        var loadedBase = false
+        do throws(BasaltError) {
+            try await model.loadModel(path: path)
+            loadedBase = true
+            if !adapters.isEmpty { try await model.loadAdapters(adapters) }
+            return .success(())
+        } catch {
+            if loadedBase {
+                await withTaskCancellationShield { await model.unloadModel() }
+            }
+            return .failure(error)
+        }
+    }
+
+    private func finishLoad(_ outcome: Result<Void, BasaltError>, epoch: Int) async {
+        if (try? outcome.get()) != nil, epoch != unloadEpoch {
+            await withTaskCancellationShield { await model.unloadModel() }
+            transition = nil
+            core.loaded(false)
+            announce.yield(core.phase)
+            return
+        }
+        transition = nil
+        core.loaded((try? outcome.get()) != nil)
+        announce.yield(core.phase)
     }
 
     public func release() {

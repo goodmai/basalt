@@ -43,10 +43,18 @@ public struct CoreAIEmbeddingService: EmbeddingEngine {
     }
 
     public func embed(_ inputs: [EmbeddingInput], dimensions: Int?, yieldingTo gate: GenerationGate?) async throws(BasaltError) -> Embeddings {
-        let tokens = inputs.map { input in
+        let upper = bundle.vocabSize ?? Int(Int32.max)
+        var tokens: [[Int]] = []
+        tokens.reserveCapacity(inputs.count)
+        for input in inputs {
             switch input {
-            case .text(let text): bundle.tokens(tokenizer.encode(text: bundle.documentPrompt + text, addSpecialTokens: false))
-            case .tokens(let ids): bundle.tokens(ids)
+            case .text(let text):
+                tokens.append(bundle.tokens(tokenizer.encode(text: bundle.documentPrompt + text, addSpecialTokens: false)))
+            case .tokens(let ids):
+                guard !ids.isEmpty, ids.allSatisfy({ $0 >= 0 && $0 < upper && (bundle.vocabSize != nil || tokenizer.convertIdToToken($0) != nil) }) else {
+                    throw .invalidRequestStructure(details: "every token input needs at least one valid vocabulary token ID")
+                }
+                tokens.append(bundle.tokens(ids))
             }
         }
         let total = tokens.reduce(0) { $0 + $1.count }
@@ -62,7 +70,7 @@ public struct CoreAIEmbeddingService: EmbeddingEngine {
             } catch let error as BasaltError {
                 throw error
             } catch is CancellationError {
-                throw .inferenceError("embedding was cancelled")
+                throw .cancelled
             } catch {
                 throw .inferenceError("Core AI embedding failed: \(error.localizedDescription)")
             }
@@ -85,10 +93,10 @@ public struct CoreAIEmbeddingService: EmbeddingEngine {
         guard let embeds = tableOutputs.remove("inputs_embeds")?.ndArray else { throw BasaltError.inferenceError("token_table returned no inputs_embeds") }
         var bias = NDArray(shape: [1, length, 1, length], scalarType: .float16)
         var biasView = bias.mutableView(as: Float16.self)
-        biasView.copyElements(from: bundle.bias(real: real, length: length).map(Float16.init))
+        biasView.copyElements(from: bundle.bias16(real: real, length: length))
         var pool = NDArray(shape: [1, length], scalarType: .float16)
         var poolView = pool.mutableView(as: Float16.self)
-        poolView.copyElements(from: bundle.poolWeights(real: real, length: length).map(Float16.init))
+        poolView.copyElements(from: bundle.poolWeights16(real: real, length: length))
         var outputs = try await encoder.run(inputs: ["inputs_embeds": embeds, "bias": bias, "pool_weights": pool])
         guard let embedding = outputs.remove("embedding")?.ndArray, let values = embedding.view(as: Float16.self).contiguousElements else {
             throw BasaltError.inferenceError("the encoder returned no contiguous embedding")

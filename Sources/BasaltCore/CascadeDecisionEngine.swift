@@ -41,15 +41,16 @@ public enum CascadeCore {
 public struct CascadeDecisionEngine: DecisionEngine {
     public let stages: [any DecisionEngine]
     public let escalateBelow: Double
-    public let runsBesideDecode = true
+    public var runsBesideDecode: Bool { stages.allSatisfy(\.runsBesideDecode) }
 
     public var remote: any DecisionEngine { stages[0] }
     public var local: any DecisionEngine { stages[stages.count - 1] }
     public var modelID: String { stages.map(\.modelID).joined(separator: "+") }
     public var acceptsMedia: Bool { stages.contains(where: \.acceptsMedia) }
+    public var sharesPerceived: Bool { stages.contains(where: \.sharesPerceived) }
 
     public var onDevice: (any DecisionEngine)? {
-        let local = stages.filter { $0.onDevice != nil }
+        let local = stages.compactMap(\.onDevice)
         return local.count > 1 ? CascadeDecisionEngine(stages: local, escalateBelow: escalateBelow) : local.first
     }
 
@@ -62,27 +63,51 @@ public struct CascadeDecisionEngine: DecisionEngine {
         self.init(stages: [remote, GatedDecisionEngine.serving(local, gate: gate, besideDecode: besideDecode) ?? local], escalateBelow: escalateBelow)
     }
 
+    public func unload() async {
+        for stage in stages { await stage.unload() }
+    }
+
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         try SystemOneCore.validate(request)
         var (remaining, parts, skipped) = (request.questions.keys.sorted(), [CascadeCore.Part](), [SystemOneStage]())
         for (index, stage) in stages.enumerated() {
             let last = index == stages.count - 1
+            if let reason = Self.ineligibleReason(stage, for: request) {
+                skipped.append(SystemOneStage(model: stage.modelID, questions: [], latencyMs: 0, fallback: reason))
+                if last, parts.isEmpty { throw .invalidRequestStructure(details: "systemone: \(reason)") }
+                if last { break }
+                continue
+            }
             let started = ContinuousClock.now
+            var sub = CascadeCore.subrequest(request, remaining)
+            if request.hasPerceivedContent == true, !stage.acceptsMedia { sub.media = nil }
             let response: SystemOneResponse
             do {
-                response = try await stage.decide(CascadeCore.subrequest(request, remaining))
+                response = try await stage.decide(sub)
             } catch {
                 if Task.isCancelled { throw .cancelled }
-                if last { throw error }
+                if last, parts.isEmpty { throw error }
                 skipped.append(SystemOneStage(model: stage.modelID, questions: [], latencyMs: Self.milliseconds(since: started), fallback: error.localizedDescription))
                 continue
             }
-            let split = last ? (kept: remaining, escalated: []) : CascadeCore.split(CascadeCore.subrequest(request, remaining), response, below: escalateBelow)
+            let split = last ? (kept: remaining, escalated: []) : CascadeCore.split(sub, response, below: escalateBelow)
             parts.append((response, SystemOneStage(model: response.model, questions: split.kept, latencyMs: Self.milliseconds(since: started), cost: response.usage.cost)))
             remaining = split.escalated
             if remaining.isEmpty { break }
         }
-        return CascadeCore.merged(request, parts, skipped: skipped)
+        var merged = CascadeCore.merged(request, parts, skipped: skipped)
+        if merged.answers.count < request.questions.count { merged.escalate = true }
+        return merged
+    }
+
+    private static func ineligibleReason(_ stage: any DecisionEngine, for request: SystemOneRequest) -> String? {
+        if request.hasPerceivedContent == true, !stage.sharesPerceived {
+            return "stage does not accept perceived state"
+        }
+        if request.media?.isEmpty == false, request.hasPerceivedContent != true, !stage.acceptsMedia {
+            return "stage does not accept media"
+        }
+        return nil
     }
 
     static func milliseconds(since start: ContinuousClock.Instant) -> Int {

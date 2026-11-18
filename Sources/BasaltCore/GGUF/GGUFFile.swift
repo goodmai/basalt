@@ -45,6 +45,25 @@ public struct GGUFTensor: Sendable, Equatable {
     public var count: Int { dims.reduce(1, *) }
     public var rowLength: Int { dims.first ?? 0 }
     public var byteCount: Int { count / type.block.elements * type.block.bytes }
+
+    func validatedEnd(in fileBytes: Int) -> Int? {
+        guard !dims.isEmpty, offset >= 0 else { return nil }
+        var total = 1
+        for dim in dims {
+            guard dim > 0 else { return nil }
+            let (prod, overflow) = total.multipliedReportingOverflow(by: dim)
+            guard !overflow else { return nil }
+            total = prod
+        }
+        let block = type.block
+        guard total % block.elements == 0 else { return nil }
+        let blocks = total / block.elements
+        let (bytes, bytesOverflow) = blocks.multipliedReportingOverflow(by: block.bytes)
+        guard !bytesOverflow else { return nil }
+        let (end, endOverflow) = offset.addingReportingOverflow(bytes)
+        guard !endOverflow, end <= fileBytes else { return nil }
+        return end
+    }
 }
 
 public enum GGUFValue: Sendable, Equatable {
@@ -81,13 +100,36 @@ public struct GGUFFile: Sendable {
         for _ in 0 ..< keyCount { metadata[try reader.string()] = try reader.value(type: try reader.u32()) }
         var infos: [(name: String, type: GGMLType, dims: [Int], offset: Int)] = []
         for _ in 0 ..< tensorCount { infos.append(try reader.tensorInfo()) }
-        let alignment = metadata["general.alignment"].flatMap { if case .uint(let value) = $0 { Int(value) } else { nil } } ?? 32
-        let start = (reader.position + alignment - 1) / alignment * alignment
-        let tensors = infos.map { GGUFTensor(name: $0.name, type: $0.type, dims: $0.dims, offset: start + $0.offset) }
-        for tensor in tensors where tensor.offset + tensor.byteCount > data.count || tensor.count % tensor.type.block.elements != 0 {
-            throw .modelConfigurationInvalid(path: url.path, reason: "tensor \(tensor.name) does not fit the file or its blocks")
+        let alignment = try Self.validatedAlignment(metadata["general.alignment"], path: url.path)
+        let (padded, padOverflow) = reader.position.addingReportingOverflow(alignment - 1)
+        guard !padOverflow else {
+            throw .modelConfigurationInvalid(path: url.path, reason: "GGUF header alignment overflows file bounds")
+        }
+        let start = (padded / alignment) * alignment
+        var tensors: [GGUFTensor] = []
+        tensors.reserveCapacity(infos.count)
+        for info in infos {
+            let (absOffset, offOverflow) = start.addingReportingOverflow(info.offset)
+            guard !offOverflow else {
+                throw .modelConfigurationInvalid(path: url.path, reason: "tensor \(info.name) offset overflows file bounds")
+            }
+            let tensor = GGUFTensor(name: info.name, type: info.type, dims: info.dims, offset: absOffset)
+            guard tensor.validatedEnd(in: data.count) != nil else {
+                throw .modelConfigurationInvalid(path: url.path, reason: "tensor \(tensor.name) does not fit the file or its blocks")
+            }
+            tensors.append(tensor)
         }
         (self.url, self.version, self.metadata, self.tensors, self.data) = (url, version, metadata, tensors, data)
+    }
+
+    private static func validatedAlignment(_ raw: GGUFValue?, path: String) throws(BasaltError) -> Int {
+        guard let raw else { return 32 }
+        guard case .uint(let value) = raw, let align = Int(exactly: value),
+              align > 0, align <= (1 << 20), (align & (align - 1)) == 0
+        else {
+            throw .modelConfigurationInvalid(path: path, reason: "invalid GGUF general.alignment")
+        }
+        return align
     }
 
     public func tensor(_ name: String) -> GGUFTensor? { tensors.first { $0.name == name } }
@@ -135,7 +177,7 @@ struct GGUFReader {
         String(decoding: try bytes(try count()), as: UTF8.self)
     }
 
-    mutating func value(type: UInt32) throws(BasaltError) -> GGUFValue {
+    mutating func value(type: UInt32, depth: Int = 0) throws(BasaltError) -> GGUFValue {
         switch type {
         case 0: .uint(UInt64(try integer(UInt8.self)))
         case 1: .int(Int64(try integer(Int8.self)))
@@ -146,7 +188,7 @@ struct GGUFReader {
         case 6: .float(Double(Float(bitPattern: try integer(UInt32.self))))
         case 7: .bool(try integer(UInt8.self) != 0)
         case 8: .string(try string())
-        case 9: try array()
+        case 9: try array(depth: depth + 1)
         case 10: .uint(try integer(UInt64.self))
         case 11: .int(try integer(Int64.self))
         case 12: .float(Double(bitPattern: try integer(UInt64.self)))
@@ -154,10 +196,15 @@ struct GGUFReader {
         }
     }
 
-    mutating func array() throws(BasaltError) -> GGUFValue {
+    mutating func array(depth: Int) throws(BasaltError) -> GGUFValue {
+        guard depth <= 4 else { throw .modelConfigurationInvalid(path: path, reason: "nested GGUF metadata array exceeds depth 4") }
         let (type, count) = (try u32(), try count())
+        guard count <= data.count - position else {
+            throw .modelConfigurationInvalid(path: path, reason: "the GGUF header is truncated")
+        }
         var values: [GGUFValue] = []
-        for _ in 0 ..< count { values.append(try value(type: type)) }
+        values.reserveCapacity(min(count, 4096))
+        for _ in 0 ..< count { values.append(try value(type: type, depth: depth)) }
         return .array(values)
     }
 
@@ -171,6 +218,9 @@ struct GGUFReader {
         guard let type = GGMLType(rawValue: raw) else {
             throw .modelConfigurationInvalid(path: path, reason: "tensor \(name) has GGML type \(raw), which basalt does not dequantize")
         }
-        return (name, type, dims, Int(try integer(UInt64.self)))
+        guard let offset = Int(exactly: try integer(UInt64.self)), offset >= 0 else {
+            throw .modelConfigurationInvalid(path: path, reason: "tensor \(name) has an invalid byte offset")
+        }
+        return (name, type, dims, offset)
     }
 }

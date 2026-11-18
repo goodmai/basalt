@@ -7,10 +7,14 @@ enum MiddleKeys {
 
     init(precision: KVPrecision, groupSize: Int, headDim: Int) {
         if let rotated = precision.polarRotated, rotated > 0, rotated <= headDim {
-            self = .polar(PolarKeyRows(rotated: rotated, restBits: precision.keyBits, groupSize: groupSize, headDim: headDim))
-        } else {
-            self = .affine(ZonedKVCache.QuantizedRows(bits: precision.keyBits, groupSize: groupSize))
+            let restDim = headDim - rotated
+            let restGroup = restDim == 0 ? groupSize : KVCacheGeometry.quantizedGroupSize(keyDim: restDim, valueDim: restDim)
+            if let restGroup {
+                self = .polar(PolarKeyRows(rotated: rotated, restBits: precision.keyBits, groupSize: restGroup, headDim: headDim))
+                return
+            }
         }
+        self = .affine(ZonedKVCache.QuantizedRows(bits: precision.keyBits, groupSize: groupSize))
     }
 
     var count: Int {

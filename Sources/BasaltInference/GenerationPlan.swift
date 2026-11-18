@@ -32,6 +32,7 @@ struct GenerationPlan: Equatable, Sendable {
         var speculativeLookup = false
         var capabilities = ModelCapabilities.unrestricted
         var adapter: String?
+        var polarRotated: Int?
     }
 
     struct Facts: Sendable {
@@ -75,7 +76,10 @@ struct GenerationPlan: Equatable, Sendable {
 
     static func make(_ request: GenerationRequest, _ settings: Settings, _ facts: Facts) -> GenerationPlan {
         let capabilities = settings.capabilities
-        let precision = request.kvPrecision ?? settings.kvPrecision
+        let rawPrecision = request.kvPrecision ?? settings.kvPrecision
+        let precision = rawPrecision?.isPolar == true
+            ? rawPrecision?.resolvingPolar(rotated: settings.polarRotated ?? 0)
+            : rawPrecision
         var plan = cache(precision: precision, settings)
         let tokensOnly = !facts.carriesMoreThanTokens
         plan.speculativeLookup = tokensOnly && capabilities.allows(.speculativeLookup) && (request.speculativeLookup ?? settings.speculativeLookup)
