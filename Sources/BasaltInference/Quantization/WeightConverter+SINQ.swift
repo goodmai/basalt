@@ -13,7 +13,7 @@ struct SINQStreamInputs {
 extension WeightConverter {
     @discardableResult
     package func runWithSINQ(source: URL, output: URL, calibrationText: String? = nil) async throws -> Summary {
-        guard recipe == .asinq else { return try run(source: source, output: output) }
+        guard recipe == .asinq || recipe == .moeRW else { return try run(source: source, output: output) }
         try Self.checkOutput(output, source: source)
         let configURL = source.appending(component: "config.json")
         guard let config = ModelCache.config(at: source) else {
@@ -34,8 +34,10 @@ extension WeightConverter {
             bitPlan = made
         }
         let groups = SINQAbsorption.discoverGroups(keys: Set(layout.shardOf.keys))
+        let resolvedCal = (calibrationText?.isEmpty == false ? calibrationText : nil)
+            ?? (recipe == .moeRW ? MultilingualMoECalibrationCorpus.defaultText : nil)
         let calibrated = try await SINQAbsorption.captureActivationRMS(
-            source: source, groups: groups, calibrationText: calibrationText)
+            source: source, groups: groups, calibrationText: resolvedCal)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         do {
             try converter.copySidecars(from: source, to: output, config: config)
@@ -44,6 +46,11 @@ extension WeightConverter {
                 activationRMS: calibrated.rmsByNorm, calibrationTokens: calibrated.tokens)
             var (summary, _) = try converter.streamWithSINQ(layout, inputs: inInfo, to: output)
             summary.plan = bitPlan
+            if recipe == .moeRW {
+                _ = try await UniversalModelConverter.refineStandardDirectoryWithMoERW(
+                    output: output, teacher: source, calibrationText: resolvedCal)
+                summary.bytesAfter = Int(UniversalSourceReader.directoryWeightBytes(output))
+            }
             return summary
         } catch {
             try? FileManager.default.removeItem(at: output)

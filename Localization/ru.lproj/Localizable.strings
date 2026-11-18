@@ -248,6 +248,7 @@
 "MACaQ (Hadamard + Flip)" = "MACaQ (Адамар + Flip)";
 "FlatQuant (Kronecker P1⊗P2)" = "FlatQuant (Кронекер P1⊗P2)";
 "LIRQuant (Givens Subspace)" = "LIRQuant (подпространство Гивенса)";
+"MACaQ MoE (Router-Weighted)" = "MACaQ MoE (взвешенный роутером)";
 "Standard Affine" = "Стандартный Affine";
 "OCP MXFP4" = "OCP MXFP4";
 "NF4 NormalFloat" = "NF4 NormalFloat";
@@ -290,6 +291,8 @@
 "FP16" = "FP16";
 "SINQ" = "SINQ";
 "A-SINQ" = "A-SINQ";
+"MoE-RW" = "MoE-RW";
+"MoE-RW (Router-Weighted Hessian)" = "MoE-RW (гессиан с весами роутера)";
 "RTN" = "RTN";
 "local/model-name" = "local/имя-модели";
 

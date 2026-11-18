@@ -7,6 +7,7 @@ package enum SINQRecipe: String, Sendable, CaseIterable, Codable {
     case rtn
     case sinq
     case asinq = "a-sinq"
+    case moeRW = "moe-rw"
 }
 
 package struct SINQConfig: Sendable, Equatable {

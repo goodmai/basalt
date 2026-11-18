@@ -259,7 +259,7 @@ extension UniversalModelConverter {
             return (1, 0)
         case .affine, .mixed, .mxfp4, .nf4:
             return try await encodeSINQTarget(request: request, workingSource: workingSource, outputURL: outputURL)
-        case .macaqAffine, .macaqMXFP4, .flatQuant, .lirQuant, .qtip, .qtipBudget, .gsqRCO:
+        case .macaqAffine, .macaqMXFP4, .macaqMoEBudget, .flatQuant, .lirQuant, .qtip, .qtipBudget, .gsqRCO:
             return try await encodeCalibratedTarget(
                 request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
         }
@@ -302,14 +302,25 @@ extension UniversalModelConverter {
         var cfg = MACaQConfig()
         if let blk = request.hadamardBlock { cfg.hadamardBlock = blk }
         if let alpha = request.alpha { cfg.alpha = alpha }
+        let isMoERW = request.recipe?.lowercased() == SINQRecipe.moeRW.rawValue
         switch request.target {
         case .macaqAffine(let b, let g):
+            if isMoERW {
+                return try await encodeMACaQWithMoERWDirectory(
+                    request: request, workingSource: workingSource, outputURL: outputURL,
+                    targetMode: .affine(bits: b, groupSize: g), onProgress: onProgress)
+            }
             let res = try await MACaQRefiner.convertDirectory(
                 source: workingSource, output: outputURL, targetMode: .affine(bits: b, groupSize: g),
                 calibrationText: request.calibrationText, config: cfg
             ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
             return (res.shards, Int64(res.bytesAfter))
         case .macaqMXFP4:
+            if isMoERW {
+                return try await encodeMACaQWithMoERWDirectory(
+                    request: request, workingSource: workingSource, outputURL: outputURL,
+                    targetMode: .mxfp4, onProgress: onProgress)
+            }
             let res = try await MACaQRefiner.convertDirectory(
                 source: workingSource, output: outputURL, targetMode: .mxfp4,
                 calibrationText: request.calibrationText, config: cfg
@@ -321,6 +332,23 @@ extension UniversalModelConverter {
                 calibrationText: request.calibrationText, alpha: request.alpha
             ) { onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: $0)) }
             return (res.shards, Int64(res.bytesAfter))
+        case .macaqMoEBudget(let bpw):
+            return try await encodeMoERWBudgetDirectory(
+                request: request, workingSource: workingSource, outputURL: outputURL,
+                targetBPW: bpw, onProgress: onProgress)
+        default:
+            return try await encodeTrellisOrGSQTarget(
+                request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
+        }
+    }
+
+    private static func encodeTrellisOrGSQTarget(
+        request: ModelConversionRequest,
+        workingSource: URL,
+        outputURL: URL,
+        onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
+    ) async throws -> (shards: Int, bytesAfter: Int64) {
+        switch request.target {
         case .qtip(let bpw):
             guard let rate = QTIPRate(bpw: bpw) else {
                 throw BasaltError.invalidRequestStructure(details: "convert: invalid QTIP bpw \(bpw)")
