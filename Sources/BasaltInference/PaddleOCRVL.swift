@@ -70,7 +70,7 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
         return languageModel.model(embeddings, cache: cache, rotary: rotary)
     }
 
-    func logits(_ tokens: MLXArray, cache: [KVCache]?, delta: Int) -> MLXArray {
+    func logits(_ tokens: MLXArray, cache: [KVCache]?, delta: MLXArray?) -> MLXArray {
         let ids = tokens.ndim == 1 ? tokens[.newAxis] : tokens
         let positions = PaddleOCRVLText.positions(after: cache?.first, delta: delta, batch: ids.dim(0), length: ids.dim(1))
         return languageModel.lmHead(hidden(languageModel.model.embedTokens(ids), cache: cache, positions: positions))
@@ -100,11 +100,10 @@ final class PaddleOCRVL: Module, VLMModel, KVCacheDimensionProvider {
     }
 
     func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
-        let delta = state?[Self.ropeDelta].map { Int($0.item(Int32.self)) } ?? 0
-        return LMOutput(logits: logits(input.tokens, cache: cache, delta: delta), state: state)
+        return LMOutput(logits: logits(input.tokens, cache: cache, delta: state?[Self.ropeDelta]), state: state)
     }
 
     func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        logits(inputs, cache: cache, delta: 0)
+        logits(inputs, cache: cache, delta: nil)
     }
 }

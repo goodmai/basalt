@@ -40,7 +40,8 @@ struct PipelineController: Sendable {
             case (let encoded?, nil):
                 attachments.append(try PipelineAttachment(kind: attachment.kind, encoded: encoded, format: attachment.format))
             case (nil, let path?):
-                let file = try MCPImages.read(path, allowedIn: imageDirectories)
+                let limit = attachment.kind == "audio" ? AudioClip.maxBytes : OCRDocument.maxBytes
+                let file = try MCPImages.read(path, allowedIn: imageDirectories, maxBytes: limit)
                 attachments.append(try PipelineAttachment(kind: attachment.kind, data: file.data, format: attachment.format ?? file.url.pathExtension))
             default:
                 throw .invalidRequestStructure(details: "pipeline: each attachment needs exactly one of data (base64) and path (MCP, inside a serve --image-dir directory)")

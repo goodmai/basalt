@@ -85,8 +85,12 @@ extension MLXInferenceEngine {
                 longerThan: promptCaches.storedPrefix(of: prompt, in: namespace), maxBytes: promptCaches.byteBudget)
         else { return }
         let started = ContinuousClock.now
+        guard let disk = promptCacheDisk else { return }
         do {
-            guard let cache = try promptCacheDisk?.load(hit.entry, layout: layout) else { return }
+            let cache = try await container.performEvaluating(nonSendable: ()) { _, _ in
+                try disk.load(hit.entry, layout: layout)
+            }
+            guard epoch == modelEpoch else { return }
             promptCaches.store(namespace, tokens: Array(hit.entry.tokens.prefix(hit.usable)), cache: cache)
             let seconds = (ContinuousClock.now - started).inSeconds
             logger.info(String(
@@ -101,25 +105,43 @@ extension MLXInferenceEngine {
 
     public func persistPromptCache(within deadline: Duration) async {
         guard let writeRate = promptCacheDisk?.assumedWriteBytesPerSecond, let fingerprint = modelFingerprint else { return }
+        let epoch = modelEpoch
+        let currentContainer = container
+        let description = modelDescription
         let started = ContinuousClock.now
         var written: Set<String> = []
         var skipped = 0
         for path in promptCaches.storedPathsByRecency() {
-            guard let lease = promptCaches.lease(path.namespace, for: path.tokens + [0], countsAccess: false) else { continue }
+            guard epoch == modelEpoch, let disk = promptCacheDisk,
+                  let lease = promptCaches.lease(path.namespace, for: path.tokens + [0], countsAccess: false) else { continue }
             let tokens = Array(path.tokens.prefix(lease.reusedTokens))
             guard !tokens.isEmpty else { continue }
-            let alreadyOnDisk = promptCacheDisk?.has(fingerprint: fingerprint, namespace: path.namespace, tokens: tokens) == true
+            let alreadyOnDisk = disk.has(fingerprint: fingerprint, namespace: path.namespace, tokens: tokens)
             let expectedWrite = alreadyOnDisk ? 0 : Double(PromptCacheDiskStore.estimatedBytes(of: lease.cache, tokens: tokens.count))
                 / writeRate
             guard ContinuousClock.now - started + .seconds(expectedWrite) <= deadline else {
                 skipped += 1
                 continue
             }
-            if let name = promptCacheDisk?.store(
-                fingerprint: fingerprint, model: modelDescription, namespace: path.namespace,
-                tokens: tokens, cache: lease.cache, keeping: written) {
-                written.insert(name)
+            let kept = written
+            let stored: (PromptCacheDiskStore, String?)
+            if let currentContainer {
+                stored = await currentContainer.performEvaluating(nonSendable: (disk, lease.cache)) { _, pair in
+                    var copy = pair.0
+                    let name = copy.store(
+                        fingerprint: fingerprint, model: description, namespace: path.namespace,
+                        tokens: tokens, cache: pair.1, keeping: kept)
+                    return (copy, name)
+                }
+            } else {
+                var copy = disk
+                let name = copy.store(
+                    fingerprint: fingerprint, model: description, namespace: path.namespace,
+                    tokens: tokens, cache: lease.cache, keeping: kept)
+                stored = (copy, name)
             }
+            if epoch == modelEpoch { promptCacheDisk = stored.0 }
+            if let name = stored.1 { written.insert(name) }
         }
         logger.info("Persisted \(written.count) prompt-cache paths in \(String(format: "%.2f", (ContinuousClock.now - started).inSeconds)) s"
             + (skipped > 0 ? "; \(skipped) paths skipped that could not be written within the \(deadline) deadline" : ""))

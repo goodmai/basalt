@@ -21,7 +21,8 @@ public struct AudioClip: Sendable, Equatable {
     public var seconds: Double { Double(samples.count) / Self.sampleRate }
 
     static func tooLong(_ seconds: Double) -> BasaltError {
-        .invalidRequestStructure(details: "the audio lasts \(Int(seconds)) s, over the limit of \(Int(maxSeconds)) s per request")
+        let reported = seconds.isFinite ? Int(min(max(seconds, 0), Double(Int.max - 1))) : Int(maxSeconds) + 1
+        return .invalidRequestStructure(details: "the audio lasts \(reported) s, over the limit of \(Int(maxSeconds)) s per request")
     }
 
     public static func checkedExtension(_ format: String) throws(BasaltError) -> String {

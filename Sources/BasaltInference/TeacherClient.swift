@@ -112,13 +112,18 @@ struct TeacherClient: Sendable {
     func retrying<Reply>(_ request: URLRequest, _ decode: (Data) -> Reply?) async throws(BasaltError) -> Reply {
         var attempt = 0
         while true {
+            if Task.isCancelled { throw .cancelled }
             let (status, data, wait) = try await send(request)
             if status == 200, let reply = decode(data) { return reply }
             attempt += 1
             guard status == 429 || status >= 500 || status == 0, attempt <= Self.retries else {
                 throw .inferenceError("the teacher at \(request.url?.absoluteString ?? endpoint.absoluteString) returned HTTP \(status) without a valid \(provider.rawValue) reply after \(attempt) attempts")
             }
-            try? await Task.sleep(for: .seconds(Self.delay(attempt: attempt, advised: wait)))
+            do {
+                try await Task.sleep(for: .seconds(Self.delay(attempt: attempt, advised: wait)))
+            } catch {
+                throw .cancelled
+            }
         }
     }
 
@@ -157,8 +162,11 @@ struct TeacherClient: Sendable {
                 .flatMap { Double($0.trimmingCharacters(in: CharacterSet(charactersIn: "s "))) }
             return (http?.statusCode ?? 0, data, advised)
         } catch is CancellationError {
-            throw .inferenceError("the teacher call was cancelled")
+            throw .cancelled
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw .cancelled
         } catch {
+            if Task.isCancelled { throw .cancelled }
             return (0, Data(), nil)
         }
     }

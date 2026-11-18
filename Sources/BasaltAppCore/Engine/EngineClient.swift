@@ -130,6 +130,7 @@ extension EngineClient {
             }
             pending.removeAll(keepingCapacity: true)
         }
+        throw Task.isCancelled ? EngineError.cancelled : EngineError.transport("chat stream ended before [DONE]")
     }
 
     static func check(_ response: URLResponse, _ data: Data) throws(EngineError) {

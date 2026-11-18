@@ -328,7 +328,8 @@ extension SessionLogWriter {
     func session(for request: GenerationRequest) -> String {
         if let explicit = Self.sanitized(request.sessionId) { return explicit }
         guard let messages = request.messages, !messages.isEmpty else { return defaultSession }
-        return state.conversations.session(continuing: SessionConversations.digests(messages))
+        let hasAssistant = messages.contains { $0.role == .assistant }
+        return state.conversations.session(continuing: SessionConversations.digests(messages), hasAssistantTurn: hasAssistant)
             ?? "s-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased()
     }
 
@@ -432,6 +433,10 @@ extension SessionLogWriter {
 
     private func handle(for session: String) -> Int32? {
         if let fd = state.handles[session] { return fd }
+        while state.handles.count >= SessionLogState.maxOpenHandles, let oldest = state.oldestOpenSession() {
+            state = SessionLogState.reduce(state, .suspended(session: oldest.session, at: clock()))
+            Darwin.close(oldest.fd)
+        }
         guard let folder = folder(for: session) else { return nil }
         let path = folder.appendingPathComponent("\(session).jsonl").path
         let isNew = !FileManager.default.fileExists(atPath: path)
@@ -470,7 +475,11 @@ extension SessionLogWriter {
 
     private func fail(_ reason: String) {
         guard !state.disabled else { return }
+        flushTask?.cancel()
+        flushTask = nil
+        let fds = Array(state.handles.values)
         state = SessionLogState.reduce(state, .failed)
+        for fd in fds { Darwin.close(fd) }
         BasaltLogger(module: "SessionLog").warn("Session log disabled until restart: \(reason)")
     }
 }

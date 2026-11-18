@@ -12,6 +12,9 @@ struct SystemOneController: Sendable {
         _ engine: any DecisionEngine, _ request: SystemOneRequest, log: SessionLogWriter?, origin: RequestOrigin, sessionId: String?,
         telemetry: TelemetryTracker? = nil
     ) async throws(BasaltError) -> SystemOneResponse {
+        if request.media?.isEmpty == false, !engine.acceptsMedia {
+            throw .invalidRequestStructure(details: "media needs a decision model that reads images, audio, video and PDFs, such as --decision-model cloud:gemini/gemini-decision-1")
+        }
         let start = ContinuousClock.now
         let response = try await engine.decide(request)
         let elapsed = ContinuousClock.now - start
@@ -19,6 +22,17 @@ struct SystemOneController: Sendable {
         await log?.logDecision(origin: origin, sessionId: sessionId, request: request, response: response, latencyMs: latency)
         await telemetry?.recordDecision(response, latencyMs: latency)
         return response
+    }
+
+    private static func jsonBool(_ value: Any?) -> Bool? {
+        guard let num = value as? NSNumber, CFGetTypeID(num) == CFBooleanGetTypeID() else { return nil }
+        return num.boolValue
+    }
+
+    private static func jsonDouble(_ value: Any?) -> Double? {
+        guard let num = value as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID() else { return nil }
+        let d = num.doubleValue
+        return d.isFinite ? d : nil
     }
 
     static func request(from data: Data) -> SystemOneRequest? {
@@ -36,10 +50,14 @@ struct SystemOneController: Sendable {
         } else {
             return nil
         }
+        if let rawCal = root["calibrated"], !(rawCal is NSNull), jsonBool(rawCal) == nil { return nil }
+        if let rawAbstain = root["abstain_below"], !(rawAbstain is NSNull), jsonDouble(rawAbstain) == nil { return nil }
+        if let rawMargin = root["min_margin"], !(rawMargin is NSNull), jsonDouble(rawMargin) == nil { return nil }
         guard let media = Self.media(root["media"]) else { return nil }
+        if let media, media.count > PipelineRequest.maxAttachments { return nil }
         var request = SystemOneRequest(
-            state: text, questions: decoded, calibrated: root["calibrated"] as? Bool,
-            abstainBelow: (root["abstain_below"] as? NSNumber)?.doubleValue, minMargin: (root["min_margin"] as? NSNumber)?.doubleValue)
+            state: text, questions: decoded, calibrated: jsonBool(root["calibrated"]),
+            abstainBelow: jsonDouble(root["abstain_below"]), minMargin: jsonDouble(root["min_margin"]))
         request.media = media
         return request
     }

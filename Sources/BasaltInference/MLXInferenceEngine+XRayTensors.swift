@@ -4,47 +4,85 @@ import MLXLMCommon
 import BasaltCore
 
 struct WeightView {
+    enum Spec {
+        case standard(layer: any Quantized, scales: MLXArray, biases: MLXArray?, globalScale: MLXArray?)
+        case nf4(groupSize: Int, scales: MLXArray)
+
+        var bits: Int {
+            switch self {
+            case .standard(let layer, _, _, _): layer.bits
+            case .nf4: 4
+            }
+        }
+
+        var dtypeLabel: String {
+            switch self {
+            case .standard(let layer, _, _, _): "\(layer.bits)-bit \(layer.mode.rawValue) g\(layer.groupSize)"
+            case .nf4(let groupSize, _): "4-bit nf4 g\(groupSize)"
+            }
+        }
+    }
+
     let name: String
     let array: MLXArray
-    let quantization: (layer: any Quantized, scales: MLXArray, biases: MLXArray?, globalScale: MLXArray?)?
+    let quantization: Spec?
 
     static func all(in model: Module) -> [WeightView] {
-        let layers = Dictionary(
-            model.namedModules().compactMap { path, module in (module as? any Quantized).map { (path, $0) } },
-            uniquingKeysWith: { first, _ in first })
+        var layers: [String: any Quantized] = [:]
+        var nf4GroupSizes: [String: Int] = [:]
+        for (path, module) in model.namedModules() {
+            if let q = module as? any Quantized {
+                layers[path] = q
+            } else if let nf4 = module as? NF4Linear {
+                nf4GroupSizes[path] = nf4.groupSize
+            } else if let nf4s = module as? NF4SwitchLinear {
+                nf4GroupSizes[path] = nf4s.groupSize
+            }
+        }
         let parameters = model.parameters().flattened()
         let byName = Dictionary(parameters, uniquingKeysWith: { first, _ in first })
         return parameters.map { name, array in
             let path = String(name.dropLast(".weight".count))
-            guard name.hasSuffix(".weight"), let layer = layers[path], let scales = byName[path + ".scales"] else {
+            guard name.hasSuffix(".weight"), let scales = byName[path + ".scales"] else {
                 return WeightView(name: name, array: array, quantization: nil)
             }
-            return WeightView(
-                name: name, array: array,
-                quantization: (layer, scales, byName[path + ".biases"], byName[path + ".global_scale"]))
+            if let layer = layers[path] {
+                return WeightView(
+                    name: name, array: array,
+                    quantization: .standard(layer: layer, scales: scales, biases: byName[path + ".biases"], globalScale: byName[path + ".global_scale"]))
+            }
+            if let groupSize = nf4GroupSizes[path] {
+                return WeightView(name: name, array: array, quantization: .nf4(groupSize: groupSize, scales: scales))
+            }
+            return WeightView(name: name, array: array, quantization: nil)
         }
     }
 
     var shape: [Int] {
-        guard let layer = quantization?.layer, let last = array.shape.indices.last else { return array.shape }
+        guard let quantization, let last = array.shape.indices.last else { return array.shape }
         var shape = array.shape
-        shape[last] = shape[last] * 32 / layer.bits
+        shape[last] = (shape[last] * 32) / quantization.bits
         return shape
     }
 
     var extent: [Int] { shape.isEmpty ? [1] : shape }
 
     var info: TensorInfo {
-        let dtype = quantization.map { "\($0.layer.bits)-bit \($0.layer.mode.rawValue) g\($0.layer.groupSize)" } ?? "\(array.dtype)"
+        let dtype = quantization?.dtypeLabel ?? "\(array.dtype)"
         return TensorInfo(name: name, shape: shape, dtype: dtype, quantized: quantization != nil)
     }
 
     func rows(_ range: Range<Int>) -> MLXArray {
         guard let quantization else { return (array.ndim == 0 ? array.reshaped(1) : array)[range] }
-        return dequantized(
-            array[range], scales: quantization.scales[range], biases: quantization.biases?[range],
-            groupSize: quantization.layer.groupSize, bits: quantization.layer.bits, mode: quantization.layer.mode,
-            globalScale: quantization.globalScale)
+        switch quantization {
+        case .standard(let layer, let scales, let biases, let globalScale):
+            return dequantized(
+                array[range], scales: scales[range], biases: biases?[range],
+                groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode,
+                globalScale: globalScale)
+        case .nf4(let groupSize, let scales):
+            return NF4Metal.dequantized(array[range], scales: scales[range], groupSize: groupSize)
+        }
     }
 }
 

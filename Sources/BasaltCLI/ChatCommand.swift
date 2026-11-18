@@ -69,7 +69,11 @@ struct ChatCommand: AsyncParsableCommand {
         Self.logger.trace("ChatCommand started.")
         let (sessionId, history) = try startingSession()
         let writer = ServeCommand.sessionLogWriter(mode: sessionLog, directory: sessionLogDir, defaultSession: sessionId)
-        defer { if writer != nil { print("Resume with: basalt chat --resume \(sessionId)") } }
+        defer {
+            await withTaskCancellationShield {
+                await writer?.close()
+            }
+        }
 
         let orchestrator = try await loadedOrchestrator(sessionLog: writer)
 
@@ -78,15 +82,13 @@ struct ChatCommand: AsyncParsableCommand {
             return
         }
 
+        defer { if writer != nil { fputs("Resume with: basalt chat --resume \(sessionId)\n", stderr) } }
         log("Model ready. Type 'exit' or 'quit' to stop.")
         print("\n--- Basalt Chat ---")
 
         let controller = ChatController(orchestrator: orchestrator, maxTokens: maxTokens, sessionId: sessionId, history: history)
         await controller.start()
         await orchestrator.shutdown()
-
-        let terminal = TerminalManager()
-        await terminal.disableRawMode()
         print("Goodbye!")
     }
 

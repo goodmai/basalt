@@ -107,8 +107,20 @@ struct SessionConversations: Sendable {
         return messages.map { SHA256.hash(data: (try? encoder.encode($0)) ?? Data($0.text.utf8)) }
     }
 
-    func session(continuing digests: [SHA256.Digest]) -> String? {
-        recent.first { _, entries in entries.contains { digests.starts(with: $0.digests) } }?.key
+    func session(continuing digests: [SHA256.Digest], hasAssistantTurn: Bool = true) -> String? {
+        var best: (session: String, length: Int)?
+        for (session, entries) in recent {
+            guard let match = entries.filter({
+                $0.digests.count > 0
+                    && $0.digests.count <= digests.count
+                    && ($0.digests.count == digests.count || $0.digests.count >= 2 || hasAssistantTurn)
+                    && digests.starts(with: $0.digests)
+            }).map(\.digests.count).max() else { continue }
+            if best.map({ match > $0.length || (match == $0.length && session < $0.session) }) ?? true {
+                best = (session, match)
+            }
+        }
+        return best?.session
     }
 
     func knows(_ session: String) -> Bool {
@@ -204,6 +216,9 @@ struct SessionLogState: Sendable {
         case failed
     }
 
+    static let maxOpenHandles = 64
+    static let maxTrackedSessions = 4_096
+
     var pending: [(session: String, line: Data)] = []
     var dropped = 0
     var disabled = false
@@ -212,6 +227,14 @@ struct SessionLogState: Sendable {
     var activity = SessionActivity()
     var requestSessions: [String: String] = [:]
     var resumedPaths: [String: URL] = [:]
+
+    func oldestOpenSession() -> (session: String, fd: Int32)? {
+        handles.min { lhs, rhs in
+            let l = activity.lastActivity[lhs.key] ?? .distantPast
+            let r = activity.lastActivity[rhs.key] ?? .distantPast
+            return l != r ? l < r : lhs.key < rhs.key
+        }.map { ($0.key, $0.value) }
+    }
 
     func checkInvariants(after previous: SessionLogState) -> [String] {
         disabled && !pending.isEmpty ? ["a disabled log buffers \(pending.count) lines"] : []
@@ -224,6 +247,9 @@ struct SessionLogState: Sendable {
             next.requestSessions[id] = session
             next.activity.begin(session, at: now)
         case .resumed(let session, let url, let seed):
+            if next.resumedPaths[session] == nil, next.resumedPaths.count >= Self.maxTrackedSessions {
+                next.resumedPaths.removeAll()
+            }
             next.resumedPaths[session] = url
             if let seed { next.conversations.seed(session, with: seed) }
         case .remembered(let id, let session, let digests):
@@ -248,6 +274,7 @@ struct SessionLogState: Sendable {
         case .failed:
             next.disabled = true
             next.pending.removeAll()
+            next.handles.removeAll()
         }
         return next
     }

@@ -12,6 +12,7 @@ enum MCPImages {
             try ImageInput.checkCount(entries.count)
             var images: [ImageInput] = []
             for entry in entries { images.append(try image(entry, allowedIn: directories)) }
+            try ImageInput.checkLimits(images)
             return images
         } catch {
             throw MCPFailure(error)
@@ -27,16 +28,23 @@ enum MCPImages {
     }
 
     static func file(_ path: String, allowedIn directories: [URL]) throws(BasaltError) -> ImageInput {
-        let (target, data) = try read(path, allowedIn: directories)
+        let (target, data) = try read(path, allowedIn: directories, maxBytes: ImageInput.maxBytes)
         return try ImageInput(data: data, mime: UTType(filenameExtension: target.pathExtension)?.preferredMIMEType ?? target.pathExtension)
     }
 
-    static func read(_ path: String, allowedIn directories: [URL]) throws(BasaltError) -> (url: URL, data: Data) {
+    static func read(_ path: String, allowedIn directories: [URL], maxBytes: Int = OCRDocument.maxBytes) throws(BasaltError) -> (url: URL, data: Data) {
         let target = resolved(URL(fileURLWithPath: path))
         guard directories.contains(where: { contains($0, target) }) else {
             throw .invalidRequestStructure(details: "the image path \(path) is not inside a directory given with serve --image-dir")
         }
-        guard let data = try? Data(contentsOf: target, options: .mappedIfSafe) else {
+        guard let values = try? target.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true else {
+            throw .invalidRequestStructure(details: "the image at \(path) cannot be read")
+        }
+        if let size = values.fileSize, size > maxBytes {
+            throw .invalidRequestStructure(details: "the file at \(path) of \(size) bytes is over the limit of \(maxBytes >> 20) MB")
+        }
+        guard let data = try? Data(contentsOf: target, options: .mappedIfSafe), data.count <= maxBytes else {
             throw .invalidRequestStructure(details: "the image at \(path) cannot be read")
         }
         return (target, data)

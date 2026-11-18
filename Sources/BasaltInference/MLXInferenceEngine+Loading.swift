@@ -149,7 +149,11 @@ extension MLXInferenceEngine {
             try faults.check(.load)
             if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadContainer(from: directory)
-            try await loaded.perform { try PrismHadamard.prepareLoaded($0.model); SmallMQuantizedLinear.installIfEnabled(in: $0.model) }
+            let smallM = configuration.smallMKernel
+            try await loaded.perform {
+                try PrismHadamard.prepareLoaded($0.model)
+                SmallMQuantizedLinear.installIfEnabled(in: $0.model, enabled: smallM)
+            }
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
@@ -167,7 +171,7 @@ extension MLXInferenceEngine {
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             learnPolarGeometry(ModelCache.config(at: directory), epoch: epoch)
             await probeKVZones()
-            await wireWorkingSet()
+            await wireWorkingSet(epoch: epoch)
             await probeKVHeads(directory: directory)
             await probeQuest()
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
@@ -388,11 +392,16 @@ extension MLXInferenceEngine {
         setenv("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", "1000", 0)
     }
 
-    func wireWorkingSet() async {
+    func wireWorkingSet(epoch: ModelEpoch? = nil) async {
+        let expected = epoch ?? modelEpoch
         await releaseWiredMemory()
         guard configuration.wiresWorkingSet else { return }
         let ticket = WiredMemoryTicket(size: Int(PromptCacheBudget.gpuWorkingSet().rawValue), policy: WiredMaxPolicy(), kind: .active)
         let applied = await ticket.start()
+        guard expected == modelEpoch else {
+            _ = await ticket.end()
+            return
+        }
         wiredTicket = ticket
         logger.info("Wired memory limit: \(applied >> 20) MB, Metal's recommended working set, while the model is loaded (--no-wired-limit leaves the system default)")
     }

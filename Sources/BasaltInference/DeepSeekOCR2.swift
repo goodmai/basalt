@@ -66,8 +66,11 @@ struct DeepSeekOCR2Configuration: Codable, Sendable {
     func validated() throws(BasaltError) -> Self {
         let reasons = text.unsupported + [
             projector.type != "linear" ? "projector \(projector.type)" : nil,
+            encoder.dim <= 0 || encoder.attentionHeads <= 0 || encoder.keyValueHeads <= 0 || encoder.layers < 0
+                ? "non-positive encoder dimensions or heads" : nil,
             projector.inputDim != encoder.dim ? "a projector input of \(projector.inputDim) after a \(encoder.dim)-wide encoder" : nil,
-            encoder.dim % encoder.attentionHeads != 0 || encoder.attentionHeads % encoder.keyValueHeads != 0
+            encoder.attentionHeads > 0 && encoder.keyValueHeads > 0
+                && (encoder.dim % encoder.attentionHeads != 0 || encoder.attentionHeads % encoder.keyValueHeads != 0)
                 ? "an encoder of width \(encoder.dim) with \(encoder.attentionHeads) heads and \(encoder.keyValueHeads) key-value heads" : nil,
         ].compactMap { $0 }
         guard reasons.isEmpty else {

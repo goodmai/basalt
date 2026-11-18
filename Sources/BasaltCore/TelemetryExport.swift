@@ -15,9 +15,10 @@ public enum TelemetryExport {
     private static func appendMetric(
         _ name: String, _ type: String, _ help: String, _ samples: [(labels: String, value: Double)], into lines: inout [String]
     ) {
-        guard !samples.isEmpty else { return }
+        let finite = samples.filter { $0.value.isFinite }
+        guard !finite.isEmpty else { return }
         lines += ["# TYPE basalt_\(name) \(type)", "# HELP basalt_\(name) \(help)"]
-        lines += samples.filter { $0.value.isFinite }.map {
+        lines += finite.map {
             "basalt_\(name)\($0.labels.isEmpty ? "" : "{\($0.labels)}") \(value($0.value))"
         }
     }

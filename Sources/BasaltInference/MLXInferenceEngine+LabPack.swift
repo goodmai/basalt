@@ -5,6 +5,12 @@ import MLXLMCommon
 import BasaltCore
 
 struct PackedLayer: Sendable {
+    enum Kind: Sendable {
+        case dense
+        case quantized(QuantizationMode)
+        case nf4
+    }
+
     let path: String
     let weight: MaterializedArray
     let bias: MaterializedArray?
@@ -13,28 +19,55 @@ struct PackedLayer: Sendable {
     let globalScale: MaterializedArray?
     let groupSize: Int
     let bits: Int
-    let mode: QuantizationMode
+    let kind: Kind
 
     init(path: String, layer: Linear) {
-        let quantized = layer as? QuantizedLinear
         self.path = path
         weight = materialize(layer.weight)
         bias = layer.bias.map { materialize($0) }
-        scales = quantized.map { materialize($0.scales) }
-        biases = quantized?.biases.map { materialize($0) }
-        globalScale = quantized?.globalScale.map { materialize($0) }
-        groupSize = quantized?.groupSize ?? 0
-        bits = quantized?.bits ?? 0
-        mode = quantized?.mode ?? .affine
+        if let nf4 = layer as? NF4Linear {
+            scales = materialize(nf4.scales)
+            biases = nil
+            globalScale = nil
+            groupSize = nf4.groupSize
+            bits = 4
+            kind = .nf4
+        } else if let quantized = layer as? QuantizedLinear {
+            scales = materialize(quantized.scales)
+            biases = quantized.biases.map { materialize($0) }
+            globalScale = quantized.globalScale.map { materialize($0) }
+            groupSize = quantized.groupSize
+            bits = quantized.bits
+            kind = .quantized(quantized.mode)
+        } else {
+            scales = nil
+            biases = nil
+            globalScale = nil
+            groupSize = 0
+            bits = 0
+            kind = .dense
+        }
     }
 
     var layer: Linear {
         func live(_ array: MaterializedArray?) -> MLXArray? { array.map { $0.reshaped($0.shape) } }
         let packed = self.weight.reshaped(self.weight.shape)
-        guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
-        return QuantizedLinear(
-            weight: packed, bias: live(bias), scales: scales, biases: live(biases), groupSize: groupSize, bits: bits, mode: mode,
-            globalScale: live(globalScale))
+        switch kind {
+        case .dense:
+            return Linear(weight: packed, bias: live(bias))
+        case .nf4:
+            guard let scales = live(self.scales),
+                  let restored = try? NF4Linear(weight: packed, bias: live(bias), scales: scales, groupSize: groupSize)
+            else {
+                return Linear(weight: packed, bias: live(bias))
+            }
+            return restored
+        case .quantized(let mode):
+            guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
+            return QuantizedLinear(
+                weight: packed, bias: live(bias), scales: scales, biases: live(biases), groupSize: groupSize, bits: bits, mode: mode,
+                globalScale: live(globalScale))
+        }
     }
 
     func restore(in model: Module) throws(BasaltError) {
@@ -92,9 +125,11 @@ enum TensorPacker {
         }
         let path = String(name.dropLast(".weight".count))
         let module = name.hasSuffix(".weight") ? model.namedModules().first(where: { $0.0 == path })?.1 : nil
-        guard let layer = module as? Linear, type(of: layer) == Linear.self || type(of: layer) == QuantizedLinear.self else {
+        guard let layer = module as? Linear,
+              type(of: layer) == Linear.self || type(of: layer) == QuantizedLinear.self || type(of: layer) == NF4Linear.self
+        else {
             let owner = module.map { " (its module is a \(type(of: $0)))" } ?? ""
-            throw refused("\(name) is not the weight of a Linear or QuantizedLinear layer\(owner); a pack swaps one whole linear layer")
+            throw refused("\(name) is not the weight of a Linear, QuantizedLinear or NF4Linear layer\(owner); a pack swaps one whole linear layer")
         }
         return (path, layer)
     }

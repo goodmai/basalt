@@ -140,7 +140,7 @@ public actor CloudAPIClient: Sendable {
         self.requestCount += 1
         
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let decoder = JSONDecoder()
                     for try await line in result.lines {
@@ -150,7 +150,6 @@ public actor CloudAPIClient: Sendable {
                             continuation.finish()
                             return
                         }
-                        
                         guard let data = dataString.data(using: .utf8) else { continue }
                         let decoded = try decoder.decode(T.self, from: data)
                         continuation.yield(decoded)
@@ -160,6 +159,7 @@ public actor CloudAPIClient: Sendable {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 

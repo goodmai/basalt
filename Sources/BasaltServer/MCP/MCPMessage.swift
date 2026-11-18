@@ -92,6 +92,7 @@ struct MCPFailure: Error, Sendable, Equatable {
 enum MCPRoute: Sendable {
     case failed(id: JSONRPCId?, MCPFailure)
     case ignored
+    case ping(id: JSONRPCId?)
     case initialize(id: JSONRPCId?)
     case toolsList(id: JSONRPCId?)
     case toolsCall(id: JSONRPCId?, params: AnyCodable?)
@@ -103,12 +104,20 @@ enum MCPRoute: Sendable {
             self = .failed(id: nil, .parseError)
             return
         }
-        switch message.method {
-        case nil, "notifications/initialized", "initialized": self = .ignored
+        guard let method = message.method else {
+            self = .ignored
+            return
+        }
+        if message.id == nil || method.hasPrefix("notifications/") || method == "initialized" {
+            self = .ignored
+            return
+        }
+        switch method {
+        case "ping": self = .ping(id: message.id)
         case "initialize": self = .initialize(id: message.id)
         case "tools/list": self = .toolsList(id: message.id)
         case "tools/call": self = .toolsCall(id: message.id, params: message.params)
-        case let method?: self = .failed(id: message.id, .methodNotFound("Method not found: \(method)"))
+        default: self = .failed(id: message.id, .methodNotFound("Method not found: \(method)"))
         }
     }
 }
@@ -168,6 +177,10 @@ enum AnyCodable: Sendable, Codable {
     case null
 
     init(_ rawValue: Any) {
+        if let n = rawValue as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() {
+            self = .bool(n.boolValue)
+            return
+        }
         switch rawValue {
         case let i as Int:           self = .int(i)
         case let d as Double:        self = .double(d)

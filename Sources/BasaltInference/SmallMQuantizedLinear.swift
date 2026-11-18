@@ -3,12 +3,6 @@ import MLX
 import MLXNN
 import BasaltCore
 
-extension MLXInferenceEngine {
-    public static func enablesSmallMKernel() {
-        setenv(SmallMQuantizedMatmul.environmentKey, "1", 1)
-    }
-}
-
 enum SmallMQuantizedMatmul {
     static let environmentKey = "BASALT_SMALLM_KERNEL"
     static let rows = 4 ... 8
@@ -134,8 +128,8 @@ final class SmallMQuantizedLinear: QuantizedLinear {
 
     static let logger = BasaltLogger(module: "SmallMQuantizedLinear")
 
-    static func installIfEnabled(in model: Module) {
-        guard SmallMQuantizedMatmul.enabled else { return }
+    static func installIfEnabled(in model: Module, enabled: Bool = false) {
+        guard enabled || SmallMQuantizedMatmul.enabled else { return }
         logger.info("Experimental small-M kernel (#208): \(install(in: model)) 4-bit affine linear layers run 4-8 rows through it, the rest stay on stock quantizedMatmul")
     }
 

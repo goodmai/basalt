@@ -50,20 +50,37 @@ public struct TelemetryWindows: Sendable, Equatable {
     public func window(seconds: Int, now: Date) -> TelemetryWindow {
         let since = now.addingTimeInterval(-Double(seconds))
         let recent = samples.filter { $0.at >= since && $0.at <= now }
-        let prompt = recent.reduce(0) { $0 + $1.promptTokens }
-        let drafts = recent.reduce(0) { $0 + $1.draftTokens }
+        var (tokens, prompt, cached, drafts, accepted) = (0, 0, 0, 0, 0)
+        var ttfts: [Double] = []
+        var speeds: [Double] = []
+        ttfts.reserveCapacity(recent.count)
+        speeds.reserveCapacity(recent.count)
+        for sample in recent {
+            tokens += sample.completionTokens
+            prompt += sample.promptTokens
+            cached += sample.cachedPromptTokens
+            drafts += sample.draftTokens
+            accepted += sample.acceptedDraftTokens
+            if sample.ttft.isFinite { ttfts.append(sample.ttft) }
+            if sample.tokensPerSecond.isFinite { speeds.append(sample.tokensPerSecond) }
+        }
+        ttfts.sort()
+        speeds.sort()
         return TelemetryWindow(
-            seconds: seconds, requests: recent.count, tokens: recent.reduce(0) { $0 + $1.completionTokens },
-            ttftP50: Self.percentile(recent.map(\.ttft), 0.5), ttftP95: Self.percentile(recent.map(\.ttft), 0.95),
-            tokensPerSecondP50: Self.percentile(recent.map(\.tokensPerSecond), 0.5), tokensPerSecondP95: Self.percentile(recent.map(\.tokensPerSecond), 0.95),
-            promptCacheHitRatio: prompt > 0 ? Double(recent.reduce(0) { $0 + $1.cachedPromptTokens }) / Double(prompt) : nil,
-            draftAcceptance: drafts > 0 ? Double(recent.reduce(0) { $0 + $1.acceptedDraftTokens }) / Double(drafts) : nil)
+            seconds: seconds, requests: recent.count, tokens: tokens,
+            ttftP50: Self.sortedPercentile(ttfts, 0.5), ttftP95: Self.sortedPercentile(ttfts, 0.95),
+            tokensPerSecondP50: Self.sortedPercentile(speeds, 0.5), tokensPerSecondP95: Self.sortedPercentile(speeds, 0.95),
+            promptCacheHitRatio: prompt > 0 ? Double(cached) / Double(prompt) : nil,
+            draftAcceptance: drafts > 0 ? Double(accepted) / Double(drafts) : nil)
     }
 
     public func windows(now: Date) -> [TelemetryWindow] { Self.spans.map { window(seconds: $0, now: now) } }
 
     public static func percentile(_ values: [Double], _ quantile: Double) -> Double? {
-        let sorted = values.filter(\.isFinite).sorted()
+        sortedPercentile(values.filter(\.isFinite).sorted(), quantile)
+    }
+
+    private static func sortedPercentile(_ sorted: [Double], _ quantile: Double) -> Double? {
         guard !sorted.isEmpty else { return nil }
         let rank = Int((quantile * Double(sorted.count - 1)).rounded(.up))
         return sorted[min(max(rank, 0), sorted.count - 1)]
@@ -84,8 +101,8 @@ public struct DecisionTelemetry: Codable, Sendable, Equatable {
 
     public mutating func record(_ response: SystemOneResponse, latencyMs: Double) {
         requests += 1
-        self.latencyMs += latencyMs
-        cost += response.usage.cost ?? 0
+        if latencyMs.isFinite, latencyMs >= 0 { self.latencyMs += latencyMs }
+        if let c = response.usage.cost, c.isFinite, c >= 0 { cost += c }
         if response.escalate { escalations += 1 }
         for answer in response.answers.values {
             answer.abstain == true ? (abstains += 1) : (answers += 1)

@@ -28,12 +28,27 @@ extension MCPServer {
     }
 
     func pipeline(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let name = try MCPArguments.string("pipeline", in: args) ?? ComposeSpec.defaultPipeline
         guard let args, JSONSerialization.isValidJSONObject(args), let data = try? JSONSerialization.data(withJSONObject: args) else {
             throw .invalidParams("basalt_pipeline needs an object of attachments, text, questions, task and pages")
         }
+        let runner: PipelineRunner
+        if let pipelines {
+            guard let system = await pipelines.system(name) else {
+                throw .invalidParams("no pipeline named \(name)")
+            }
+            runner = PipelineRunner(chat: orchestrator, decisions: system.decisions, stages: system.stages)
+        } else {
+            guard name == ComposeSpec.defaultPipeline else {
+                throw .invalidParams("no pipeline named \(name)")
+            }
+            runner = PipelineRunner(chat: orchestrator, decisions: decisions, stages: pipeline)
+        }
         do throws(BasaltError) {
-            let request = try PipelineController.request(from: data, imageDirectories: imageDirectories, defaultQuestions: pipeline.questions)
-            let runner = PipelineRunner(chat: orchestrator, decisions: decisions, stages: pipeline)
+            let request = try PipelineController.request(from: data, imageDirectories: imageDirectories, defaultQuestions: runner.stages.questions)
+            if let missing = await runner.missingStage(request) {
+                throw .invalidRequestStructure(details: missing)
+            }
             return .json(try await runner.run(request, origin: RequestOrigin(source: "mcp", endpoint: "basalt_pipeline", stream: false), sessionId: nil))
         } catch {
             throw MCPFailure(error)
@@ -64,5 +79,6 @@ extension MCPToolCatalog {
             "questions": ["type": "object", "description": "Map of question ID → {type: noul|choice|score, instructions, criteria}, as for basalt_systemone_decide"],
             "task": ["type": "string", "description": "A free-form task for the chat model, with the perceived text as context"],
             "pages": ["type": "string", "description": "PDF pages to read, such as 1-3,5 (default: all)"],
+            "pipeline": ["type": "string", "description": "Named compose pipeline (default: default)"],
         ]))
 }

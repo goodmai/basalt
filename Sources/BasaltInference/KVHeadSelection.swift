@@ -94,10 +94,14 @@ enum KVHeadClassifier {
 extension KVHeadClassifier {
     static func select(model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, ratio: Double, length: Int = 3072) throws -> KVHeadSelection {
         let references = try calibrationDepths.enumerated().map { seed, depths in
-            try reference(model, probe(tokenizer: tokenizer, length: length, depths: depths, seed: seed))
+            try Task.checkCancellation()
+            return try reference(model, probe(tokenizer: tokenizer, length: length, depths: depths, seed: seed))
         }
         let heads = attentionHeads(references[0].dense)
-        let retrieval = greedy(heads: heads, keep: kept(heads, ratio: ratio)) { divergence(model, references[0], $0).total }
+        let retrieval = try greedy(heads: heads, keep: kept(heads, ratio: ratio)) {
+            try Task.checkCancellation()
+            return divergence(model, references[0], $0).total
+        }
         let gates = references.map { divergence(model, $0, retrieval) }
         return KVHeadSelection(
             mask: KVHeadMask(retrieval: retrieval), meanKL: worst(gates.map(\.mean)),
@@ -180,14 +184,16 @@ extension KVHeadClassifier {
         directory: URL, container: ModelContainer, ratio: Double, starting: @Sendable (Int) -> Void = { _ in }
     ) async throws -> KVHeadSelection {
         let url = storedSelection(for: directory, ratio: ratio)
-        let heads = try await container.perform { try attentionHeads(model: $0.model) }
+        let heads = try await container.performEvaluating(nonSendable: ()) { context, _ in try attentionHeads(model: context.model) }
         if let data = try? Data(contentsOf: url), let stored = try? JSONDecoder().decode(KVHeadSelection.self, from: data), stored.fits(heads) {
             return stored
         }
         let trials = plannedTrials(heads: heads.reduce(0, +), keep: kept(heads, ratio: ratio))
         guard trials <= maxTrials else { throw KVHeadSelectionOverBudget(trials: trials) }
         starting(trials)
-        let selection = try await container.perform { try select(model: $0.model, tokenizer: $0.tokenizer, ratio: ratio) }
+        let selection = try await container.performEvaluating(nonSendable: ()) { context, _ in
+            try select(model: context.model, tokenizer: context.tokenizer, ratio: ratio)
+        }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(selection).write(to: url, options: .atomic)
         return selection
