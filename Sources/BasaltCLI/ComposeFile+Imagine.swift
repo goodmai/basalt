@@ -30,6 +30,7 @@ extension ComposeFile.Walk {
             steps: integer(field["steps"], "\(path).steps"),
             size: text(field["size"], "\(path).size")
         )
+        stage.decoderVia = text(field["decoder_via"], "\(path).decoder_via")
         stage.teacacheThreshold = number(field["teacache_threshold"], "\(path).teacache_threshold")
         stage.previewEverySteps = integer(field["preview_every_steps"], "\(path).preview_every_steps")
         stage.candidates = integer(field["candidates"], "\(path).candidates")

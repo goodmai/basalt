@@ -159,8 +159,8 @@ pipeline:
 - **`exaggeration`:** expressive prosody control in `0.0...2.0` where supported.
 - **`max_ttfa_ms`:** maximum first-audio latency budget before routing down the fallback chain.
 
-### Imagine (`#517`)
-A pipeline may declare an optional `imagine` stage to synthesize or edit images on Apple Silicon with shared text-encoder reuse, prompt upsampling, TeaCache step skipping, and best-of-N VLM judging:
+### Imagine (`#517`, `#539`)
+A pipeline may declare an optional `imagine` stage to synthesize or edit images on Apple Silicon across up to four explicit stages (`upsample_via` rewriter -> `share_encoder` text/vision encoder -> `chain` DiT painter -> `decoder_via` latent VAE decoder), plus TeaCache step skipping and best-of-N VLM judging:
 
 ```yaml
 pipeline:
@@ -168,7 +168,8 @@ pipeline:
   imagine:
     chain: [z_turbo, sana_fast]
     upsample_via: chat
-    share_encoder: chat
+    share_encoder: encoder
+    decoder_via: vae
     steps: 8
     size: 1024x1024
     format: png
@@ -181,8 +182,9 @@ pipeline:
 
 - **`imagine`:** accepts a single generator name (`imagine: z_turbo`), a fallback list (`imagine: [z_turbo, sana_fast]`), or the full mapping.
 - **`chain`:** ordered local image synthesizers (`FLUX.2/3-klein`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5`, `Ming-Image`, `Bonsai-4B`, `Step1X-Edit`, `SonicDiffusion`).
-- **`upsample_via`:** local LLM slot used to expand terse prompts into rich visual descriptions before synthesis.
-- **`share_encoder`:** resident local LLM/VLM slot whose text encoder embeddings are reused instead of loading a duplicate encoder.
+- **`upsample_via`:** local LLM/VLM rewriter slot used to expand terse prompts into rich scene captions before synthesis (uses BFL's full scene-caption prompt convention when targeting `FLUX.3`).
+- **`share_encoder`:** local LLM/VLM slot (such as `Qwen3-VL-4B-Instruct` in 4-bit, 8-bit, or BF16) whose conditioning embeddings drive the image synthesizer.
+- **`decoder_via`:** optional local latent VAE decoder slot (such as distilled `black-forest-labs/FLUX.2-small-decoder` or full `unsloth/FLUX.2-VAE` / `Felldude/FLUX.2-HDR-VAE`).
 - **`steps`:** default denoising step count in `1...100`.
 - **`size`:** default output resolution `<width>x<height>` (multiples of 16, e.g. `1024x1024` or `2048x2048`).
 - **`format`:** output image format (`png`, `webp`, or `jpeg`).
@@ -191,6 +193,8 @@ pipeline:
 - **`candidates`:** number of seeded candidate images (`1...64`) synthesized for best-of-N selection.
 - **`judge_via`:** local VLM/LLM slot that scores `candidates` against the prompt and returns the winning artifact.
 - **`on_gpu_busy`:** `queue` or `fallback` when Metal is busy decoding.
+
+Bundled 4-stage `FLUX.3` presets (`basalt compose up <preset>`): `flux3-16gb-fast`, `flux3-24gb-balanced`, `flux3-36gb-moe-vision`, `flux3-64gb-studio-base`, and `flux3-128gb-reference`.
 
 ### Version 2: variables and profiles
 `version: 2` adds two blocks, so that one file serves several Macs. A version 1 file keeps working; using either block in it is refused with "needs version: 2".

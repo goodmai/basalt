@@ -11,6 +11,7 @@ package struct ImageDiTConfig: Sendable, Codable, Equatable {
     package var latentChannels: Int
     package var patchSize: Int
     package var vaeScale: Int
+    package var decoderBaseChannels: Int
     package var textEmbedDim: Int
     package var quantizationBits: Int
     package var initSeed: UInt64
@@ -35,6 +36,7 @@ package struct ImageDiTConfig: Sendable, Codable, Equatable {
         self.latentChannels = max(4, latentChannels)
         self.patchSize = max(1, patchSize)
         self.vaeScale = 8
+        self.decoderBaseChannels = 24
         self.textEmbedDim = 256
         self.quantizationBits = 8
         self.initSeed = 517
@@ -426,6 +428,7 @@ final class TernaryBitNetLinear: Module {
 final class PatchVAECodec: Module {
     let latentChannels: Int
     let baseChannels: Int
+    let decoderChannels: Int
     @ModuleInfo(key: "enc_in") var encIn: Conv2d
     @ModuleInfo(key: "enc_down1") var encDown1: Conv2d
     @ModuleInfo(key: "enc_down2") var encDown2: Conv2d
@@ -436,20 +439,22 @@ final class PatchVAECodec: Module {
     @ModuleInfo(key: "dec_up3") var decUp3: Conv2d
     @ModuleInfo(key: "dec_rgba") var decRGBA: Conv2d
 
-    init(latentChannels: Int = 16, baseChannels: Int = 24) {
+    init(latentChannels: Int = 16, baseChannels: Int = 24, decoderChannels: Int? = nil) {
         let lat = max(4, latentChannels)
         let ch = max(16, baseChannels)
+        let decCh = max(12, decoderChannels ?? ch)
         self.latentChannels = lat
         self.baseChannels = ch
+        self.decoderChannels = decCh
         self._encIn.wrappedValue = Conv2d(inputChannels: 4, outputChannels: ch, kernelSize: 3, padding: 1)
         self._encDown1.wrappedValue = Conv2d(inputChannels: ch, outputChannels: ch, kernelSize: 3, stride: 2, padding: 1)
         self._encDown2.wrappedValue = Conv2d(inputChannels: ch, outputChannels: ch, kernelSize: 3, stride: 2, padding: 1)
         self._encDown3.wrappedValue = Conv2d(inputChannels: ch, outputChannels: lat, kernelSize: 3, stride: 2, padding: 1)
-        self._decIn.wrappedValue = Conv2d(inputChannels: lat, outputChannels: ch, kernelSize: 3, padding: 1)
-        self._decUp1.wrappedValue = Conv2d(inputChannels: ch, outputChannels: ch, kernelSize: 3, padding: 1)
-        self._decUp2.wrappedValue = Conv2d(inputChannels: ch, outputChannels: ch, kernelSize: 3, padding: 1)
-        self._decUp3.wrappedValue = Conv2d(inputChannels: ch, outputChannels: ch, kernelSize: 3, padding: 1)
-        self._decRGBA.wrappedValue = Conv2d(inputChannels: ch, outputChannels: 4, kernelSize: 3, padding: 1)
+        self._decIn.wrappedValue = Conv2d(inputChannels: lat, outputChannels: decCh, kernelSize: 3, padding: 1)
+        self._decUp1.wrappedValue = Conv2d(inputChannels: decCh, outputChannels: decCh, kernelSize: 3, padding: 1)
+        self._decUp2.wrappedValue = Conv2d(inputChannels: decCh, outputChannels: decCh, kernelSize: 3, padding: 1)
+        self._decUp3.wrappedValue = Conv2d(inputChannels: decCh, outputChannels: decCh, kernelSize: 3, padding: 1)
+        self._decRGBA.wrappedValue = Conv2d(inputChannels: decCh, outputChannels: 4, kernelSize: 3, padding: 1)
     }
 
     func encode(_ image: MLXArray) -> MLXArray {

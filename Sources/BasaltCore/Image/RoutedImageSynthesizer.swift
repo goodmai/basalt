@@ -15,6 +15,7 @@ public struct RoutedImageSynthesizer: ImageSynthesizer {
         public var sharedEncoderModel: String?
         public var upsamplerModel: String?
         public var upsampler: (@Sendable (String) async throws -> String)?
+        public var decoderModel: String?
         public var judgeModel: String?
         public var candidateJudge: (@Sendable (String, [ImageCompletedArtifact]) async throws -> Int)?
         public var defaultCandidates: Int?
@@ -31,6 +32,7 @@ public struct RoutedImageSynthesizer: ImageSynthesizer {
             self.sharedEncoderModel = sharedEncoderModel
             self.upsamplerModel = upsamplerModel
             self.upsampler = upsampler
+            self.decoderModel = nil
             self.judgeModel = judgeModel
             self.candidateJudge = candidateJudge
             self.defaultCandidates = nil
@@ -74,6 +76,11 @@ public struct RoutedImageSynthesizer: ImageSynthesizer {
     public var judgeModel: String? {
         get { aux.judgeModel }
         set { aux.judgeModel = newValue }
+    }
+
+    public var decoderModel: String? {
+        get { aux.decoderModel }
+        set { aux.decoderModel = newValue }
     }
 
     public var candidateJudge: (@Sendable (String, [ImageCompletedArtifact]) async throws -> Int)? {
@@ -138,7 +145,7 @@ public struct RoutedImageSynthesizer: ImageSynthesizer {
                 continuation.finish()
             }
         }
-        return Self.streamWithFallback(request: enriched, chain: chain)
+        return Self.streamWithFallback(request: enriched, chain: chain, decoderModel: aux.decoderModel)
     }
 }
 
@@ -147,6 +154,7 @@ extension RoutedImageSynthesizer {
         var decision = base
         decision.sharedEncoderModel = aux.sharedEncoderModel
         decision.upsamplerModel = aux.upsamplerModel
+        decision.decoderModel = aux.decoderModel
         decision.judgeModel = aux.judgeModel
         return decision
     }
@@ -196,7 +204,7 @@ extension RoutedImageSynthesizer {
             single.stream = false
             single.config.previewEverySteps = 0
             single.config.seed = baseSeed &+ UInt64(index)
-            let artifact = try await Self.collectSingleArtifact(request: single, chain: chain)
+            let artifact = try await Self.collectSingleArtifact(request: single, chain: chain, decoderModel: aux.decoderModel)
             artifacts.append(artifact)
         }
         guard !artifacts.isEmpty else {
@@ -209,9 +217,10 @@ extension RoutedImageSynthesizer {
 
     private static func collectSingleArtifact(
         request: ImageGenerationRequest,
-        chain: [Entry]
+        chain: [Entry],
+        decoderModel: String?
     ) async throws -> ImageCompletedArtifact {
-        let stream = streamWithFallback(request: request, chain: chain)
+        let stream = streamWithFallback(request: request, chain: chain, decoderModel: decoderModel)
         var completed: ImageCompletedArtifact?
         for try await event in stream {
             if case .completed(let artifact) = event {
@@ -226,7 +235,8 @@ extension RoutedImageSynthesizer {
 
     private static func streamWithFallback(
         request: ImageGenerationRequest,
-        chain: [Entry]
+        chain: [Entry],
+        decoderModel: String?
     ) -> AsyncThrowingStream<ImageGenerationEvent, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -237,7 +247,7 @@ extension RoutedImageSynthesizer {
                         let inner = try await entry.synthesizer.generate(request)
                         for try await event in inner {
                             emittedFrame = true
-                            continuation.yield(annotated(event, upsampledPrompt: request.config.upsampledPrompt))
+                            continuation.yield(annotated(event, upsampledPrompt: request.config.upsampledPrompt, decoderModel: decoderModel))
                         }
                         continuation.finish()
                         return
@@ -255,10 +265,17 @@ extension RoutedImageSynthesizer {
         }
     }
 
-    private static func annotated(_ event: ImageGenerationEvent, upsampledPrompt: String?) -> ImageGenerationEvent {
+    private static func annotated(
+        _ event: ImageGenerationEvent,
+        upsampledPrompt: String?,
+        decoderModel: String?
+    ) -> ImageGenerationEvent {
         guard case .completed(var artifact) = event else { return event }
         if artifact.upsampledPrompt == nil {
             artifact.upsampledPrompt = upsampledPrompt
+        }
+        if artifact.decoderModel == nil {
+            artifact.decoderModel = decoderModel
         }
         return .completed(artifact)
     }

@@ -15,6 +15,7 @@ enum ComposeHeld: Sendable {
     case onDemandSpeaker(OnDemandSpeechSynthesizer)
     case imageGenerator(any ImageSynthesizer)
     case onDemandImageGenerator(OnDemandImageSynthesizer)
+    case imageDecoder(source: String, path: String)
 }
 
 struct ComposeStart: Sendable {
@@ -60,8 +61,11 @@ actor ComposeHost {
     }
 
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
-        held = startupHeld()
-        for name in spec.models.keys.sorted() where held[name] == nil { held[name] = try await load(name, in: spec) }
+        held = try await loadOrderedTargets(
+            Array(spec.models.keys.sorted()),
+            in: spec,
+            base: startupHeld()
+        )
         try await registerComposeAdapters(for: spec, held: held)
         try await ensureSelfDecider(spec)
         await applyExperimental(spec)
@@ -78,15 +82,16 @@ actor ComposeHost {
         return held
     }
 
-    func load(_ name: String, in spec: ComposeSpec) async throws -> ComposeHeld {
+    func load(_ name: String, in spec: ComposeSpec, visibleHeld: [String: ComposeHeld]? = nil) async throws -> ComposeHeld {
         guard let model = spec.models[name] else { throw ExitCode.failure }
         switch model.source {
         case .cloud(_, let id): return .cloud(id)
         case .local(let source):
             if spec.deciderModels.contains(name) { return try await loadDecider(name, source: source, model: model) }
             if spec.speakerModels.contains(name) { return try await loadSpeaker(name, source: source, model: model) }
+            if spec.imagineDecoderModels.contains(name) { return try await loadImageDecoder(name, source: source, model: model) }
             if spec.imageGeneratorModels.contains(name) {
-                return try await loadImageGenerator(name, source: source, model: model, in: spec)
+                return try await loadImageGenerator(name, source: source, model: model, in: spec, held: visibleHeld ?? held)
             }
             let path = try await services.resolve(source)
             if spec.views.contains(where: { $0.spec.ocr == name }), let refusal = ServeCommand.ocrRefusal(source, path: path) { throw BasaltError.invalidRequestStructure(details: refusal) }
@@ -139,10 +144,11 @@ actor ComposeHost {
         }
         var fresh: [String: ComposeHeld] = [:]
         do {
-            for name in diff.added + diff.reloaded { fresh[name] = try await load(name, in: next) }
             try await switchChat(diff, next)
+            let baseHeld = held.filter { diff.kept.contains($0.key) }.merging([next.answer: .resident(chat)]) { $1 }
+            fresh = try await loadNewTargets(diff.added + diff.reloaded, in: next, baseHeld: baseHeld)
             try await ensureSelfDecider(next)
-            let nextHeld = held.filter { diff.kept.contains($0.key) }.merging(fresh) { $1 }.merging([next.answer: .resident(chat)]) { $1 }
+            let nextHeld = baseHeld.merging(fresh) { $1 }
             try await registerComposeAdapters(for: next, held: nextHeld)
             let built = try await systems(for: next, held: nextHeld, defaultDecisions: nil)
             let previous = held
@@ -198,7 +204,7 @@ actor ComposeHost {
         case .speaker(let loaded): await loaded.synthesizer.unload()
         case .onDemandSpeaker(let speaker): await speaker.unload()
         case .onDemandImageGenerator(let generator): await generator.unload()
-        case .imageGenerator, .cloud, nil: break
+        case .imageGenerator, .imageDecoder, .cloud, nil: break
         }
     }
 }

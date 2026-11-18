@@ -32,7 +32,8 @@ extension ComposeSpec {
         let pairs: [(String, [String])] = [
             ("answer", answerModels), ("documents", documents), ("audio", audio),
             ("cascade", cascade), ("speak", speak?.chain ?? []),
-            ("imagine", imagineRoleNames), ("imagine_aux", imagineAuxRoleNames),
+            ("imagine", imagineRoleNames), ("imagine_decoder", imagineDecoderRoleNames),
+            ("imagine_aux", imagineAuxRoleNames),
         ]
         for (role, names) in pairs {
             for name in names where models[name] != nil { roles[name, default: []].insert(role) }
@@ -196,7 +197,7 @@ extension ComposeSpec {
     }
 
     var onDemandRoles: Set<String> {
-        deciderModels.union(speakerModels).union(imageGeneratorModels).union(imagineAuxModels)
+        deciderModels.union(speakerModels).union(imageGeneratorModels).union(imagineDecoderModels).union(imagineAuxModels)
     }
 
     var speakIssues: [Issue] {

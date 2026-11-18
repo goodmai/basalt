@@ -67,7 +67,7 @@ public enum ComposeSchema {
         ],
         "imagine": [
             Field("chain", .names), Field("upsample_via", .string), Field("share_encoder", .string),
-            Field("steps", .integer), Field("size", .string),
+            Field("decoder_via", .string), Field("steps", .integer), Field("size", .string),
             Field("format", .choice(ImageOutputFormat.allCases.map(\.rawValue))),
             Field("teacache_threshold", .number), Field("preview_every_steps", .integer),
             Field("candidates", .integer), Field("judge_via", .string),

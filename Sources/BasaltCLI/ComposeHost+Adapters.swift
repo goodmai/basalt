@@ -18,7 +18,7 @@ extension ComposeHost {
                 if await onDemand.model.isLoaded {
                     try await onDemand.model.loadAdapters(directories)
                 }
-            case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator:
+            case .cloud, .decision, .onDemandDecision, .speaker, .onDemandSpeaker, .imageGenerator, .onDemandImageGenerator, .imageDecoder:
                 break
             }
         }

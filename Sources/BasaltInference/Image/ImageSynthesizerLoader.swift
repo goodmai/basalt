@@ -5,31 +5,36 @@ public enum ImageSynthesizerLoader {
     public static func load(
         identifier: String,
         directory: URL,
-        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil
+        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil,
+        externalDecoderDirectory: URL? = nil
     ) async throws -> any ImageSynthesizer {
         try Task.checkCancellation()
         let (descriptor, _) = try ImageRunnerCore.parseDirectoryConfig(
             directory: directory,
-            identifier: identifier
+            identifier: identifier,
+            externalDecoderDirectory: externalDecoderDirectory
         )
         switch descriptor.family {
         case .fluxKlein, .flux3Klein, .fiboPerceiver:
             return try FluxKleinSynthesizer(
                 directory: directory,
                 identifier: identifier,
-                sharedTextEmbedder: sharedTextEmbedder
+                sharedTextEmbedder: sharedTextEmbedder,
+                externalDecoderDirectory: externalDecoderDirectory
             )
         case .s3DiT, .step1XReasonEdit:
             return try S3DiTSynthesizer(
                 directory: directory,
                 identifier: identifier,
-                sharedTextEmbedder: sharedTextEmbedder
+                sharedTextEmbedder: sharedTextEmbedder,
+                externalDecoderDirectory: externalDecoderDirectory
             )
         case .pixelDiT, .linearSana, .ternaryBitNet, .unifiedMoT, .audioToImage:
             return try PixelDiTSynthesizer(
                 directory: directory,
                 identifier: identifier,
-                sharedTextEmbedder: sharedTextEmbedder
+                sharedTextEmbedder: sharedTextEmbedder,
+                externalDecoderDirectory: externalDecoderDirectory
             )
         }
     }

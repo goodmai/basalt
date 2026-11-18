@@ -54,7 +54,7 @@ final class S3DiTModule: Module {
         let latCh = config.latentChannels
         self._textEncoder.wrappedValue = TextConditioningEncoder(hiddenDim: d, sharedInputDim: config.textEmbedDim)
         self._reasonAdapter.wrappedValue = Step1XReasonEditAdapter(dimensions: d)
-        self._vae.wrappedValue = PatchVAECodec(latentChannels: latCh)
+        self._vae.wrappedValue = PatchVAECodec(latentChannels: latCh, decoderChannels: config.decoderBaseChannels)
         self._patchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: IntOrPair(p), stride: IntOrPair(p))
         self._refPatchIn.wrappedValue = Conv2d(inputChannels: latCh, outputChannels: d, kernelSize: IntOrPair(p), stride: IntOrPair(p))
         self._probeAdaLN.wrappedValue = AdaLNZeroModulation(dimensions: d)
@@ -157,11 +157,13 @@ public actor S3DiTSynthesizer: ImageStepRunner {
     public init(
         directory: URL,
         identifier: String,
-        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil
+        sharedTextEmbedder: (@Sendable (String) async throws -> [Float])? = nil,
+        externalDecoderDirectory: URL? = nil
     ) throws(BasaltError) {
         let (resolvedDesc, resolvedCfg) = try ImageRunnerCore.parseDirectoryConfig(
             directory: directory,
-            identifier: identifier
+            identifier: identifier,
+            externalDecoderDirectory: externalDecoderDirectory
         )
         self.modelIdentifier = identifier
         self.descriptor = resolvedDesc
@@ -172,6 +174,9 @@ public actor S3DiTSynthesizer: ImageStepRunner {
             S3DiTModule(config: resolvedCfg, useReasonAdapter: useReason)
         }
         try ImageRunnerCore.loadSafetensorsIfPresent(in: directory, into: built)
+        if let externalDecoderDirectory {
+            try ImageRunnerCore.loadSafetensorsIfPresent(in: externalDecoderDirectory, into: built.vae)
+        }
         eval(built)
         self.module = built
     }

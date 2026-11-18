@@ -67,7 +67,7 @@ public enum ComposeProfileCatalog {
     ]
 
     public static var bundledYAML: [String: String] {
-        var map = legacyYAML
+        var map = legacyYAML.merging(flux3YAML) { _, new in new }
         for profile in profiles {
             map[profile.id] = profile.yaml
             for alias in profile.tier.aliases {
