@@ -335,7 +335,7 @@ package enum MACaQNativeLoader {
         model.invalidateCompiledTraces()
     }
 
-    private static func installUntouchedQuantized(
+    static func installUntouchedQuantized(
         perLayer: BaseConfiguration.PerLayerQuantization,
         scaleKeys: Set<String>,
         in model: Module
@@ -354,7 +354,7 @@ package enum MACaQNativeLoader {
         model.invalidateCompiledTraces()
     }
 
-    private static func swapChild(
+    static func swapChild(
         path: String,
         replacement: Module,
         named: [String: Module],
@@ -376,7 +376,7 @@ package enum MACaQNativeLoader {
         }
     }
 
-    private static func safetensorsScaleKeys(in directory: URL) -> Set<String> {
+    static func safetensorsScaleKeys(in directory: URL) -> Set<String> {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return [] }
         var out: Set<String> = []

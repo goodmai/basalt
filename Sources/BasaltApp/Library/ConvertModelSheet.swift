@@ -104,6 +104,16 @@ public struct ConvertModelSheet: View {
                 Text("64").tag(64)
             }
             .pickerStyle(.segmented)
+        case .flatQuant:
+            bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
+        case .lirQuant:
+            bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
+            Picker("Vulnerable Subspace", selection: binding(draft, \.lirSubspaceDim, refreshOutput: true)) {
+                Text("64").tag(64)
+                Text("128").tag(128)
+                Text("256").tag(256)
+            }
+            .pickerStyle(.segmented)
         case .affine:
             bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 5, 6, 8])
             recipePicker(draft)

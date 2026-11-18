@@ -24,6 +24,10 @@ extension MLXInferenceEngine {
             logger.info("Experimental MACaQ native weights: \(directory.lastPathComponent) runs fused Hadamard + channel-balanced low-bit decode on basalt's Metal kernels")
             return macaq
         }
+        if let basis = try await BasisTransformNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
+            logger.info("Experimental FlatQuant/LIRQuant native weights: \(directory.lastPathComponent) runs Kronecker/Givens prologue decode on basalt's Metal kernels")
+            return basis
+        }
         if let qtip = try await QTIPNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental QTIP native weights: \(directory.lastPathComponent) runs bitshift trellis blocks on basalt's Metal decode kernel")
             return qtip

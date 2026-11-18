@@ -100,6 +100,22 @@ package enum FlatQuantKernels {
             )[0]
             return out.reshaped(x.shape)
         }
+        return differentiableTransform(x, p1: p1, p2: p2, clipBounds: clipBounds)
+    }
+
+    package static func differentiableTransform(
+        _ x: MLXArray,
+        p1: MLXArray,
+        p2: MLXArray,
+        clipBounds: MLXArray? = nil
+    ) -> MLXArray {
+        let origType = x.dtype
+        let d1 = p1.dim(0)
+        let d2 = p2.dim(0)
+        let k = d1 * d2
+        guard x.ndim >= 1, x.dim(-1) == k else { return x }
+        let rows = x.size / max(1, k)
+        guard rows > 0 else { return x }
         let mat = x.asType(.float32).reshaped(rows, d1, d2)
         let left = matmul(transposed(mat, axes: [0, 2, 1]), p1.asType(.float32))
         var prod = matmul(transposed(left, axes: [0, 2, 1]), p2.asType(.float32)).reshaped(x.shape)
@@ -108,6 +124,57 @@ package enum FlatQuantKernels {
             prod = clip(prod, min: b[0], max: b[1])
         }
         return prod.asType(origType)
+    }
+}
+
+package struct FlatQuantLayerSpec: Codable, Sendable, Equatable {
+    package var bits: Int
+    package var groupSize: Int
+    package var mode: String
+    package var d1: Int
+    package var d2: Int
+    package var hasClipBounds: Bool
+    package var hasRowScale: Bool
+    package var scaleDType: String?
+    package var hasBias: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case bits
+        case groupSize = "group_size"
+        case mode, d1, d2
+        case hasClipBounds = "has_clip_bounds"
+        case hasRowScale = "has_row_scale"
+        case scaleDType = "scale_dtype"
+        case hasBias = "has_bias"
+    }
+
+    package init(
+        bits: Int,
+        groupSize: Int,
+        mode: QuantizationMode,
+        d1: Int,
+        d2: Int,
+        hasClipBounds: Bool = false
+    ) {
+        self.bits = bits
+        self.groupSize = groupSize
+        self.mode = mode.rawValue
+        self.d1 = d1
+        self.d2 = d2
+        self.hasClipBounds = hasClipBounds
+        self.hasRowScale = false
+    }
+
+    package var quantizationMode: QuantizationMode {
+        QuantizationMode(rawValue: mode) ?? .affine
+    }
+
+    package var resolvedScaleDType: DType {
+        if quantizationMode == .mxfp4 { return .uint8 }
+        if let scaleDType, let match = DType.allCases.first(where: { "\($0)" == scaleDType }) {
+            return match
+        }
+        return .bfloat16
     }
 }
 
@@ -159,8 +226,32 @@ package final class FlatQuantLinear: QuantizedLinear {
         freeze()
     }
 
+    package static func placeholder(replacing linear: Linear, spec: FlatQuantLayerSpec) -> FlatQuantLinear {
+        let (outputs, inputs) = linear.shape
+        let groups = inputs / spec.groupSize
+        let qMode = spec.quantizationMode
+        let sType = spec.resolvedScaleDType
+        let factorType: DType = sType.isFloatingPoint ? sType : .bfloat16
+        let weight = MLXArray.zeros([outputs, (inputs * spec.bits) / 32], dtype: .uint32)
+        let scales = MLXArray.zeros([outputs, groups], dtype: sType)
+        let biases = qMode == .affine ? MLXArray.zeros([outputs, groups], dtype: sType) : nil
+        let hasBias = spec.hasBias ?? (linear.bias != nil)
+        let bias = hasBias ? (linear.bias ?? MLXArray.zeros([outputs], dtype: factorType)) : nil
+        let basis = FlatQuantBasis(
+            p1: eye(spec.d1, dtype: factorType),
+            p2: eye(spec.d2, dtype: factorType),
+            clipBounds: spec.hasClipBounds ? MLXArray([Float(-1e9), Float(1e9)]) : nil,
+            rowScale: spec.hasRowScale ? MLXArray.ones([outputs], dtype: factorType) : nil)
+        let packed = MACaQPackedWeights(weight: weight, scales: scales, biases: biases)
+        return FlatQuantLinear(
+            packed: packed, bias: bias, basis: basis,
+            groupSize: spec.groupSize, bits: spec.bits, mode: qMode)
+    }
+
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let transformed = FlatQuantKernels.transform(x, p1: p1, p2: p2, clipBounds: clipBounds)
+        let transformed = training
+            ? FlatQuantKernels.differentiableTransform(x, p1: p1, p2: p2, clipBounds: clipBounds)
+            : FlatQuantKernels.transform(x, p1: p1, p2: p2, clipBounds: clipBounds)
         guard let rowScale else {
             return super.callAsFunction(transformed)
         }

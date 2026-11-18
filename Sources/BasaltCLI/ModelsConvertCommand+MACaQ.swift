@@ -13,15 +13,24 @@ extension ConvertSubcommand {
         } catch {
             throw ValidationError(error.localizedDescription)
         }
-        let conflict = hasDirectSourceConflict || experimentalQtip != nil || experimentalQtipBudget != nil
-        if conflict || isGSQRCO {
+        let conflict = [
+            hasDirectSourceConflict,
+            hasBasisTransformFlag,
+            experimentalQtip != nil,
+            experimentalQtipBudget != nil,
+            isGSQRCO,
+        ].contains(true)
+        if conflict {
             throw ValidationError("--experimental-macaq converts an MLX source directly without --quantize, --dequantize, --adapter or --format hf")
         }
     }
 
     private func validateMACaQKnobs() throws {
-        if macaqBlock != nil || macaqAlpha != nil, experimentalMacaq == nil {
-            throw ValidationError("--macaq-block and --macaq-alpha require --experimental-macaq")
+        if macaqBlock != nil, experimentalMacaq == nil {
+            throw ValidationError("--macaq-block requires --experimental-macaq")
+        }
+        if macaqAlpha != nil, experimentalMacaq == nil && experimentalFlatquant == nil {
+            throw ValidationError("--macaq-alpha requires --experimental-macaq or --experimental-flatquant")
         }
         if let block = macaqBlock, ![32, 64].contains(block) {
             throw ValidationError("--macaq-block takes 32 or 64, got \(block)")
@@ -34,7 +43,7 @@ extension ConvertSubcommand {
     private func validateMACaQRefineFlag(isGSQRCO: Bool) throws {
         guard experimentalMacaqRefine else { return }
         let badBase = format != .mlx || dequantize != nil || isGGUFSource
-        if badBase || experimentalMacaq != nil || isGSQRCO {
+        if badBase || experimentalMacaq != nil || hasBasisTransformFlag || isGSQRCO {
             throw ValidationError("--experimental-macaq-refine applies to standard quantized MLX conversions (--format mlx without --dequantize)")
         }
     }

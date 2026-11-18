@@ -109,7 +109,9 @@ extension ModelFitAnalyzer {
     public static func stackedExperts(in directory: URL) -> StackedExpertsSummary? {
         guard let config = ModelCache.config(at: directory),
               let modelType = config["model_type"] as? String, !modelType.isEmpty,
-              config["gguf_quantization"] == nil, config["qtip"] == nil, config["macaq_quantization"] == nil else {
+              config["gguf_quantization"] == nil, config["qtip"] == nil,
+              config["macaq_quantization"] == nil, config["flatquant_quantization"] == nil,
+              config["lirquant_quantization"] == nil else {
             return nil
         }
         let shards = safetensorsShards(in: directory)

@@ -4,6 +4,26 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+final class PVPrologueDenseLinear: Linear {
+    let rowScale: MLXArray?
+    let prologue: (MLXArray) -> MLXArray
+
+    init(denseRot: MLXArray, bias: MLXArray?, rowScale: MLXArray? = nil, prologue: @escaping (MLXArray) -> MLXArray) {
+        self.rowScale = rowScale
+        self.prologue = prologue
+        super.init(weight: denseRot.asType(.float32), bias: bias)
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let transformed = prologue(x.asType(.float32))
+        var y = matmul(transformed, weight.T)
+        if let rowScale { y = y * rowScale.asType(.float32) }
+        var casted = y.asType(x.dtype)
+        if let bias { casted = casted + bias.asType(x.dtype) }
+        return casted
+    }
+}
+
 final class PVMACaQDenseLinear: Linear {
     let preScale: MLXArray
     let hadamardBlock: Int
@@ -163,6 +183,20 @@ extension PVTuner {
     }
 
     static func makeDenseProbe(for target: PVQuantTarget, dense: MLXArray) -> Module {
+        if let fq = target.module as? FlatQuantLinear {
+            let (p1, p2, clip) = (fq.p1, fq.p2, fq.clipBounds)
+            return PVPrologueDenseLinear(denseRot: dense, bias: target.bias, rowScale: fq.rowScale) {
+                FlatQuantKernels.differentiableTransform($0, p1: p1, p2: p2, clipBounds: clip)
+            }
+        }
+        if let lir = target.module as? LIRQuantLinear {
+            let basis = LIRBasisParameters(
+                perm: lir.perm, givensPairs: lir.givensPairs, givensAngles: lir.givensAngles,
+                diagScale: lir.diagScale, numLayers: lir.numLayers, pairsPerLayer: lir.pairsPerLayer)
+            return PVPrologueDenseLinear(denseRot: dense, bias: target.bias) {
+                LIRQuantKernels.differentiableTransform($0, basis: basis)
+            }
+        }
         if let pre = target.macaqPreScale, let blk = target.macaqBlock {
             if target.isSwitch {
                 return PVMACaQDenseSwitchLinear(

@@ -203,7 +203,7 @@ public final class FusedGatedQuantizedMLP: Module, UnaryLayer {
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
         let g = gateProj(x)
         let u = upProj(x)
-        if let down = downProj as? QuantizedLinear {
+        if let down = downProj as? QuantizedLinear, type(of: down) == QuantizedLinear.self {
             return FusedTransformerKernels.gatedQuantizedMatmul(gate: g, up: u, activation: activation, down: down)
         }
         let act = activation == .silu ? silu(g) * u : geluApproximate(g) * u

@@ -16,6 +16,8 @@ package enum UniversalSourceReader {
         "quantization",
         "quantization_config",
         "macaq_quantization",
+        "flatquant_quantization",
+        "lirquant_quantization",
         "qtip_quantization",
         "gguf_quantization",
         "prism_hadamard",
@@ -43,6 +45,9 @@ package enum UniversalSourceReader {
             let bpw = mode == "mxfp4" ? 4.27 : (Double(bits) + 32.0 / Double(max(1, group)))
             return DetectedSourceCheckpoint(format: label, effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
         }
+        if let basis = detectBasisManifest(json, bytes: bytes) {
+            return basis
+        }
         if let qtip = json["qtip_quantization"] as? [String: Any] {
             let bpw = (qtip["bpw"] as? NSNumber)?.doubleValue ?? 2.5
             return DetectedSourceCheckpoint(format: String(format: "qtip:%.2f", bpw), effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
@@ -59,6 +64,25 @@ package enum UniversalSourceReader {
         let dtype = ((json["torch_dtype"] as? String) ?? "bfloat16").lowercased()
         let label = dtype.contains("float16") && !dtype.contains("bfloat") ? "dense:f16" : "dense:bf16"
         return DetectedSourceCheckpoint(format: label, effectiveBPW: 16.0, totalBytes: bytes, requiresCanonicalDecode: false)
+    }
+
+    private static func detectBasisManifest(_ json: [String: Any], bytes: Int64) -> DetectedSourceCheckpoint? {
+        if let fq = json["flatquant_quantization"] as? [String: Any] {
+            let first = (fq["modules"] as? [String: [String: Any]])?.values.first
+            let bits = (fq["bits"] as? Int) ?? (first?["bits"] as? Int) ?? 4
+            let group = (fq["group_size"] as? Int) ?? (first?["group_size"] as? Int) ?? 64
+            let bpw = Double(bits) + 32.0 / Double(max(1, group)) + 0.02
+            return DetectedSourceCheckpoint(format: "flatquant:\(bits):\(group)", effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
+        }
+        if let lir = json["lirquant_quantization"] as? [String: Any] {
+            let first = (lir["modules"] as? [String: [String: Any]])?.values.first
+            let bits = (lir["bits"] as? Int) ?? (first?["bits"] as? Int) ?? 4
+            let group = (lir["group_size"] as? Int) ?? (first?["group_size"] as? Int) ?? 64
+            let sub = (lir["subspace_dim"] as? Int) ?? (first?["subspace_dim"] as? Int) ?? 128
+            let bpw = Double(bits) + 32.0 / Double(max(1, group)) + 0.03
+            return DetectedSourceCheckpoint(format: "lirquant:\(bits):\(group):\(sub)", effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
+        }
+        return nil
     }
 
     private static func detectStandardQuant(_ quant: [String: Any], bytes: Int64) -> DetectedSourceCheckpoint {
@@ -109,6 +133,12 @@ extension UniversalSourceReader {
             let group = Int(detected.format.dropFirst("nf4:".count)) ?? 64
             let summary = try exportNF4Shards(from: source, to: output, groupSize: group, dtype: dtype)
             onStep?("canonical NF4 decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
+            return summary
+        }
+        if detected.format.hasPrefix("flatquant:") || detected.format.hasPrefix("lirquant:") {
+            let summary = try BasisTransformConverter.exportCanonicalShards(
+                from: source, to: output, dtype: dtype, prepareDenseSidecars: prepareCleanDenseConfigAndSidecars)
+            onStep?("canonical basis decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
             return summary
         }
         return try await exportContainerDense(from: source, to: output, dtype: dtype, onStep: onStep)

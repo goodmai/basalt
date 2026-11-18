@@ -39,6 +39,8 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
     case nf4(groupSize: Int)
     case macaqAffine(bits: Int, groupSize: Int)
     case macaqMXFP4
+    case flatQuant(bits: Int, groupSize: Int)
+    case lirQuant(bits: Int, groupSize: Int, subspaceDim: Int)
     case qtip(bpw: Double)
     case qtipBudget(bpw: Double)
     case gsqRCO(bpw: Double)
@@ -53,6 +55,8 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .nf4(let g): "nf4:\(g)"
         case .macaqAffine(let b, let g): "macaq:affine:\(b):\(g)"
         case .macaqMXFP4: "macaq:mxfp4"
+        case .flatQuant(let b, let g): "flatquant:\(b):\(g)"
+        case .lirQuant(let b, let g, let k): "lirquant:\(b):\(g):\(k)"
         case .qtip(let bpw): String(format: "qtip:%.1f", bpw)
         case .qtipBudget(let bpw): String(format: "qtip-budget:%.2f", bpw)
         case .gsqRCO(let bpw): String(format: "gsq-rco:%.2f", bpw)
@@ -69,6 +73,8 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .nf4(let g): "NF4-g\(g)"
         case .macaqAffine(let b, _): "MACaQ-\(b)bit"
         case .macaqMXFP4: "MACaQ-MXFP4"
+        case .flatQuant(let b, _): "FlatQuant-\(b)bit"
+        case .lirQuant(let b, _, let k): "LIRQuant-\(b)bit-k\(k)"
         case .qtip(let bpw): String(format: "QTIP-%.1fbpw", bpw)
         case .qtipBudget(let bpw): String(format: "QTIP-%.2fbpw", bpw)
         case .gsqRCO(let bpw): String(format: "GSQ-%.2fbpw", bpw)
@@ -98,6 +104,8 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .nf4(let g): 4.0 + 16.0 / Double(g)
         case .macaqAffine(let b, let g): Double(b) + 32.0 / Double(g) + 0.02
         case .macaqMXFP4: 4.27
+        case .flatQuant(let b, let g): Double(b) + 32.0 / Double(g) + 0.02
+        case .lirQuant(let b, let g, _): Double(b) + 32.0 / Double(g) + 0.03
         case .qtip(let bpw), .qtipBudget(let bpw), .gsqRCO(let bpw): bpw
         }
     }
@@ -107,21 +115,43 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
             "affine:2:64", "affine:3:64", "affine:4:64", "affine:6:64", "affine:8:64",
             "mixed:3:4:64", "mxfp4", "nf4:64",
             "macaq:affine:2:64", "macaq:affine:3:64", "macaq:affine:4:64", "macaq:mxfp4",
+            "flatquant:3:64", "flatquant:4:64", "lirquant:3:64:128", "lirquant:4:64:128",
             "qtip:2.0", "qtip:2.5", "qtip:3.0", "qtip-budget:2.75", "gsq-rco:3.0",
             "dense:bf16", "dense:f16",
         ]
     }
+}
 
+extension QuantizationTarget {
     public static func parse(_ raw: String) throws(BasaltError) -> QuantizationTarget {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let parts = trimmed.split(separator: ":").map(String.init)
         guard let head = parts.first else {
             throw .invalidRequestStructure(details: "convert: target specification must not be empty")
         }
-        if let std = parseStandard(head: head, parts: parts) ?? parseCalibrated(head: head, parts: parts) {
-            return std
+        if let parsed = parseStandard(head: head, parts: parts)
+            ?? parseBasisTransform(head: head, parts: parts)
+            ?? parseCalibrated(head: head, parts: parts) {
+            return parsed
         }
         throw .invalidRequestStructure(details: "convert: unsupported target '\(raw)'")
+    }
+
+    private static func parseBasisTransform(head: String, parts: [String]) -> QuantizationTarget? {
+        switch head {
+        case "flatquant" where parts.count == 3:
+            guard let b = Int(parts[1]), let g = Int(parts[2]),
+                  [2, 3, 4, 8].contains(b), [32, 64, 128].contains(g) else { return nil }
+            return .flatQuant(bits: b, groupSize: g)
+        case "lirquant" where parts.count == 3 || parts.count == 4:
+            guard let b = Int(parts[1]), let g = Int(parts[2]),
+                  [2, 3, 4, 8].contains(b), [32, 64, 128].contains(g) else { return nil }
+            let k = parts.count == 4 ? Int(parts[3]) : 128
+            guard let k, [32, 64, 128, 256].contains(k) else { return nil }
+            return .lirQuant(bits: b, groupSize: g, subspaceDim: k)
+        default:
+            return nil
+        }
     }
 
     private static func parseStandard(head: String, parts: [String]) -> QuantizationTarget? {
