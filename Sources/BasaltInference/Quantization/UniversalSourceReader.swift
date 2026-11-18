@@ -261,6 +261,14 @@ extension UniversalSourceReader {
             markAllParameters(of: msw, prefix: prefix, into: &handledKeys)
             return decodeMACaQSwitch(msw, prefix: prefix, dtype: dtype)
         }
+        if let fq = module as? FlatQuantLinear {
+            markAllParameters(of: fq, prefix: prefix, into: &handledKeys)
+            return weightBiasDict(prefix: prefix, weight: fq.unrotatedDenseWeight(), bias: fq.bias, dtype: dtype)
+        }
+        if let lir = module as? LIRQuantLinear {
+            markAllParameters(of: lir, prefix: prefix, into: &handledKeys)
+            return weightBiasDict(prefix: prefix, weight: lir.unrotatedDenseWeight(), bias: lir.bias, dtype: dtype)
+        }
         if let qtip = module as? QTIPLinear {
             markAllParameters(of: qtip, prefix: prefix, into: &handledKeys)
             return weightBiasDict(prefix: prefix, weight: qtip.decodedWeight(dtype: dtype), bias: qtip.bias, dtype: dtype)

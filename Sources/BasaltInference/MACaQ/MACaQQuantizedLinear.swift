@@ -62,16 +62,22 @@ package struct MACaQSwitchGeometry: Sendable, Equatable {
 
 package final class MACaQQuantizedLinear: QuantizedLinear {
     package let hadamardBlock: Int
+    package var activationMode: MACaQActivationMode
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
+    @ParameterInfo(key: "row_scale") package var rowScale: MLXArray?
 
     package init(
         packed: MACaQPackedWeights,
         bias: MLXArray?,
         preScale: MLXArray,
-        spec: MACaQLayerSpec
+        spec: MACaQLayerSpec,
+        rowScale: MLXArray? = nil,
+        activationMode: MACaQActivationMode = .environmentDefault
     ) {
         self.hadamardBlock = spec.hadamardBlock
+        self.activationMode = activationMode
         self._preScale.wrappedValue = preScale
+        self._rowScale.wrappedValue = rowScale
         let qMode = spec.quantizationMode
         if qMode == .affine {
             super.init(
@@ -105,14 +111,34 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        if !training, activationMode != .fp16 || rowScale != nil {
+            let spec = MACaQLayerSpec(bits: bits, groupSize: groupSize, mode: mode, hadamardBlock: hadamardBlock)
+            let inputs = MACaQFusedLinearInputs(
+                packed: MACaQPackedWeights(weight: weight, scales: scales, biases: biases),
+                preScale: preScale, spec: spec, rowScale: rowScale, bias: bias,
+                activationMode: activationMode)
+            if MACaQFusedMatmul.supportsLinear(x, inputs: inputs) {
+                return MACaQFusedMatmul.linear(x, inputs: inputs)
+            }
+        }
         let rotated = training
             ? MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock)
             : MACaQFusedKernels.blockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
+        if let rowScale {
+            let raw = quantizedMM(
+                rotated, weight, scales: scales, biases: biases,
+                transpose: true, groupSize: groupSize, bits: bits, mode: mode)
+            let scaled = (raw.asType(.float32) * rowScale.asType(.float32)).asType(x.dtype)
+            return bias.map { scaled + $0 } ?? scaled
+        }
         return super.callAsFunction(rotated)
     }
 
     package func unrotatedDenseWeight() -> MLXArray {
-        let wRot = dequantized(weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: mode).asType(.float32)
+        var wRot = dequantized(weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: mode).asType(.float32)
+        if let rowScale {
+            wRot = wRot * rowScale.asType(.float32).expandedDimensions(axis: -1)
+        }
         let unrotated = MACaQMath.rotateBlocks(wRot, blockSize: hadamardBlock)
         return unrotated * preScale.asType(.float32).expandedDimensions(axis: 0)
     }
@@ -173,6 +199,10 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
     ) -> MLXArray {
         let params = parameters()
         guard case .value(let w)? = params["weight"] else { return x }
+        let bOpt: MLXArray? = if case .value(let b)? = params["bias"] { b } else { nil }
+        if !training, MACaQFusedMatmul.supportsGather(x, indices: indices, switchLayer: self) {
+            return MACaQFusedMatmul.gather(x, indices: indices, weight: w, switchLayer: self, bias: bOpt)
+        }
         let rotated: MLXArray
         if training {
             rotated = MACaQFusedKernels.differentiableSwitchHadamard(
