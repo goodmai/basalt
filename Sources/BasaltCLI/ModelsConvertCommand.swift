@@ -135,8 +135,12 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Flag(name: .customLong("a-sinq"), help: "Shorthand for --quant-recipe a-sinq (#548): activation-calibrated No-overhead A-SINQ + EAQuant")
     var aSinq = false
 
+    @Option(name: .customLong("cluster-peers"), help: "Comma-separated authenticated peer endpoints (host:port) for distributed Hessian and PV-Tuning calibration (#565)")
+    var clusterPeers: [String] = []
+
     func validate() throws {
         try validateDestinationOptions()
+        try validateClusterPeers()
         if to != nil {
             try validateUnifiedToOptions()
             return

@@ -114,6 +114,10 @@ extension UniversalModelConverter {
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionResult {
         let detected = try UniversalSourceReader.detect(at: sourceURL)
+        let validatedPeers = try validateClusterPeers(request.clusterPeers)
+        if !validatedPeers.isEmpty {
+            onProgress(.init(phase: "cluster", completed: 0, total: 4, message: "Validated \(validatedPeers.count) cluster peer(s) for distributed calibration"))
+        }
         let teacherURL = try request.pvTeacher.map { try resolveDirectory($0, cacheRoot: cacheRoot) } ?? sourceURL
         let existedBefore = FileManager.default.fileExists(atPath: outputURL.path)
         var stagingURL: URL?
@@ -225,6 +229,15 @@ extension UniversalModelConverter {
 }
 
 extension UniversalModelConverter {
+    fileprivate static func validateClusterPeers(_ specs: [String]) throws(BasaltError) -> [ClusterPeerEndpoint] {
+        guard !specs.isEmpty else { return [] }
+        do {
+            return try ClusterPeerEndpoint.parseList(specs)
+        } catch {
+            throw .invalidRequestStructure(details: "convert: \(error.localizedDescription)")
+        }
+    }
+
     fileprivate static func needsCanonicalStaging(detected: DetectedSourceCheckpoint, target: QuantizationTarget) -> Bool {
         if detected.requiresCanonicalDecode { return true }
         switch target {
