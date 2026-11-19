@@ -163,8 +163,34 @@ struct MetalSubstrateAndBasisTransformTests {
                 let zeroSlice = negOut[0, 0, 0, 0].asArray(Float.self)
                 let allZero = zeroSlice.allSatisfy { $0 == 0 }
                 #expect(allZero)
+
+                let wParam = layer.parameters()["weight"]
+                if case .value(let wArr)? = wParam {
+                    let legacy = MACaQFusedMatmul.gather(
+                        xBroadcast, indices: indices, weight: wArr, switchLayer: layer, bias: biasArr
+                    ).asType(.float32)
+                    eval(legacy)
+                    #expect(abs(got - legacy).max().item(Float.self) < 2e-2)
+                }
             }
         }
+    }
+
+    @Test("MACaQSwitchLinear block64 bias-free MXFP4 matches unfused reference")
+    func macaqSwitchBlock64NoBiasParity() {
+        let sw64 = SwitchLinear(inputDims: 128, outputDims: 32, numExperts: 4, bias: false)
+        var spec64 = MACaQLayerSpec(bits: 4, groupSize: 32, mode: .mxfp4, hadamardBlock: 64)
+        spec64.perExpertPreScale = true
+        spec64.hasBias = false
+        let layer64 = MACaQSwitchLinear(replacing: sw64, spec: spec64)
+        let x64 = MLXRandom.normal([1, 1, 1, 128], dtype: .bfloat16)
+        let idx64 = MLXArray([Int32(0), 2], [1, 2])
+        let out64 = layer64(x64, idx64).asType(.float32)
+        layer64.train(true)
+        let ref64 = layer64(x64, idx64).asType(.float32)
+        layer64.train(false)
+        eval(out64, ref64)
+        #expect(abs(out64 - ref64).max().item(Float.self) < 1e-2)
     }
 }
 

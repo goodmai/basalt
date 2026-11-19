@@ -199,37 +199,35 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
     ) -> MLXArray {
         let params = parameters()
         guard case .value(let w)? = params["weight"] else { return x }
-        let bOpt: MLXArray? = if case .value(let b)? = params["bias"] { b } else { nil }
-        if !training, MACaQFusedMatmul.supportsGather(x, indices: indices, switchLayer: self) {
-            return MACaQFusedMatmul.gather(x, indices: indices, weight: w, switchLayer: self, bias: bOpt)
-        }
+        let numExperts = w.dim(0)
         let rotated: MLXArray
         if training {
             rotated = MACaQFusedKernels.differentiableSwitchHadamard(
                 x, indices: indices, preScale: preScale, blockSize: hadamardBlock)
-        } else if preScale.ndim == 1 {
-            rotated = MACaQFusedKernels.blockHadamard(
-                x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
         } else {
-            let gathered = expandedDimensions(preScale.take(indices, axis: 0), axis: -2)
-            let scaled = (x.asType(.float32) * gathered.asType(.float32)).asType(x.dtype)
-            let ones = MLXArray.ones([x.dim(-1)], dtype: x.dtype)
-            rotated = MACaQFusedKernels.blockHadamard(
-                scaled, scaleVector: ones, blockSize: hadamardBlock, isInverse: false)
+            rotated = MACaQFusedKernels.switchBlockHadamard(
+                x, indices: indices, preScale: preScale, blockSize: hadamardBlock, numExperts: numExperts)
         }
+        let safeIndices = training ? indices : clip(indices, min: 0, max: max(0, numExperts - 1))
         var out = MLX.gatherQuantizedMM(
             rotated,
             w,
             scales: scales,
             biases: biases,
-            rhsIndices: indices,
+            rhsIndices: safeIndices,
             transpose: true,
             groupSize: groupSize,
             bits: bits,
             mode: mode,
             sortedIndices: sortedIndices)
         if case .value(let b)? = params["bias"] {
-            out = out + expandedDimensions(b[indices], axis: -2)
+            if training {
+                out = out + expandedDimensions(b[indices], axis: -2)
+            } else {
+                let valid = expandedDimensions((indices .>= 0) .&& (indices .< numExperts), axis: -1)
+                let maskedBias = MLX.where(valid, b[safeIndices], MLXArray(0, dtype: b.dtype))
+                out = out + expandedDimensions(maskedBias, axis: -2)
+            }
         }
         return out
     }
