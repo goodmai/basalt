@@ -20,6 +20,8 @@ package struct RESTServer: Sendable {
     private(set) var videoSynthesizer: (any VideoSynthesizer)?
     private(set) var videoStoreDirectory: URL?
     private(set) var modelHub = ModelHubOperations.live()
+    private(set) var hitlApprovals = HITLApprovalActor()
+    private(set) var hitlClock: @Sendable () -> Double = { Date().timeIntervalSince1970 }
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
     let shutdownDeadline: Duration
@@ -70,6 +72,16 @@ package struct RESTServer: Sendable {
     package func withPipelines(_ registry: PipelineRegistry?, compose: ComposeControl?) -> RESTServer {
         var server = self
         (server.pipelines, server.compose) = (registry, compose)
+        return server
+    }
+
+    package func withHITLApprovals(
+        _ actor: HITLApprovalActor,
+        clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
+    ) -> RESTServer {
+        var server = self
+        server.hitlApprovals = actor
+        server.hitlClock = clock
         return server
     }
 
@@ -165,6 +177,7 @@ package struct RESTServer: Sendable {
         oai.post("/models/load", use: controller.loadModel)
         ModelsConvertController(operations: modelHub).add(to: oai)
         ModelsHubController(orchestrator: orchestrator, operations: modelHub).add(to: oai)
+        MCPApprovalsController(approvals: hitlApprovals, clock: hitlClock).add(to: oai)
     }
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
