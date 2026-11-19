@@ -28,11 +28,18 @@ struct TranscriptionsController: Sendable {
             let text: String
         }
 
+        struct Word: Encodable {
+            let word: String
+            let start: Double
+            let end: Double
+        }
+
         let task = "transcribe"
         let language: String?
         let duration: Double
         let text: String
         let segments: [Segment]
+        let words: [Word]?
     }
 
     @Sendable
@@ -109,9 +116,10 @@ struct TranscriptionsController: Sendable {
             buffer.writeBytes(try JSONEncoder().encode(["text": result.text]))
         case .verboseJSON:
             let segments = result.segments.enumerated().map { Verbose.Segment(id: $0, start: $1.start, end: $1.end, text: $1.text) }
+            let words = result.words.isEmpty ? nil : result.words.map { Verbose.Word(word: $0.word, start: $0.start, end: $0.end) }
             buffer.writeBytes(try JSONEncoder().encode(Verbose(
                 language: result.language ?? upload.request.language, duration: upload.request.audio.seconds,
-                text: result.text, segments: segments)))
+                text: result.text, segments: segments, words: words)))
         }
         return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buffer))
     }

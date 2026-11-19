@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 
 public struct VoiceSessionState: Sendable, Equatable {
@@ -9,6 +10,8 @@ public struct VoiceSessionState: Sendable, Equatable {
 
     public var capture = CapturePhase.idle
     public var handsFree = false
+    public var holdingThinkingPause = false
+    public var enhancement = VoiceEnhancementOptions()
     public var speakingMessage: MessageID?
     public var synthesizingMessage: MessageID?
     public var voice = "alloy"
@@ -34,6 +37,8 @@ public enum VoiceAction: Sendable, Equatable {
     case playbackFinished(MessageID)
     case stopSpeaking
     case setHandsFree(Bool)
+    case setEnhancement(VoiceEnhancementOptions)
+    case turnEvaluated(TurnDecision)
     case assistantAnswered(MessageID, String)
     case failed(String)
 }
@@ -51,17 +56,21 @@ public enum VoiceEffect: Sendable, Equatable {
 public enum VoiceReducer {
     public static func reduce(_ state: inout VoiceSessionState, _ action: VoiceAction) -> [VoiceEffect] {
         switch action {
-        case .pushToTalkPressed, .pushToTalkReleased, .recorded, .transcribed:
+        case .pushToTalkPressed, .pushToTalkReleased, .recorded, .transcribed, .turnEvaluated:
             return reduceCapture(&state, action)
         case .readAloud, .speechSynthesized, .playbackFinished, .stopSpeaking, .assistantAnswered:
             return reducePlayback(&state, action)
         case .setHandsFree(let enabled):
             state.handsFree = enabled
             guard !enabled, state.capture == .recording else { return [] }
-            state.capture = .idle
+            (state.capture, state.holdingThinkingPause) = (.idle, false)
             return [.stopCapture]
+        case .setEnhancement(let options):
+            state.enhancement = options
+            return []
         case .failed(let message):
-            (state.capture, state.speakingMessage, state.synthesizingMessage, state.error) = (.idle, nil, nil, message)
+            (state.capture, state.holdingThinkingPause, state.speakingMessage, state.synthesizingMessage, state.error) =
+                (.idle, false, nil, nil, message)
             return []
         }
     }
@@ -71,12 +80,15 @@ public enum VoiceReducer {
         case .pushToTalkPressed:
             guard state.capture == .idle else { return [] }
             let wasSpeaking = state.isSpeaking
-            (state.capture, state.speakingMessage, state.synthesizingMessage, state.error) = (.recording, nil, nil, nil)
+            (state.capture, state.holdingThinkingPause, state.speakingMessage, state.synthesizingMessage, state.error) =
+                (.recording, false, nil, nil, nil)
             return wasSpeaking ? [.stopPlayback, .startCapture] : [.startCapture]
         case .pushToTalkReleased:
             guard state.capture == .recording else { return [] }
-            state.capture = .transcribing
+            (state.capture, state.holdingThinkingPause) = (.transcribing, false)
             return [.stopCapture]
+        case .turnEvaluated(let decision):
+            return reduceTurnDecision(&state, decision)
         case .recorded(let wav):
             guard state.capture != .idle else { return [] }
             guard !wav.isEmpty else {
@@ -92,6 +104,21 @@ public enum VoiceReducer {
             return text.isEmpty ? [] : [.submitTranscript(text)]
         default:
             return []
+        }
+    }
+
+    private static func reduceTurnDecision(_ state: inout VoiceSessionState, _ decision: TurnDecision) -> [VoiceEffect] {
+        guard state.capture == .recording else { return [] }
+        switch decision {
+        case .listening:
+            state.holdingThinkingPause = false
+            return []
+        case .holdThinkingPause:
+            state.holdingThinkingPause = state.enhancement.semanticTurnTakingEnabled
+            return []
+        case .commitTurn:
+            (state.capture, state.holdingThinkingPause) = (.transcribing, false)
+            return [.stopCapture]
         }
     }
 

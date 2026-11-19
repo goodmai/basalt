@@ -295,7 +295,6 @@
 "MoE-RW (Router-Weighted Hessian)" = "MoE-RW (Router-Weighted Hessian)";
 "RTN" = "RTN";
 "local/model-name" = "local/model-name";
-
 "Publishing" = "Publishing";
 "Publish…" = "Publish…";
 "Publish to Hugging Face" = "Publish to Hugging Face";
@@ -307,3 +306,9 @@
 "Publish Model" = "Publish Model";
 "Dismiss" = "Dismiss";
 "Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)" = "Search Hugging Face or paste org/repo (e.g. mlx-community/Qwen3-4B-4bit)";
+
+"Voice Options" = "Voice Options";
+"Noise Suppression" = "Noise Suppression";
+"Semantic Turn-Taking" = "Semantic Turn-Taking";
+"Duplex Speech-to-Speech" = "Duplex Speech-to-Speech";
+"Thinking pause…" = "Thinking pause…";
