@@ -94,6 +94,7 @@ public enum ComposeProfileArchetype: String, Sendable, Codable, Equatable, CaseI
     case documentOCR = "document-ocr"
     case voiceDuplex = "voice-duplex"
     case creativeStudio = "creative-studio"
+    case videoStudio = "video-studio"
     case ragKnowledge = "rag-knowledge"
     case hybridCloud = "hybrid-cloud"
     case moeFrontier = "moe-frontier"
@@ -106,7 +107,7 @@ public enum ComposeProfileArchetype: String, Sendable, Codable, Equatable, CaseI
         case .dailyChat, .codingAgent, .voiceZonos, .multimodalDesk:
             true
         case .reasoningLab, .documentOCR, .voiceDuplex, .creativeStudio,
-             .ragKnowledge, .hybridCloud, .moeFrontier, .researchXray:
+             .videoStudio, .ragKnowledge, .hybridCloud, .moeFrontier, .researchXray:
             false
         }
     }
@@ -121,6 +122,7 @@ public enum ComposeProfileArchetype: String, Sendable, Codable, Equatable, CaseI
         case .documentOCR: "doc.text.viewfinder"
         case .voiceDuplex: "mic.and.signal.meter"
         case .creativeStudio: "paintbrush.pointed"
+        case .videoStudio: "film.stack"
         case .ragKnowledge: "checkmark.shield"
         case .hybridCloud: "cloud.bolt"
         case .moeFrontier: "cpu"
@@ -138,6 +140,7 @@ public enum ComposeProfileArchetype: String, Sendable, Codable, Equatable, CaseI
         case .documentOCR: "Document OCR & Grounded QA"
         case .voiceDuplex: "Low-Latency Duplex Speech"
         case .creativeStudio: "Creative Image Studio"
+        case .videoStudio: "Audio-Visual Video Studio"
         case .ragKnowledge: "Epistemic Grounded Research"
         case .hybridCloud: "Hybrid Judge + Cloud Escalation"
         case .moeFrontier: "Frontier MoE Engine"
@@ -155,6 +158,7 @@ public enum ComposeProfileArchetype: String, Sendable, Codable, Equatable, CaseI
         case .documentOCR: "Neural vision OCR with four-valued Belnap epistemic verification."
         case .voiceDuplex: "Full-duplex transcription and sub-80 ms TTFA streaming synthesis."
         case .creativeStudio: "Native MLX image generation with prompt upsampling and TeaCache."
+        case .videoStudio: "Phased UMA Video DiT synthesis with Causal 3D-VAE, TeaCache, and native MP4 muxing."
         case .ragKnowledge: "Conflict-aware epistemic gate routing hard queries to a verifier."
         case .hybridCloud: "Local System One judge saving tokens before budgeted cloud fallback."
         case .moeFrontier: "Maximum-parameter Mixture-of-Experts tuned for this memory tier."

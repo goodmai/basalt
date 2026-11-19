@@ -211,13 +211,17 @@ extension MCPToolCatalog {
     static func catalog(
         researchTools: Bool,
         filter: MCPToolFilter = .standard,
-        includeImageTools: Bool = false
+        includeImageTools: Bool = false,
+        includeVideoTools: Bool = false
     ) -> MCPToolsList {
         let research = ResearchTool.allCases.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) }
-        let candidates = list.tools + research + [introspectDescriptor, phasorProbeDescriptor]
+        let candidates = list.tools + [generateVideo] + research + [introspectDescriptor, phasorProbeDescriptor]
         return MCPToolsList(tools: candidates.filter { descriptor in
             if MCPToolName(rawValue: descriptor.name) != nil {
                 return includeImageTools && MCPToolName.isAllowed(descriptor.name, by: filter)
+            }
+            if MCPVideoToolName(rawValue: descriptor.name) != nil {
+                return includeVideoTools && MCPVideoToolName.isAllowed(descriptor.name, by: filter)
             }
             return filter.allows(descriptor.name, researchTools: researchTools)
         })

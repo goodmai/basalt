@@ -14,6 +14,8 @@ public final class MCPServer: Service, Sendable {
         var pipelines: PipelineRegistry?
         var imageSynthesizer: (any ImageSynthesizer)?
         var imageStoreDirectory: URL?
+        var videoSynthesizer: (any VideoSynthesizer)?
+        var videoStoreDirectory: URL?
     }
 
     let orchestrator: any ModelOrchestrating
@@ -33,6 +35,8 @@ public final class MCPServer: Service, Sendable {
     var pipelines: PipelineRegistry? { options.pipelines }
     var imageSynthesizer: (any ImageSynthesizer)? { options.imageSynthesizer }
     var imageStoreDirectory: URL? { options.imageStoreDirectory }
+    var videoSynthesizer: (any VideoSynthesizer)? { options.videoSynthesizer }
+    var videoStoreDirectory: URL? { options.videoStoreDirectory }
 
     public init(
         orchestrator: any ModelOrchestrating,
@@ -121,6 +125,13 @@ public final class MCPServer: Service, Sendable {
         if let storeDirectory { next.imageStoreDirectory = storeDirectory }
         return MCPServer(self, options: next)
     }
+
+    package func withVideoSynthesizer(_ synthesizer: (any VideoSynthesizer)?, storeDirectory: URL? = nil) -> MCPServer {
+        var next = options
+        next.videoSynthesizer = synthesizer
+        if let storeDirectory { next.videoStoreDirectory = storeDirectory }
+        return MCPServer(self, options: next)
+    }
 }
 
 extension MCPServer {
@@ -178,7 +189,8 @@ extension MCPServer {
             let catalog = MCPToolCatalog.catalog(
                 researchTools: researchTools,
                 filter: toolFilter,
-                includeImageTools: imageSynthesizer != nil
+                includeImageTools: imageSynthesizer != nil,
+                includeVideoTools: videoSynthesizer != nil
             )
             writer(MCPWire.result(id: id, catalog))
         case .toolsCall(let id, let params): await handleToolsCall(id: id, params: params)

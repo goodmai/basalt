@@ -147,13 +147,13 @@ extension ComposeProfileCatalog {
     }
 
     private static func make24GBVideoLingBot() -> V22ComposeSpecialist {
-        let vid = "goodmai/LingBot-Video-30B-A3B-MACaQ-MXFP4-MLX"
+        let vid = "goodmai/LingBot-Video-30B-A3B-PV-MACaQ-4bit-MXFP4-MLX"
         return V22ComposeSpecialist(
             id: "24gb-video-lingbot",
             tier: .gb24,
-            archetype: .creativeStudio,
+            archetype: .videoStudio,
             primaryModel: vid,
-            estimatedPeakGB: 17.6,
+            estimatedPeakGB: 16.8,
             badges: ["Video DiT", "3D-VAE Tiled", "STA"],
             yaml: """
                 version: "2.2"

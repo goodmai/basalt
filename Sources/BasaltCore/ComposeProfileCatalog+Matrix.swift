@@ -67,7 +67,10 @@ public enum ComposeProfileCatalog {
     ]
 
     public static var bundledYAML: [String: String] {
-        var map = legacyYAML.merging(flux3YAML) { _, new in new }.merging(v22YAML) { _, new in new }
+        var map = legacyYAML
+            .merging(flux3YAML) { _, new in new }
+            .merging(videoYAML) { _, new in new }
+            .merging(v22YAML) { _, new in new }
         for profile in profiles {
             map[profile.id] = profile.yaml
             for alias in profile.tier.aliases {
@@ -100,6 +103,17 @@ public enum ComposeProfileCatalog {
                 primaryModel: flux.painterModel,
                 capabilityBadges: ["Chat", "FLUX.3", "\(flux.steps) steps"],
                 yaml: flux.yaml
+            )
+        }
+        if let vid = videoCombinations.first(where: { $0.id == clean }) {
+            return ComposeBundledProfile(
+                id: vid.id,
+                tier: vid.tier,
+                archetype: .videoStudio,
+                estimatedResidentGB: vid.estimatedPeakGB,
+                primaryModel: vid.videoModel,
+                capabilityBadges: ["Video DiT", "PV-MACaQ", "\(vid.frames)f"],
+                yaml: vid.yaml
             )
         }
         if let legacy = legacyYAML[clean] {
@@ -249,7 +263,7 @@ extension ComposeProfileCatalog {
 
     private static func buildAllProfiles() -> [ComposeBundledProfile] {
         var list: [ComposeBundledProfile] = []
-        list.reserveCapacity(84)
+        list.reserveCapacity(91)
         for palette in palettes {
             for archetype in ComposeProfileArchetype.allCases {
                 list.append(makeProfile(palette: palette, archetype: archetype))

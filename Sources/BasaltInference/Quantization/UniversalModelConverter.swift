@@ -205,6 +205,10 @@ extension UniversalModelConverter {
         teacherURL: URL,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionPVSummary? {
+        if VideoDiTCheckpointCompat.isVideoDiTDirectory(teacherURL) {
+            guard request.pvTune, request.target.supportsPVTune else { return nil }
+            return try VideoDiTCheckpointCompat.pvTuneDirectory(output: outputURL, teacher: teacherURL, onProgress: onProgress)
+        }
         if DiTBlockQuantizer.isDiTCheckpoint(outputURL) { return nil }
         if request.macaqRefine {
             onProgress(.init(phase: "macaq_refine", completed: 3, total: 4, message: "Running MACaQ-R Hessian flip-refinement"))
@@ -309,6 +313,11 @@ extension UniversalModelConverter {
         outputURL: URL,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> (shards: Int, bytesAfter: Int64) {
+        if VideoDiTCheckpointCompat.isVideoDiTDirectory(workingSource) {
+            return try VideoDiTCheckpointCompat.convertCalibrated(
+                request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress
+            )
+        }
         switch request.target {
         case .macaqAffine(let b, let g):
             return try await encodeMACaQTarget(

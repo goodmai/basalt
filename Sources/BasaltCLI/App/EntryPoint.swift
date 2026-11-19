@@ -77,6 +77,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             ModelsCommand.self,
             ChatCommand.self,
             OCRCommand.self,
+            VideoCommand.self,
             SessionsCommand.self,
             CloudCommand.self,
             ClusterCommand.self,

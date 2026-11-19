@@ -24,15 +24,14 @@ enum MCPTool: Sendable, Equatable {
         case "harness_optimize": self = .harnessOptimize
         case "introspect": self = .introspect
         case "telemetry_query": self = .telemetryQuery
-        case "basalt_transcribe": self = .media(.transcribe)
-        case "basalt_ocr": self = .media(.ocr)
-        case "basalt_systemone_decide": self = .media(.decide)
-        case "basalt_pipeline": self = .media(.pipeline)
-        case MCPToolName.generateImage.rawValue: self = .media(.generateImage)
-        case MCPToolName.editImage.rawValue: self = .media(.editImage)
         default:
-            guard let tool = ResearchTool(rawValue: name) else { return nil }
-            self = .research(tool)
+            if let media = MediaTool(mcpName: name) {
+                self = .media(media)
+            } else if let tool = ResearchTool(rawValue: name) {
+                self = .research(tool)
+            } else {
+                return nil
+            }
         }
     }
 }

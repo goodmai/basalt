@@ -8,12 +8,12 @@ extension MCPServer {
             let call = try MCPArguments.toolCall(params)
             let known = MCPTool(name: call.name)
             guard known != nil || call.name == "phasor_probe" else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
-            let isImageTool = MCPToolName(rawValue: call.name) != nil
-            let allowed = isImageTool
+            let isMediaGenTool = MCPToolName(rawValue: call.name) != nil || MCPVideoToolName(rawValue: call.name) != nil
+            let allowed = isMediaGenTool
                 ? MCPToolName.isAllowed(call.name, by: toolFilter)
                 : toolFilter.allows(call.name, researchTools: researchTools)
             guard allowed else {
-                let mediaDisabled = isImageTool && toolFilter.disabled.isSuperset(of: MCPToolFilter.Group.media.tools)
+                let mediaDisabled = isMediaGenTool && toolFilter.disabled.isSuperset(of: MCPToolFilter.Group.media.tools)
                 if toolFilter.isExplicitlyDisabled(call.name) || mediaDisabled {
                     throw MCPFailure.methodNotFound("Tool '\(call.name)' is disabled by server configuration (--mcp-disable)")
                 }
@@ -263,6 +263,7 @@ extension MCPServer {
         case .pipeline: try await pipeline(args)
         case .generateImage: try await generateImageTool(args)
         case .editImage: try await editImageTool(args)
+        case .generateVideo: try await generateVideoTool(args)
         }
     }
 

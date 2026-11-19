@@ -2,7 +2,20 @@ import Foundation
 import BasaltCore
 
 enum MediaTool: Sendable, Equatable {
-    case transcribe, ocr, decide, pipeline, generateImage, editImage
+    case transcribe, ocr, decide, pipeline, generateImage, editImage, generateVideo
+
+    init?(mcpName: String) {
+        switch mcpName {
+        case "basalt_transcribe": self = .transcribe
+        case "basalt_ocr": self = .ocr
+        case "basalt_systemone_decide": self = .decide
+        case "basalt_pipeline": self = .pipeline
+        case MCPToolName.generateImage.rawValue: self = .generateImage
+        case MCPToolName.editImage.rawValue: self = .editImage
+        case MCPVideoToolName.videoGenerate.rawValue: self = .generateVideo
+        default: return nil
+        }
+    }
 }
 
 extension MCPServer {
