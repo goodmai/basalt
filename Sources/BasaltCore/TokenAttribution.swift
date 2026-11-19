@@ -32,16 +32,32 @@ public struct TokenHeadActivation: Sendable, Codable, Equatable {
     public var head: Int
     public var norm: Float
     public var attentionEntropy: Float?
+    public var residualShare: Float?
+    public var logitAlignment: Float?
+    public var influenceScore: Float?
 
-    public init(head: Int, norm: Float, attentionEntropy: Float? = nil) {
+    public init(
+        head: Int,
+        norm: Float,
+        attentionEntropy: Float? = nil,
+        residualShare: Float? = nil,
+        logitAlignment: Float? = nil,
+        influenceScore: Float? = nil
+    ) {
         self.head = head
         self.norm = norm
         self.attentionEntropy = attentionEntropy
+        self.residualShare = residualShare
+        self.logitAlignment = logitAlignment
+        self.influenceScore = influenceScore
     }
 
     enum CodingKeys: String, CodingKey {
         case head, norm
         case attentionEntropy = "attention_entropy"
+        case residualShare = "residual_share"
+        case logitAlignment = "logit_alignment"
+        case influenceScore = "influence_score"
     }
 }
 
@@ -64,6 +80,7 @@ public struct TokenLayerPathway: Sendable, Codable, Equatable {
     public var lensTopTokenId: Int?
     public var lensTopToken: String?
     public var lensTopProbability: Float?
+    public var layerInfluence: Float?
 
     public init(
         layer: Int,
@@ -83,6 +100,7 @@ public struct TokenLayerPathway: Sendable, Codable, Equatable {
         case lensTopTokenId = "lens_top_token_id"
         case lensTopToken = "lens_top_token"
         case lensTopProbability = "lens_top_probability"
+        case layerInfluence = "layer_influence"
     }
 }
 
@@ -270,6 +288,7 @@ public struct AttributedTokenTraceSummary: Sendable, Codable, Equatable {
     public var minMargin: Double
     public var belnapState: BelnapState
     public var highRiskTokenIndices: [Int]
+    public var networkInfluence: NetworkInfluenceReport?
 
     public init(tokens: [OutputTokenTelemetry]) {
         if tokens.isEmpty {
@@ -279,6 +298,7 @@ public struct AttributedTokenTraceSummary: Sendable, Codable, Equatable {
             self.minMargin = 1.0
             self.belnapState = .true
             self.highRiskTokenIndices = []
+            self.networkInfluence = nil
             return
         }
         let probs = tokens.map { Double($0.probability) }
@@ -297,6 +317,7 @@ public struct AttributedTokenTraceSummary: Sendable, Codable, Equatable {
         self.minMargin = minM
         self.belnapState = rc.belnapState()
         self.highRiskTokenIndices = tokens.filter { $0.riskState == .highRisk }.map(\.index)
+        self.networkInfluence = HeadInfluenceCore.summarizeNetwork(tokens: tokens)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -306,6 +327,7 @@ public struct AttributedTokenTraceSummary: Sendable, Codable, Equatable {
         case minMargin = "min_margin"
         case belnapState = "belnap_state"
         case highRiskTokenIndices = "high_risk_token_indices"
+        case networkInfluence = "network_influence"
     }
 }
 
