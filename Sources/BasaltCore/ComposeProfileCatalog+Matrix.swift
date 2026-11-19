@@ -67,7 +67,7 @@ public enum ComposeProfileCatalog {
     ]
 
     public static var bundledYAML: [String: String] {
-        var map = legacyYAML.merging(flux3YAML) { _, new in new }
+        var map = legacyYAML.merging(flux3YAML) { _, new in new }.merging(v22YAML) { _, new in new }
         for profile in profiles {
             map[profile.id] = profile.yaml
             for alias in profile.tier.aliases {
@@ -80,6 +80,17 @@ public enum ComposeProfileCatalog {
     public static func resolve(id rawID: String) -> ComposeBundledProfile? {
         let clean = rawID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let exact = profilesByID[clean] { return exact }
+        if let v22 = v22Specialists.first(where: { $0.id == clean }) {
+            return ComposeBundledProfile(
+                id: v22.id,
+                tier: v22.tier,
+                archetype: v22.archetype,
+                estimatedResidentGB: v22.estimatedPeakGB,
+                primaryModel: v22.primaryModel,
+                capabilityBadges: v22.badges,
+                yaml: v22.yaml
+            )
+        }
         if let flux = flux3Combinations.first(where: { $0.id == clean }) {
             return ComposeBundledProfile(
                 id: flux.id,

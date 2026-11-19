@@ -31,6 +31,8 @@ public struct ComposeSpec: Sendable, Equatable {
         public var apiKeyEnv: String?
         public var data: String?
         public var budget: Double?
+        public var speculative: ModelSpeculativeSpec?
+        public var diffusionText: DiffusionTextSpec?
 
         public init(source: Source, keep: Keep? = nil, idleUnload: Int? = nil, apiKeyEnv: String? = nil, data: String? = nil) {
             (self.source, self.keep, self.idleUnload, self.apiKeyEnv, self.data) = (source, keep, idleUnload, apiKeyEnv, data)
@@ -83,6 +85,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public static let shareMedia = "media"
 
     public var version = 1
+    public var schemaMinorVersion = 0
     public var name: String
     public var memory: PipelineMemory = .auto
     public var models: [String: Model]
@@ -104,6 +107,11 @@ public struct ComposeSpec: Sendable, Equatable {
     public var mcp = MCP()
     public var adapters: [String: ComposeAdapterSpec] = [:]
     public var benchmarks: ComposeBenchmarksSpec?
+    public var voice: VoiceDuplexSpec?
+    public var music: MusicComposeSpec?
+    public var video: VideoComposeSpec?
+    public var train: ComposeTrainSpec?
+    public var cluster: ComposeClusterSpec?
 
     public init(name: String, models: [String: Model], answer: String) {
         (self.name, self.models, self.answer) = (name, models, answer)

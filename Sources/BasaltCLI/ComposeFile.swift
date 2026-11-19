@@ -66,7 +66,8 @@ enum ComposeFile {
 
         mutating func root(_ node: Node) -> ComposeSpec? {
             scan(node, path: "")
-            let declared = node.mapping?["version"]?.int ?? 0
+            let parsedVer = Self.parseVersionNode(node.mapping?["version"])
+            let declared = parsedVer.major
             version = ComposeSchema.versions.contains(declared) ? declared : ComposeSchema.versions.upperBound
             guard let top = fields(node, path: "", section: "root") else { return nil }
             let models = named(top["models"], path: "models").compactMap { name, value in model(value, path: "models.\(name)").map { (name, $0) } }
@@ -79,6 +80,7 @@ enum ComposeFile {
             let pipeline = fields(pipelineNode, path: "pipeline", section: "pipeline") ?? [:]
             var spec = ComposeSpec(name: text(top["name"], "name") ?? "", models: Dictionary(models) { first, _ in first }, answer: answer(pipeline["answer"]) ?? "")
             spec.version = declared
+            spec.schemaMinorVersion = parsedVer.minor
             spec.budget = budget(top["budget"], "budget")
             if let routes = pipeline["answer"]?.mapping?["routes"] { spec.routes = self.routes(routes) }
             if let memory = text(top["memory"], "memory") {
@@ -92,6 +94,7 @@ enum ComposeFile {
             mcp(top["mcp"], into: &spec)
             adapters(top["adapters"], answerNode: pipeline["answer"], into: &spec)
             benchmarks(top["benchmarks"], into: &spec)
+            parseRootV22(top, into: &spec)
             for (name, value) in named(top["pipelines"], path: "pipelines") {
                 prefix = "pipelines.\(name)"
                 if let named = self.pipeline(value, models: spec.models) { spec.pipelines[name] = named }
@@ -127,6 +130,7 @@ enum ComposeFile {
             }
             (model.apiKeyEnv, model.data) = (text(field["api_key_env"], "\(path).api_key_env"), text(field["data"], "\(path).data"))
             model.budget = budget(field["budget"], "\(path).budget")
+            parseModelV22(field, path: path, into: &model)
             return model
         }
 

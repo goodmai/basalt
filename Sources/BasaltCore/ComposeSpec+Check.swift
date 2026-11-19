@@ -30,8 +30,9 @@ extension ComposeSpec {
                 Issue(issue.path.hasPrefix("pipeline.") ? prefix + issue.path.dropFirst("pipeline".count) : issue.path, issue.message)
             }
         }
-        issues += pipelineIssues + experimentalIssues + mcpIssues + adapterIssues + benchmarkIssues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
-        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) && !benchmarkModels.contains(name) && !adapterBaseModels.contains(name) {
+        issues += pipelineIssues + experimentalIssues + mcpIssues + adapterIssues + benchmarkIssues + v22Issues + models.sorted { $0.key < $1.key }.flatMap { modelIssues($0.key, $0.value) }
+        let v22Used = v22ReferencedModels
+        for (name, _) in models.sorted(by: { $0.key < $1.key }) where !roles.keys.contains(name) && !benchmarkModels.contains(name) && !adapterBaseModels.contains(name) && !v22Used.contains(name) {
             issues.append(Issue("models.\(name)", "declared but not used by any pipeline's perceive, decide, answer, speak or imagine"))
         }
         return issues.reduce(into: [Issue]()) { unique, issue in if !unique.contains(issue) { unique.append(issue) } }
@@ -207,7 +208,7 @@ extension ComposeSpec {
     }
 
     var onDemandRoles: Set<String> {
-        deciderModels.union(speakerModels).union(imageGeneratorModels).union(imagineDecoderModels).union(imagineAuxModels)
+        deciderModels.union(speakerModels).union(imageGeneratorModels).union(imagineDecoderModels).union(imagineAuxModels).union(v22ReferencedModels)
     }
 
     var speakIssues: [Issue] {
