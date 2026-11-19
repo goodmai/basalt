@@ -42,6 +42,12 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("pv-preset"), help: "PV-Tuning budget preset (#546): fast, balanced (default) or thorough")
     var pvPreset: PVTunePreset = .balanced
 
+    @Flag(name: .customLong("qat-refine"), help: "Run domain-aware QAT fake-quant STE refinement before packing (#616)")
+    var qatRefine = false
+
+    @Option(name: .customLong("audit"), help: "Path to post-quantization quality, fairness, and leakage audit JSON (#616)")
+    var auditSuitePath: String?
+
     @Option(name: .long, help: "Requantize linear weights: affine:<bits>:<group>, mixed:<low>:<high>:<group> with --budget-gb, nf4:<group>, or gsq-rco with --bits <bpw>")
     var quantize: String?
 
