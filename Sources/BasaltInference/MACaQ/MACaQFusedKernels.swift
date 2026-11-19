@@ -106,6 +106,48 @@ package enum MACaQFusedKernels {
         )[0]
         return out.reshaped(x.shape)
     }
+
+    package static func switchBlockHadamard(
+        _ x: MLXArray,
+        indices: MLXArray,
+        preScale: MLXArray,
+        blockSize: Int,
+        numExperts: Int
+    ) -> MLXArray {
+        let origType = x.dtype
+        let batchShape = indices.shape
+        let rows = x.dim(-2)
+        let width = x.dim(-1)
+        let targetShape = batchShape + [rows, width]
+        let xExp = x.shape == targetShape ? x : broadcast(x, to: targetShape)
+        let idxExp = rows == 1
+            ? indices.asType(.int32)
+            : broadcast(indices.asType(.int32).expandedDimensions(axis: -1), to: batchShape + [rows])
+        let flatTasks = indices.size * rows
+        guard flatTasks > 0, width > 0, width.isMultiple(of: blockSize),
+              supportsSingleSimdHadamard(blockSize: blockSize, dtype: origType) else {
+            return differentiableSwitchHadamard(x, indices: indices, preScale: preScale, blockSize: blockSize)
+        }
+        let numBlocks = width / blockSize
+        let cleanScale = dtypes.contains(preScale.dtype) ? preScale : preScale.asType(.float32)
+        let scaleParam = MLXArray([1.0 / Float(blockSize).squareRoot()])
+        let out = switchSimdBlockWHTKernel(
+            [xExp.reshaped(flatTasks, width), idxExp.reshaped(flatTasks), cleanScale, scaleParam],
+            template: [
+                ("T", origType),
+                ("TS", cleanScale.dtype),
+                ("N", blockSize),
+                ("K", width),
+                ("E", numExperts),
+                ("PER_EXPERT_PRE", preScale.ndim == 2),
+            ],
+            grid: (32, numBlocks, flatTasks),
+            threadGroup: (32, 1, 1),
+            outputShapes: [[flatTasks, width]],
+            outputDTypes: [origType]
+        )[0]
+        return out.reshaped(targetShape)
+    }
 }
 
 private enum MACaQFusedMetal {
@@ -163,6 +205,53 @@ private enum MACaQFusedMetal {
             }
         }
         """
+
+    static let switchBlockWHTSource = """
+        constexpr int R = (N >= 32) ? (N / 32) : 1;
+        constexpr int INNER = (N < 32) ? N : 32;
+        const int blk = int(threadgroup_position_in_grid.y);
+        const int task = int(threadgroup_position_in_grid.z);
+        const int lane = int(thread_index_in_simdgroup);
+        const int e = int(rhs_indices[task]);
+        const size_t row_off = size_t(task) * size_t(K) + size_t(blk) * size_t(N);
+        if (e < 0 || e >= E) {
+            for (int r = 0; r < R; ++r) {
+                const int col = r * 32 + lane;
+                if (col < N) { out[row_off + size_t(col)] = static_cast<T>(0.0f); }
+            }
+            return;
+        }
+        const size_t p_off = (PER_EXPERT_PRE ? (size_t(e) * size_t(K)) : size_t(0)) + size_t(blk) * size_t(N);
+        const float scale = float(params[0]);
+        float a[R];
+        for (int r = 0; r < R; ++r) {
+            const int col = r * 32 + lane;
+            if (col < N) {
+                a[r] = float(inp[row_off + size_t(col)]) * float(signs[p_off + size_t(col)]);
+            } else {
+                a[r] = 0.0f;
+            }
+            a[r] = macaq_wht_simd<INNER>(a[r], lane);
+        }
+        if (R == 2) {
+            const float u0 = a[0], u1 = a[1 % R];
+            a[0] = u0 + u1;
+            a[1 % R] = u0 - u1;
+        } else if (R == 4) {
+            const float t0 = a[0] + a[1 % R], t1 = a[0] - a[1 % R];
+            const float t2 = a[2 % R] + a[3 % R], t3 = a[2 % R] - a[3 % R];
+            a[0] = t0 + t2;
+            a[1 % R] = t1 + t3;
+            a[2 % R] = t0 - t2;
+            a[3 % R] = t1 - t3;
+        }
+        for (int r = 0; r < R; ++r) {
+            const int col = r * 32 + lane;
+            if (col < N) {
+                out[row_off + size_t(col)] = static_cast<T>(a[r] * scale);
+            }
+        }
+        """
 }
 
 private let singleSimdBlockWHTKernel = MLXFast.metalKernel(
@@ -170,5 +259,13 @@ private let singleSimdBlockWHTKernel = MLXFast.metalKernel(
     inputNames: ["inp", "signs", "params"],
     outputNames: ["out"],
     source: MACaQFusedMetal.blockWHTSource,
+    header: MACaQFusedMetal.header
+)
+
+private let switchSimdBlockWHTKernel = MLXFast.metalKernel(
+    name: "macaq_switch_simd_wht",
+    inputNames: ["inp", "rhs_indices", "signs", "params"],
+    outputNames: ["out"],
+    source: MACaQFusedMetal.switchBlockWHTSource,
     header: MACaQFusedMetal.header
 )
