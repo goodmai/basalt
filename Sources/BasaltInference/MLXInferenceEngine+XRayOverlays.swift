@@ -203,8 +203,30 @@ extension MLXInferenceEngine {
     }
 
     static func forward(_ context: ModelContext, probe: (any ForwardProbe)?, _ tokens: [Int], cache: [KVCache]) -> MLXArray {
-        withForwardProbe(probe) { context.model(MLXArray(tokens)[.newAxis], cache: cache) }
+        var state: LMOutput.State?
+        return forward(context, probe: probe, tokens, cache: cache, state: &state)
     }
+
+    static func forward(
+        _ context: ModelContext,
+        probe: (any ForwardProbe)?,
+        _ tokens: [Int],
+        cache: [KVCache],
+        state: inout LMOutput.State?
+    ) -> MLXArray {
+        if let probe, let probable = context.model as? any BasaltProbableModel {
+            return probable.forwardWithProbe(MLXArray(tokens)[.newAxis], cache: cache, probe: probe)
+        }
+        return withForwardProbe(probe) {
+            let out = context.model(LMInput.Text(tokens: MLXArray(tokens)[.newAxis]), cache: cache, state: state)
+            state = out.state
+            return out.logits
+        }
+    }
+}
+
+package protocol BasaltProbableModel {
+    func forwardWithProbe(_ inputs: MLXArray, cache: [KVCache]?, probe: (any ForwardProbe)?) -> MLXArray
 }
 
 final class InterventionProbe: ForwardProbe {

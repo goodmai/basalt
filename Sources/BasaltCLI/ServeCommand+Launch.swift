@@ -22,6 +22,7 @@ struct ServerLaunch: Sendable {
     var startup: (@Sendable () async throws -> Void)? = nil
     var speechSynthesizer: (any SpeechSynthesizer)? = nil
     var imageSynthesizer: (any ImageSynthesizer)? = nil
+    var videoSynthesizer: (any VideoSynthesizer)? = nil
 }
 
 extension ServerLaunch {
@@ -114,6 +115,7 @@ extension ServeCommand {
                 ).withDecisions(launch.decisions).withPipeline(launch.pipeline).withPipelines(launch.pipelines, compose: launch.compose)
                     .withSpeechSynthesizer(launch.speechSynthesizer)
                     .withImageSynthesizer(launch.imageSynthesizer)
+                    .withVideoSynthesizer(launch.videoSynthesizer)
                     .withModelHub(.live(converter: UniversalModelConverter()))
                     .withReadyHandler(launch.readyHandler)
                 group.addTask { try await restServer.run(); return true }

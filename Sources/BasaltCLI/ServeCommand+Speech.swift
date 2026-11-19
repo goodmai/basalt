@@ -67,10 +67,7 @@ extension ServeCommand {
         let loadedDecisions = try await loadDecisions(chat: boot.engine, chatPath: boot.resolvedPath)
         let perceivePaths = try await pipelinePerceivePaths()
         let plan = try await admitComputePlan(
-            chatPath: boot.resolvedPath,
-            embeddings: loadedEmbeddings,
-            decisions: loadedDecisions,
-            perceive: perceivePaths
+            chatPath: boot.resolvedPath, embeddings: loadedEmbeddings, decisions: loadedDecisions, perceive: perceivePaths
         )
         let embeddings = BesideDecodeEmbeddingEngine.serving(loadedEmbeddings, besideDecode: plan.runsBesideDecode("embed"))
         let cloudGate = cloudGate(spec)
@@ -97,6 +94,7 @@ extension ServeCommand {
         }
         var activeSpeech = try await loadSpeechSynthesizer(gate: boot.orchestrator.gate, memory: memory)
         var activeImage = try await loadImageSynthesizer(gate: boot.orchestrator.gate)
+        let activeVideo = try await loadVideoSynthesizer()
         if let host, let system = await host.registry.system(ComposeSpec.defaultPipeline) {
             (stages, decisions) = (system.stages, system.decisions)
             if activeSpeech == nil { activeSpeech = system.speech }
@@ -118,7 +116,8 @@ extension ServeCommand {
                 config: boot.config, startREST: startREST, mcpServer: mcpServer, embeddings: embeddings, decisions: decisions,
                 pipeline: stages, pipelines: host?.registry, compose: host.map(\.control),
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
-                announceReady: network.announceReady, speechSynthesizer: activeSpeech, imageSynthesizer: activeImage
+                announceReady: network.announceReady, speechSynthesizer: activeSpeech, imageSynthesizer: activeImage,
+                videoSynthesizer: activeVideo
             ),
             orchestrator: boot.orchestrator
         )

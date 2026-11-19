@@ -73,6 +73,7 @@ struct TokenAttributionXrayTests {
         for tok in report.tokens {
             #expect(abs(tok.probability - Foundation::exp(tok.logprob)) < 1e-4)
             #expect(tok.entropy >= 0 && (0.0 ... 1.0).contains(tok.margin))
+            #expect(tok.margin <= tok.probability + 1e-4)
             #expect(tok.topLogprobs.count == 3)
             let layers = try #require(tok.layers)
             #expect(layers.count == layerCount)
@@ -81,6 +82,16 @@ struct TokenAttributionXrayTests {
             let onset = try #require(tok.onsetLayer)
             #expect((0 ..< layerCount).contains(onset))
         }
+    }
+
+    @Test("Flint Sparse MoE model reports heads, MoE experts, and logit-lens onset to /v1/xray/tokens")
+    func flintMoEXrayAttribution() async throws {
+        let engine = try await TinyModel.engine(.flint)
+        let anatomy = try await engine.anatomy()
+        let report = try await engine.attributeTokens(
+            AttributedTokenTraceRequest(prompt: "Hello", maxTokens: 3, temperature: 0.0, topLogprobs: 3, topHeads: 2)
+        )
+        try Self.assertValidReport(report, layerCount: anatomy.layers.count)
     }
 }
 
@@ -172,6 +183,13 @@ struct ChatAndGenerateLogprobsTests {
                 "prompt": "   ", "max_tokens": 4,
             ])
             #expect(bad2 == .badRequest)
+
+            let (minStatus, minData) = try await Self.postJSON(client, uri: "/v1/xray/tokens", body: [
+                "messages": [["role": "user", "content": "Hello"]], "max_tokens": 2,
+            ])
+            #expect(minStatus == .ok)
+            let minReport = try JSONDecoder().decode(AttributedTokenTraceReport.self, from: minData)
+            #expect(!minReport.tokens.isEmpty)
         }
     }
 }

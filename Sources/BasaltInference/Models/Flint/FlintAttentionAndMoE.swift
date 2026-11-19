@@ -20,6 +20,7 @@ package final class FlintMLP: Module, UnaryLayer {
 }
 
 package final class FlintSparseMoEBlock: Module, UnaryLayer {
+    let layerIdx: Int
     let numExperts: Int
     let topK: Int
     let normTopkProb: Bool
@@ -30,7 +31,8 @@ package final class FlintSparseMoEBlock: Module, UnaryLayer {
     @ModuleInfo(key: "shared_expert") var sharedExpert: FlintMLP?
     @ParameterInfo(key: "expert_bias") var expertBias: MLXArray
 
-    package init(_ args: FlintConfiguration) {
+    package init(_ args: FlintConfiguration, layerIdx: Int = 0) {
+        self.layerIdx = layerIdx
         self.numExperts = args.numExperts
         self.topK = args.numExpertsPerToken
         self.normTopkProb = args.normTopkProb
@@ -53,7 +55,17 @@ package final class FlintSparseMoEBlock: Module, UnaryLayer {
     }
 
     package func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let logits = gate(x)
+        callAsFunction(x, probe: nil)
+    }
+
+    package func callAsFunction(_ x: MLXArray, probe: (any ForwardProbe)?) -> MLXArray {
+        var logits = gate(x)
+        if let probe {
+            probe.routerLogits(layer: layerIdx, logits)
+            if let mask = probe.expertMask(layer: layerIdx) {
+                logits = MLX.where(mask .> 0, logits, -Float.infinity)
+            }
+        }
         let routed = FlintRouterKernel.route(
             logits,
             expertBias: expertBias,
@@ -62,6 +74,7 @@ package final class FlintSparseMoEBlock: Module, UnaryLayer {
             scoreFunction: scoreFunction,
             weightDType: .float32
         )
+        probe?.routerTopK(layer: layerIdx, indices: routed.indices, gates: routed.weights)
         let expertOut = switchMLP(x, routed.indices)
         let weighted = (expertOut.asType(.float32) * routed.weights.expandedDimensions(axis: -1))
             .sum(axis: -2)
@@ -74,6 +87,7 @@ package final class FlintSparseMoEBlock: Module, UnaryLayer {
 }
 
 package final class FlintAttention: Module {
+    let layerIdx: Int
     let heads: Int
     let kvHeads: Int
     let headDim: Int
@@ -90,6 +104,7 @@ package final class FlintAttention: Module {
     @ParameterInfo(key: "softmax_offset") var softmaxOffset: MLXArray?
 
     package init(_ args: FlintConfiguration, layerIdx: Int) {
+        self.layerIdx = layerIdx
         self.heads = args.attentionHeads
         self.kvHeads = args.kvHeads
         self.headDim = args.headDim
@@ -116,7 +131,8 @@ package final class FlintAttention: Module {
     package func callAsFunction(
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        cache: KVCache?
+        cache: KVCache?,
+        probe: (any ForwardProbe)? = nil
     ) -> MLXArray {
         let (b, l) = (x.dim(0), x.dim(1))
         var queries = qNorm(wq(x).reshaped(b, l, heads, headDim)).transposed(0, 2, 1, 3)
@@ -129,13 +145,22 @@ package final class FlintAttention: Module {
             keys = applyRotaryPosition(rope, to: keys, offset: offset)
         }
 
-        let attended = attend(
+        var attended = attend(
             queries: queries,
             keys: keys,
             values: values,
             mask: mask,
             cache: cache
         )
+        if let probe {
+            if let hMask = probe.headMask(layer: layerIdx) {
+                let perHead = hMask.ndim == 2
+                    ? hMask.transposed().expandedDimensions(axes: [0, 3])
+                    : hMask.reshaped(1, -1, 1, 1)
+                attended = attended * perHead.asType(attended.dtype)
+            }
+            probe.headOutputs(layer: layerIdx, attended)
+        }
         return wo(attended.transposed(0, 2, 1, 3).reshaped(b, l, -1))
     }
 

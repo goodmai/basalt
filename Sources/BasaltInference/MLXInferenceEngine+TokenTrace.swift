@@ -75,9 +75,10 @@ extension MLXInferenceEngine {
         let cache = try context.model.newCache(parameters: nil)
         let stops = stopTokenIds(context)
         var input = prompt
+        var state: LMOutput.State?
         var generated: [Int] = []
         while true {
-            let logits = forward(context, probe: recorder, input, cache: cache)
+            let logits = forward(context, probe: recorder, input, cache: cache, state: &state)
             let rows = try recorder.collect(positions: input.count)
             guard generated.count < maxTokens, !(generated.last.map(stops.contains) ?? false) else {
                 eval(rows)
