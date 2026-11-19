@@ -67,6 +67,15 @@ struct TrainSubcommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Run quality gate check after saving")
     var checkGate = false
 
+    @Option(name: .customLong("dpo-pairs"), help: "Optional preference pairs JSONL for two-stage SFT->DPO refinement on adapter weights (#617)")
+    var dpoPairs: String?
+
+    @Option(name: .customLong("quantized-base-bits"), help: "Quantized base weight bit-width (e.g. 4 or 8) to apply 40x LR scaling policy (#617)")
+    var quantizedBaseBits: Int?
+
+    @Option(name: .customLong("adalora-target-rank"), help: "Optional AdaLoRA target average rank for importance-based rank pruning (#617)")
+    var adaLoRATargetRank: Int?
+
     mutating func run() async throws {
         guard let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path else {
             throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")
@@ -79,6 +88,10 @@ struct TrainSubcommand: AsyncParsableCommand {
         request.method = try adapter.resolveMethod(fallbackRank: rank)
         (request.iterations, request.batchSize, request.learningRate, request.maxSeqLen) = (iterations, batchSize, learningRate, maxSeqLen)
         (request.output, request.checkpointEvery, request.resume, request.applyOverlay) = (output, checkpointEvery, resume, checkGate)
+        request.dpoPairsPath = dpoPairs
+        request.quantizedBaseBits = quantizedBaseBits
+        request.adaLoRATargetRank = adaLoRATargetRank
+        request.learningRate = request.effectiveLearningRate
 
         let report = try await GPULock.withLock(timeout: .seconds(300)) { [request] in
             let engine = MLXInferenceEngine()
