@@ -50,6 +50,8 @@ public struct ConversionDraft: Sendable, Equatable {
     public var pvTune: Bool = true
     public var pvPreset: PVTunePreset = .balanced
     public var pvTeacher: String = ""
+    public var qatRefine: Bool = false
+    public var runPostQuantAudit: Bool = false
     public var outputId: String
     public var plan: ModelConversionPlan?
 
@@ -128,6 +130,8 @@ public struct ConversionDraft: Sendable, Equatable {
         req.hadamardBlock = (family == .macaq || family == .macaqMoE) ? hadamardBlock : nil
         req.pvPreset = pvPreset
         req.pvTeacher = pvTeacher.isEmpty ? nil : pvTeacher
+        req.qatRefine = qatRefine && target.supportsPVTune
+        req.auditSuitePath = runPostQuantAudit ? "default" : nil
         return req
     }
 }

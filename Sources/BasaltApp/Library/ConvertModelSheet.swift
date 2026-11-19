@@ -20,6 +20,7 @@ public struct ConvertModelSheet: View {
                         targetSection(draft)
                         planCard(draft)
                         pvTuneSection(draft)
+                        qatAuditSection(draft)
                         outputSection(draft)
                     }
                     .padding(.vertical, 2)
@@ -28,7 +29,7 @@ public struct ConvertModelSheet: View {
                 footer(draft)
             }
             .padding(20)
-            .frame(width: 560, height: 610)
+            .frame(width: 560, height: 670)
         }
     }
 

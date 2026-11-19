@@ -346,3 +346,5 @@
 "3D-VAE" = "3D-VAE";
 "LTX-2 A/V" = "LTX-2 A/V";
 "AAC+HEVC" = "AAC+HEVC";
+"QAT Fake-Quant Refinement (Domain STE)" = "QAT Fake-Quant дообучение (Domain STE)";
+"Post-Quantization Quality & Fairness Audit" = "Пост-квантизационный аудит качества и справедливости";

@@ -79,6 +79,8 @@ extension ConvertSubcommand {
         req.pvTeacher = pvTeacher
         req.calibrationText = calText
         req.clusterPeers = (try? resolvedClusterPeers()) ?? []
+        req.qatRefine = qatRefine
+        req.auditSuitePath = auditSuitePath
         return req
     }
 

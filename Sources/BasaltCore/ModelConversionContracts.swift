@@ -15,6 +15,8 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
     public var pvTeacher: String? = nil
     public var calibrationText: String? = nil
     public var clusterPeers: [String] = []
+    public var qatRefine: Bool = false
+    public var auditSuitePath: String? = nil
     public var stream: Bool = true
 
     public init(
@@ -45,6 +47,8 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
         case pvTeacher = "pv_teacher"
         case calibrationText = "calibration_text"
         case clusterPeers = "cluster_peers"
+        case qatRefine = "qat_refine"
+        case auditSuitePath = "audit_suite_path"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -63,6 +67,8 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
         pvTeacher = try c.decodeIfPresent(String.self, forKey: .pvTeacher)
         calibrationText = try c.decodeIfPresent(String.self, forKey: .calibrationText)
         clusterPeers = try c.decodeIfPresent([String].self, forKey: .clusterPeers) ?? []
+        qatRefine = try c.decodeIfPresent(Bool.self, forKey: .qatRefine) ?? false
+        auditSuitePath = try c.decodeIfPresent(String.self, forKey: .auditSuitePath)
         stream = try c.decodeIfPresent(Bool.self, forKey: .stream) ?? true
     }
 }
@@ -199,26 +205,29 @@ public struct ModelConversionResult: Sendable, Equatable, Codable {
     public var bytesAfter: Int64
     public var shards: Int
     public var pvTune: ModelConversionPVSummary?
+    public var audit: QuantizationAuditVerdict?
 
     public init(
         outputId: String,
         bytesBefore: Int64,
         bytesAfter: Int64,
         shards: Int,
-        pvTune: ModelConversionPVSummary? = nil
+        pvTune: ModelConversionPVSummary? = nil,
+        audit: QuantizationAuditVerdict? = nil
     ) {
         self.outputId = outputId
         self.bytesBefore = bytesBefore
         self.bytesAfter = bytesAfter
         self.shards = shards
         self.pvTune = pvTune
+        self.audit = audit
     }
 
     enum CodingKeys: String, CodingKey {
         case outputId = "output_id"
         case bytesBefore = "bytes_before"
         case bytesAfter = "bytes_after"
-        case shards
+        case shards, audit
         case pvTune = "pv_tune"
     }
 }
