@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -25,8 +25,16 @@ enum TinyModel {
             case .flint: FlintModel(try decoder.decode(FlintConfiguration.self, from: config).validated())
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
+            case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
             case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer: try multimodalModel(config, decoder: decoder)
             }
+        }
+
+        private func videoModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
+            let decoded = try decoder.decode(VideoDiTConfiguration.self, from: config)
+            if self == .ltxVideo { return LTX25AVDiTModel(decoded) }
+            if self == .kandinskyCrossDiT { return KandinskyCrossDiTModel(decoded) }
+            return MoEVideoDiTModel(decoded)
         }
 
         private func multimodalModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
@@ -55,13 +63,16 @@ enum TinyModel {
             case .flint: 518
             case .ricursive: 520
             case .museGlimmer, .museGlimmerText: 533
+            case .ltxVideo: 584
+            case .kandinskyCrossDiT: 585
+            case .moeVideoDiT: 586
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
             }
         }
 
@@ -211,6 +222,19 @@ enum TinyModel {
                   "num_hidden_layers": 2, "num_attention_heads": 2, "patch_size": 14, "patch_temporal": 2, "merge_size": 2,
                   "max_position_embeddings": 16, "pos_emb_height": 4, "pos_emb_width": 4, "layer_norm_eps": 1e-5,
                   "layer_types": ["window_attention", "full_attention"]}}
+                """
+            case .ltxVideo: """
+                {"model_type": "ltx_video", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+                 "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
+                """
+            case .kandinskyCrossDiT: """
+                {"model_type": "kandinsky_cross_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+                 "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
+                """
+            case .moeVideoDiT: """
+                {"model_type": "moe_video_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+                 "num_attention_heads": 4, "intermediate_size": 64, "video_channels": 16, "audio_channels": 8,
+                 "num_experts": 4, "num_experts_per_tok": 2}
                 """
             }
         }
