@@ -97,6 +97,17 @@ public enum TelemetryExport {
             appendMetric("semantic_cache_entries", "gauge", "Entries stored in the LANTERN semantic cache.", [("", Double(semantic.entryCount))], into: &lines)
             appendMetric("semantic_cache_hit_ratio", "gauge", "LANTERN semantic cache hit ratio.", [("", semantic.hitRate)], into: &lines)
         }
+        if let tiered = snapshot.tieredKV {
+            appendMetric("tiered_kv_hits_total", "counter", "L0/L1/L2 tiered KV cache hits by tier.", [
+                ("tier=\"l0_gpu\"", Double(tiered.l0Hits)),
+                ("tier=\"l1_host_ram\"", Double(tiered.l1Hits)),
+                ("tier=\"l2_shared_nvme\"", Double(tiered.l2Hits)),
+            ], into: &lines)
+            appendMetric("tiered_kv_misses_total", "counter", "Tiered KV cache prefix misses.", [("", Double(tiered.misses))], into: &lines)
+            appendMetric("tiered_kv_demotions_total", "counter", "Tiered KV chunk demotions across L0/L1/L2.", [("", Double(tiered.demotions))], into: &lines)
+            appendMetric("tiered_kv_evictions_total", "counter", "Tiered KV chunk evictions from L2.", [("", Double(tiered.evictions))], into: &lines)
+            appendMetric("tiered_kv_hit_ratio", "gauge", "Tiered KV cache hit ratio across all tiers.", [("", tiered.hitRate)], into: &lines)
+        }
     }
 
     static func quantiles(_ windows: [TelemetryWindow], _ p50: KeyPath<TelemetryWindow, Double?>, _ p95: KeyPath<TelemetryWindow, Double?>) -> [(labels: String, value: Double)] {
