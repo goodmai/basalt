@@ -412,7 +412,6 @@ package enum LIRQuantCalibrator {
         options: QuantizeOptions = .init()
     ) -> LIRQuantLinear {
         let wf = linear.weight.asType(.float32)
-        let nOut = wf.dim(0)
         let k = wf.dim(1)
         let actFlat = activations?.asType(.float32).reshaped(-1, k)
         let sens: MLXArray = if let actFlat {
@@ -431,21 +430,21 @@ package enum LIRQuantCalibrator {
         let diagScale = MACaQMath.balancePreScale(
             weight: wf.take(permArr, axis: -1),
             meanSquareActivation: actFlat.map { mean(square($0.take(permArr, axis: -1)), axis: 0) } ?? MLXArray.ones([k], dtype: .float32))
-        eval(permArr, covArr, diagScale, wf)
-        let permHost = permArr.asArray(Int32.self)
+        eval(permArr, covArr, diagScale)
         let schedule = buildSchedule(
             subspaceCov: covArr.asArray(Float.self), subspaceWidth: kSub, layers: options.givensLayers)
-        let invScaleHost = (Float(1.0) / diagScale).asArray(Float.self)
-        let wConjHost = LIRQuantKernels.cpuTransform(
-            wf.asArray(Float.self), rows: nOut, perm: permHost, schedule: schedule, diagScale: invScaleHost)
-        let wConj = MLXArray(wConjHost, [nOut, k]).asType(linear.weight.dtype)
-        let (wq, scales, biases) = MLX.quantized(
-            wConj, groupSize: options.groupSize, bits: options.bits, mode: options.mode)
-        let packed = MACaQPackedWeights(weight: wq, scales: scales, biases: biases)
         let pairsTensor = schedule.flatPairs.isEmpty
             ? MLXArray([Int32(0), Int32(0)]) : MLXArray(schedule.flatPairs)
         let anglesTensor = schedule.flatAngles.isEmpty
             ? MLXArray([Float(1), Float(0)]) : MLXArray(schedule.flatAngles)
+        let invBasis = LIRBasisParameters(
+            perm: permArr, givensPairs: pairsTensor, givensAngles: anglesTensor,
+            diagScale: (Float(1.0) / diagScale).asType(.float32),
+            numLayers: schedule.numLayers, pairsPerLayer: schedule.pairsPerLayer)
+        let wConj = LIRQuantKernels.transform(wf, basis: invBasis).asType(linear.weight.dtype)
+        let (wq, scales, biases) = MLX.quantized(
+            wConj, groupSize: options.groupSize, bits: options.bits, mode: options.mode)
+        let packed = MACaQPackedWeights(weight: wq, scales: scales, biases: biases)
         let basis = LIRBasisParameters(
             perm: permArr, givensPairs: pairsTensor, givensAngles: anglesTensor,
             diagScale: diagScale.asType(linear.weight.dtype),

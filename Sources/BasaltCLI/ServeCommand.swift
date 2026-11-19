@@ -61,6 +61,12 @@ struct ServeCommand: AsyncParsableCommand {
     )
     var imageModel: String?
 
+    @Option(
+        name: .customLong("video-model"),
+        help: "Audio-visual Video DiT model served on /v1/videos/generations: repo ID or local path (Kandinsky, Wan 2.2, LTX-2, LingBot-Video)"
+    )
+    var videoModel: String?
+
     @OptionGroup var sampling: SamplingOptions
 
     @OptionGroup var kvCache: KVCacheOptions

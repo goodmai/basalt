@@ -105,7 +105,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([NemotronLightningModel.modelType, NemotronLightningModel.aliasModelType, "nemotron-lightning"], nemotron),
             ([NemotronTranscribeModel.modelType, "lfm2", "lfm2_moe", "lfm3", "lfm-3", "lfm3_moe", "lfm-3-moe", "mimo_v2_flash", "mimo-v2-flash", RicursiveModel.modelType, RicursiveModel.aliasModelType, MuseGlimmerTextModel.multimodalModelType, MuseGlimmerTextModel.modelType, "muse-glimmer"], recurrent),
             (["gemma3", "gemma3_text"], gemma3),
-            (["gemma4", "gemma4_text"], gemma4),
+            (["gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_text"], gemma4),
             ([FlintModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),

@@ -207,6 +207,29 @@ public struct AttributedTokenTraceRequest: Sendable, Codable, Equatable {
         self.includeAttentionEntropy = false
     }
 
+    private struct FlexibleMessage: Decodable {
+        let role: ChatMessageInput.Role
+        let text: String?
+        let content: String?
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
+        if let rawMsgs = try c.decodeIfPresent([FlexibleMessage].self, forKey: .messages) {
+            self.messages = rawMsgs.map { ChatMessageInput(role: $0.role, text: $0.content ?? $0.text ?? "") }
+        } else {
+            self.messages = nil
+        }
+        self.maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 32
+        self.temperature = try c.decodeIfPresent(Float.self, forKey: .temperature) ?? 0.0
+        self.topLogprobs = try c.decodeIfPresent(Int.self, forKey: .topLogprobs) ?? 5
+        self.topHeads = try c.decodeIfPresent(Int.self, forKey: .topHeads) ?? 4
+        self.layers = try c.decodeIfPresent([Int].self, forKey: .layers)
+        self.includeLogitLens = try c.decodeIfPresent(Bool.self, forKey: .includeLogitLens) ?? true
+        self.includeAttentionEntropy = try c.decodeIfPresent(Bool.self, forKey: .includeAttentionEntropy) ?? false
+    }
+
     public func validate(against anatomy: ModelAnatomy) throws(BasaltError) {
         let hasText = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (messages?.isEmpty == false)
         guard hasText else {

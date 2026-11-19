@@ -17,7 +17,7 @@ package final class FlintDecoderLayer: Module {
         self._inputLayerNorm.wrappedValue = RMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
         self._postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
         if args.isSparseMoE(layer: layerIdx) {
-            self._mlp.wrappedValue = FlintSparseMoEBlock(args)
+            self._mlp.wrappedValue = FlintSparseMoEBlock(args, layerIdx: layerIdx)
         } else {
             self._mlp.wrappedValue = FlintMLP(
                 dimensions: args.hiddenSize,
@@ -29,10 +29,15 @@ package final class FlintDecoderLayer: Module {
     package func callAsFunction(
         _ x: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        cache: KVCache?
+        cache: KVCache?,
+        probe: (any ForwardProbe)? = nil
     ) -> MLXArray {
-        let h = x + selfAttn(inputLayerNorm(x), mask: mask, cache: cache)
-        return h + mlp(postAttentionLayerNorm(h))
+        let h = x + selfAttn(inputLayerNorm(x), mask: mask, cache: cache, probe: probe)
+        let normed = postAttentionLayerNorm(h)
+        if let moe = mlp as? FlintSparseMoEBlock {
+            return h + moe(normed, probe: probe)
+        }
+        return h + mlp(normed)
     }
 }
 
@@ -62,7 +67,8 @@ public final class FlintModelInner: Module {
     public func callAsFunction(
         _ inputs: MLXArray,
         mask: MLXFast.ScaledDotProductAttentionMaskMode? = nil,
-        cache: [KVCache]? = nil
+        cache: [KVCache]? = nil,
+        probe: (any ForwardProbe)? = nil
     ) -> MLXArray {
         var h = embedTokens(inputs)
         let seqLen = h.dim(1)
@@ -92,13 +98,16 @@ public final class FlintModelInner: Module {
                 layerMask = fullMask!
             }
             let layerCache = cache.flatMap { idx < $0.count ? $0[idx] : nil }
-            h = layer(h, mask: layerMask, cache: layerCache)
+            h = layer(h, mask: layerMask, cache: layerCache, probe: probe)
+            if let probe {
+                h = probe.residual(layer: idx, h)
+            }
         }
         return norm(h)
     }
 }
 
-public final class FlintModel: Module, LLMModel, KVCacheDimensionProvider, LoRAModel {
+public final class FlintModel: Module, LLMModel, KVCacheDimensionProvider, LoRAModel, BasaltProbableModel {
     public static let modelType = "flint"
     private static let defaultPrefillChunkSize = 128
 
@@ -130,7 +139,11 @@ public final class FlintModel: Module, LLMModel, KVCacheDimensionProvider, LoRAM
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
-        let hidden = model(inputs, cache: cache)
+        forwardWithProbe(inputs, cache: cache, probe: nil)
+    }
+
+    package func forwardWithProbe(_ inputs: MLXArray, cache: [KVCache]?, probe: (any ForwardProbe)?) -> MLXArray {
+        let hidden = model(inputs, cache: cache, probe: probe)
         if let lmHead {
             return lmHead(hidden)
         }

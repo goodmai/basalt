@@ -499,6 +499,8 @@ struct VideoFrameSamplerAndAliasesTests {
         #expect(ModelCapabilities.of(modelType: "minimax")?.allows(.batchedDecode) == true)
         #expect(ModelCapabilities.of(modelType: "hunyuan_mt")?.allows(.kvQuantization) == true)
         #expect(ModelCapabilities.of(modelType: "falcon_h1")?.allows(.kvQuantization) == true)
+        #expect(ModelCapabilities.of(modelType: "gemma4_unified")?.allows(.kvQuantization) == true)
+        #expect(ModelCapabilities.of(modelType: "gemma4_unified_text")?.allows(.speculativeLookup) == true)
         #expect(ModelCapabilities.of(modelType: "falcon_h1")?.allows(.batchedDecode) == false)
         #expect(ModelCapabilities.of(modelType: "deepseek_v3") == nil)
         #expect(ModelCapabilities.of(modelType: "bitnet") == nil)

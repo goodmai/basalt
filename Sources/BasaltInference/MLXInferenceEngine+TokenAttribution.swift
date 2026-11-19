@@ -104,17 +104,35 @@ extension MLXInferenceEngine {
             throw .inferenceError("the model changed while token attribution was prepared; retry")
         }
         try request.validate(against: anatomy)
+        let templatedIds: [Int]?
+        if let messages = request.messages, !messages.isEmpty {
+            let genReq = GenerationRequest(prompt: ChatMessageInput.plainText(messages), messages: messages)
+            do {
+                let rendered = try await render(genReq, tools: nil, images: [:], container: container)
+                templatedIds = rendered.input.text.tokens.asArray(Int.self)
+            } catch {
+                templatedIds = nil
+            }
+        } else {
+            templatedIds = nil
+        }
         let interventions = activeInterventions()
         let modelName = modelDescription
         return try await Self.labRun(container, "token attribution") { context in
             try Self.runTokenAttribution(
-                request, modelName: modelName, anatomy: anatomy, interventions: interventions, context: context
+                request,
+                templatedIds: templatedIds,
+                modelName: modelName,
+                anatomy: anatomy,
+                interventions: interventions,
+                context: context
             )
         }
     }
 
     private static func runTokenAttribution(
         _ request: AttributedTokenTraceRequest,
+        templatedIds: [Int]?,
         modelName: String,
         anatomy: ModelAnatomy,
         interventions: [Intervention],
@@ -122,7 +140,16 @@ extension MLXInferenceEngine {
     ) throws -> AttributedTokenTraceReport {
         let resolvedText = (request.messages?.isEmpty == false)
             ? ChatMessageInput.plainText(request.messages ?? []) : request.prompt
-        let promptIds = context.tokenizer.encode(text: resolvedText, addSpecialTokens: true)
+        let promptIds: [Int]
+        if let templatedIds, !templatedIds.isEmpty {
+            promptIds = templatedIds
+        } else {
+            var encoded = context.tokenizer.encode(text: resolvedText, addSpecialTokens: true)
+            if let bos = context.tokenizer.bosToken.flatMap(context.tokenizer.convertTokenToId), encoded.first != bos {
+                encoded.insert(bos, at: 0)
+            }
+            promptIds = encoded
+        }
         guard !promptIds.isEmpty else {
             throw BasaltError.invalidRequestStructure(details: "xray tokens: prompt encodes to no tokens")
         }
@@ -181,21 +208,22 @@ extension MLXInferenceEngine {
         let cache = try context.model.newCache(parameters: nil)
         let stops = stopTokenIds(context)
         var input = promptIds
+        var state: LMOutput.State?
         var captures: [AttributedStepCapture] = []
         while captures.count < request.maxTokens {
-            let logits = forward(context, probe: recorder, input, cache: cache)
+            let logits = forward(context, probe: recorder, input, cache: cache, state: &state)
             let rows = try recorder.collect(positions: input.count)
             let row = logits[0, -1].asType(.float32)
-            let conf = FusedLogitConfidence.compute(row.reshaped(1, -1))
+            let stats = FusedLogitConfidence.statistics(logits: row)
             let logprobs = row - logSumExp(row)
             let nextArr = request.temperature <= 0 ? argMax(row, axis: -1) : MLXRandom.categorical(row / request.temperature)
             let topCount = min(max(0, request.topLogprobs), row.dim(0))
             let topIdsArr = topCount > 0 ? argSort(-logprobs)[..<topCount] : MLXArray.zeros([0], type: Int32.self)
-            eval(rows + [nextArr, conf.entropy, conf.top2Margin, topIdsArr, logprobs])
+            eval(rows + [nextArr, topIdsArr, logprobs])
             let sampledId = nextArr.item(Int.self)
             captures.append(AttributedStepCapture(
                 tokenId: sampledId, logprob: logprobs[sampledId].item(Float.self),
-                entropy: conf.entropy.item(Float.self), margin: conf.top2Margin.item(Float.self),
+                entropy: Float(stats?.entropy ?? 0.0), margin: Float(stats?.margin ?? 0.0),
                 topIds: topCount > 0 ? topIdsArr.asArray(Int.self) : [],
                 topLogprobs: topCount > 0 ? logprobs[topIdsArr].asArray(Float.self) : []
             ))
