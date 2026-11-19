@@ -92,10 +92,15 @@ enum KVHeadClassifier {
 }
 
 extension KVHeadClassifier {
-    static func select(model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, ratio: Double, length: Int = 3072) throws -> KVHeadSelection {
+    typealias Language = KVProbeLanguage
+
+    static func select(
+        model: any LanguageModel, tokenizer: any MLXLMCommon.Tokenizer, ratio: Double, length: Int = 3072,
+        language: KVProbeLanguage = .en
+    ) throws -> KVHeadSelection {
         let references = try calibrationDepths.enumerated().map { seed, depths in
             try Task.checkCancellation()
-            return try reference(model, probe(tokenizer: tokenizer, length: length, depths: depths, seed: seed))
+            return try reference(model, probe(tokenizer: tokenizer, length: length, depths: depths, seed: seed, language: language))
         }
         let heads = attentionHeads(references[0].dense)
         let retrieval = try greedy(heads: heads, keep: kept(heads, ratio: ratio)) {
@@ -108,24 +113,28 @@ extension KVHeadClassifier {
             answersKept: gates.allSatisfy(\.answersKept))
     }
 
-    static func probe(tokenizer: any MLXLMCommon.Tokenizer, length: Int, depths: [Double], seed: Int) -> Probe {
-        let sentences = filler.map { tokenizer.encode(text: $0 + " ", addSpecialTokens: false) }
+    static func probe(
+        tokenizer: any MLXLMCommon.Tokenizer, length: Int, depths: [Double], seed: Int,
+        language: KVProbeLanguage = .en
+    ) -> Probe {
+        let sentences = language.filler.map { tokenizer.encode(text: $0 + " ", addSpecialTokens: false) }
         var context: [Int] = [], sentence = 0
         while context.count < length {
             context += sentences[sentence % sentences.count]
             sentence += 1
         }
+        let places = language.places
         let facts = depths.enumerated().map { index, depth in
             (place: places[index % places.count], key: 41_000 + (seed * depths.count + index) * 7_919, at: Int(Double(context.count) * depth))
         }
         for fact in facts.sorted(by: { $0.at > $1.at }) {
-            let needle = " The pass key for the \(fact.place) is \(fact.key). Remember it: \(fact.key). "
+            let needle = language.needle(place: fact.place, key: fact.key)
             context.insert(contentsOf: tokenizer.encode(text: needle, addSpecialTokens: false), at: fact.at)
         }
         var tail: [Int] = [], answerRows: [Int] = []
         for fact in facts.reversed() {
-            tail += tokenizer.encode(text: " What is the pass key for the \(fact.place)? The pass key for the \(fact.place) is", addSpecialTokens: false)
-            let answer = tokenizer.encode(text: " \(fact.key).", addSpecialTokens: false)
+            tail += tokenizer.encode(text: language.question(place: fact.place), addSpecialTokens: false)
+            let answer = tokenizer.encode(text: language.answer(key: fact.key), addSpecialTokens: false)
             answerRows += (tail.count - 1) ..< (tail.count + answer.count - 1)
             tail += answer
         }

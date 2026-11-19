@@ -7,6 +7,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public let rotatesValues: Bool
     public let turbo: Bool
     public let polarRotated: Int?
+    public private(set) var centroidClusters: Int?
 
     public static let q8 = KVPrecision(bits: 8)
     public static let q4 = KVPrecision(bits: 4)
@@ -17,6 +18,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public static let turbo8v4 = KVPrecision(keyBits: 8, valueBits: 4, turbo: true)
     public static let polar4 = KVPrecision(keyBits: 4, valueBits: 4, polarRotated: 0)
     public static let supportedBits = [2, 3, 4, 5, 6, 8]
+    public static let supportedCentroidClusters = [4, 8, 16]
     static let named = [k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4]
 
     public init(keyBits: Int, valueBits: Int, rotatesValues: Bool = false, turbo: Bool = false, polarRotated: Int? = nil) {
@@ -25,6 +27,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
         self.rotatesValues = rotatesValues
         self.turbo = turbo
         self.polarRotated = polarRotated
+        self.centroidClusters = nil
     }
 
     public init(bits: Int) {
@@ -43,10 +46,19 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
 
     public var isUniform: Bool { keyBits == valueBits }
     public var isPolar: Bool { polarRotated != nil }
-    public var isUniformAffine: Bool { isUniform && !turbo && !isPolar && !rotatesValues }
+    public var isUniformAffine: Bool { isUniform && !turbo && !isPolar && !rotatesValues && centroidClusters == nil }
 
     public func resolvingPolar(rotated: Int) -> KVPrecision {
-        KVPrecision(keyBits: keyBits, valueBits: valueBits, rotatesValues: rotatesValues, turbo: turbo, polarRotated: rotated)
+        var copy = KVPrecision(keyBits: keyBits, valueBits: valueBits, rotatesValues: rotatesValues, turbo: turbo, polarRotated: rotated)
+        copy.centroidClusters = centroidClusters
+        return copy
+    }
+
+    public func withCentroids(_ clusters: Int) -> KVPrecision {
+        precondition(Self.supportedCentroidClusters.contains(clusters), "RQ-KV supports 4, 8, or 16 centroids")
+        var copy = self
+        copy.centroidClusters = clusters
+        return copy
     }
 
     public static var accepted: String {
@@ -63,6 +75,9 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
         if let fixed, fixed.isPolar, !zones {
             return "--kv-bits \(fixed) needs --kv-zones: polar keys are a format of the zoned cache's quantized middle (experimental, #351)"
         }
+        if let fixed, fixed.centroidClusters != nil, !zones {
+            return "--kv-bits \(fixed) needs --kv-zones: RQ-KV centroids quantize the zoned cache's middle"
+        }
         if let fixed, !fixed.isUniform, !fixed.turbo, !zones {
             return "--kv-bits \(fixed) needs --kv-zones: 8-bit keys and 4-bit values are a precision of the zoned cache's quantized middle"
         }
@@ -74,9 +89,10 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public var scheme: String? { turbo ? description : nil }
 
     public var description: String {
-        if turbo { return isUniform ? "turbo\(keyBits)" : "turbo\(keyBits)v\(valueBits)" }
-        if isPolar { return "polar\(valueBits)" }
-        return (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "")
+        let suffix = centroidClusters.map { "+rq\($0)" } ?? ""
+        if turbo { return (isUniform ? "turbo\(keyBits)" : "turbo\(keyBits)v\(valueBits)") + suffix }
+        if isPolar { return "polar\(valueBits)" + suffix }
+        return (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "") + suffix
     }
 }
 

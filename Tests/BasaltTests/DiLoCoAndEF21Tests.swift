@@ -48,10 +48,13 @@ struct DiLoCoAndEF21Tests {
 
     @Test("2-worker DiLoCo (H=8) with outer Nesterov + EF21 PowerSGD converges cleanly on TinyModel")
     func twoWorkerDiLoCoConvergence() throws {
-        let w0 = try TinyModel.make(.qwen3Small)
-        let w1 = try TinyModel.make(.qwen3Small)
-        _ = try MLXInferenceEngine.attachLoRA(to: w0, layers: [0, 1], rank: 8)
-        _ = try MLXInferenceEngine.attachLoRA(to: w1, layers: [0, 1], rank: 8)
+        let (w0, w1) = try withRandomState(MLXRandom.RandomState(seed: 567)) {
+            let m0 = try TinyModel.make(.qwen3)
+            let m1 = try TinyModel.make(.qwen3)
+            _ = try MLXInferenceEngine.attachLoRA(to: m0, layers: [0, 1], rank: 8)
+            _ = try MLXInferenceEngine.attachLoRA(to: m1, layers: [0, 1], rank: 8)
+            return (m0, m1)
+        }
         let syncURL = FileManager.default.temporaryDirectory.appending(path: "diloco-init-\(UUID().uuidString).safetensors")
         defer { try? FileManager.default.removeItem(at: syncURL) }
         eval(w0 as Module)
