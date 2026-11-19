@@ -49,8 +49,31 @@ struct ExperimentalServeOptions: ParsableArguments {
     )
     var macaqActivations: MACaQActivationMode = .fp16
 
+    @Flag(
+        name: .customLong("experimental-dllm"),
+        help: "Decode discrete diffusion language models (Dream, DiffuCoder, LLaDA) with Fast-dLLM DualBlockKVCache and confidence-threshold parallel unmasking (#574). Off by default until real-model throughput and quality are measured"
+    )
+    var dllm = false
+
+    @Flag(
+        name: .customLong("experimental-dflash"),
+        help: "Draft 8-16 tokens in one parallel block-diffusion forward pass conditioned on target hidden states (DFlash) and verify losslessly against the target model (#574). Off by default until real-model speedup is measured"
+    )
+    var dflash = false
+
+    var blockDiffusionConfig: BlockDiffusionConfig? {
+        dllm ? BlockDiffusionConfig() : nil
+    }
+
+    var dflashConfig: DFlashConfig? {
+        dflash ? DFlashConfig() : nil
+    }
+
     func validate() throws {
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
+        if dllm, dflash {
+            throw ValidationError("--experimental-dllm and --experimental-dflash cannot be combined: Fast-dLLM decodes a diffusion language model directly while DFlash drafts for an autoregressive target")
+        }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
         }
