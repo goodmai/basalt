@@ -130,14 +130,27 @@ struct LogitProbeRecorder: LogitProcessor {
             return logits
         }
         let row = logits.reshaped(-1, logits.dim(-1))[-1].asType(.float32)
-        let logprobs = row - logSumExp(row)
+        let conf = FusedLogitConfidence.compute(row.reshaped(1, -1))
         let count = min(max(0, probe.topK), row.dim(0))
         guard count > 0 else {
-            probe.record(ids: [], logprobs: [])
+            eval(conf.entropy, conf.top2Margin)
+            probe.record(
+                ids: [],
+                logprobs: [],
+                entropy: conf.entropy.item(Float.self),
+                margin: conf.top2Margin.item(Float.self)
+            )
             return logits
         }
+        let logprobs = row - logSumExp(row)
         let ids = argSort(-logprobs)[..<count]
-        probe.record(ids: ids.asArray(Int.self), logprobs: logprobs[ids].asArray(Float.self))
+        eval(ids, conf.entropy, conf.top2Margin)
+        probe.record(
+            ids: ids.asArray(Int.self),
+            logprobs: logprobs[ids].asArray(Float.self),
+            entropy: conf.entropy.item(Float.self),
+            margin: conf.top2Margin.item(Float.self)
+        )
         return logits
     }
 
