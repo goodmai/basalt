@@ -85,8 +85,9 @@ final class S3DiTModule: Module {
         var cond = input.condTokens
         let rope = RoPE2D.frequencies(gridH: tokH, gridW: tokW, headDim: config.headDim)
         let stepCtx = DiTStepContext(condVec: input.condVec, rope: rope, timestep: input.timestep, guidance: input.guidance)
-        for block in blocks {
-            (cond, img) = block(condTokens: cond, imgTokens: img, stepCtx: stepCtx)
+        for (idx, block) in blocks.enumerated() {
+            let refKV = idx < input.singleRefKV.count ? input.singleRefKV[idx] : nil
+            (cond, img) = block(condTokens: cond, imgTokens: img, stepCtx: stepCtx, refKV: refKV)
         }
         let p = config.patchSize
         let ch = config.latentChannels
@@ -125,6 +126,8 @@ public actor S3DiTSynthesizer: ImageStepRunner {
         let uncondTokens: MLXArray?
         let uncondVec: MLXArray?
         let bboxGrid: (mask: MLXArray, bias: MLXArray)?
+        let singleRefKV: [CachedReferenceLayerKV]
+        let referenceKVReused: Bool
         var teaCache: TeaCacheState
     }
 
@@ -133,6 +136,7 @@ public actor S3DiTSynthesizer: ImageStepRunner {
     nonisolated let config: ImageDiTConfig
     private let sharedTextEmbedder: (@Sendable (String) async throws -> [Float])?
     private var module: S3DiTModule?
+    private var referenceKVCache = ReferenceImageKVCache(capacity: 8)
     private var sessions: [Int: ActiveSession] = [:]
     private var nextSessionID = 0
     private var epoch = 0
@@ -184,6 +188,7 @@ public actor S3DiTSynthesizer: ImageStepRunner {
     public func unload() async {
         epoch &+= 1
         sessions.removeAll()
+        referenceKVCache.clear()
         module = nil
         Memory.clearCache()
     }
@@ -218,9 +223,9 @@ extension S3DiTSynthesizer {
         let hLat = max(config.patchSize, request.height / 8)
         let wLat = max(config.patchSize, request.width / 8)
         let noise = MLXRandom.normal([1, hLat, wLat, config.latentChannels], dtype: .float32, key: MLXRandom.key(seed))
-        let (refs, pixelMask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
-        let refLatents = refs.map { module.vae.encode($0) }
-        let startState = refLatents.first.map { 0.55 * $0 + 0.45 * noise } ?? noise
+        let (refSnapshot, uncachedRefLatents, primaryImg, pixelMask, cacheHit) = try resolveS3References(module: module, request: request)
+        let primaryLatent = refSnapshot?.primaryLatent ?? uncachedRefLatents.first
+        let startState = primaryLatent.map { 0.55 * $0 + 0.45 * noise } ?? noise
         let inlineBoxes = FourierTextEmbedder.parseInlineJSONBoundingBoxes(request.effectivePrompt)
         let mergedBoxes = request.config.bboxLayout + inlineBoxes
         let (condTokens, condVec) = buildS3Conditioning(
@@ -228,7 +233,7 @@ extension S3DiTSynthesizer {
             request: request,
             boxes: mergedBoxes,
             positiveVector: promptVectors.positive,
-            refLatents: refLatents
+            refLatents: refSnapshot == nil ? uncachedRefLatents : []
         )
         let (uncondTokens, uncondVec): (MLXArray?, MLXArray?) = if let neg = request.negativePrompt, let nVec = promptVectors.negative {
             module.textEncoder.encode(TextConditioningInput(prompt: neg, sharedVector: nVec))
@@ -252,8 +257,8 @@ extension S3DiTSynthesizer {
             wantsAlpha: ImageRunnerCore.wantsNativeAlpha(request: request, descriptor: descriptor),
             state: startState,
             initialNoise: noise,
-            primaryRefLatent: refLatents.first,
-            primaryRefImage: refs.first,
+            primaryRefLatent: primaryLatent,
+            primaryRefImage: refSnapshot?.primaryImage ?? primaryImg,
             pixelMask: pixelMask,
             latentMask: latentMask,
             condTokens: condTokens,
@@ -261,9 +266,41 @@ extension S3DiTSynthesizer {
             uncondTokens: uncondTokens,
             uncondVec: uncondVec,
             bboxGrid: bboxGrid,
+            singleRefKV: refSnapshot?.singleLayerKV ?? [],
+            referenceKVReused: cacheHit,
             teaCache: TeaCacheState(totalSteps: request.steps, threshold: request.config.teacacheThreshold)
         )
         return nextSessionID
+    }
+
+    private func resolveS3References(
+        module: S3DiTModule,
+        request: ImageGenerationRequest
+    ) throws(BasaltError) -> (CachedReferenceSnapshot?, [MLXArray], MLXArray?, MLXArray?, Bool) {
+        guard !request.config.referenceImages.isEmpty, request.config.reuseReferenceKV, !module.useReasonAdapter else {
+            let (refs, mask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
+            return (nil, refs.map { module.vae.encode($0) }, refs.first, mask, false)
+        }
+        let key = ReferenceKVCacheKey(
+            modelID: modelIdentifier,
+            width: request.width,
+            height: request.height,
+            hiddenSize: config.hiddenSize,
+            patchSize: config.patchSize,
+            referenceImages: request.config.referenceImages
+        )
+        let maskOnly: MLXArray? = if request.config.maskImage != nil {
+            try ImageRunnerCore.decodeReferencesAndMask(request: request).mask
+        } else {
+            nil
+        }
+        if let hit = referenceKVCache.lookup(key) {
+            return (hit, [], hit.primaryImage, maskOnly, true)
+        }
+        let (refs, decodedMask) = try ImageRunnerCore.decodeReferencesAndMask(request: request)
+        let built = ReferenceKVProjector.buildS3Snapshot(key: key, refImages: refs, module: module)
+        referenceKVCache.insert(built)
+        return (built, [], built.primaryImage, decodedMask, false)
     }
 
     private func buildS3Conditioning(
@@ -329,13 +366,14 @@ extension S3DiTSynthesizer {
         let uTok = session.uncondTokens
         let uVec = session.uncondVec
         let bGrid = session.bboxGrid
+        let refKVs = session.singleRefKV
         let velocity = session.teaCache.resolveVelocity(step: step, modulatedInput: probe) {
             let vPos = module.predictVelocity(
-                FluxForwardInput(latent: curState, condTokens: cTok, condVec: cVec, timestep: t0, guidance: guidance, bboxGrid: bGrid)
+                FluxForwardInput(latent: curState, condTokens: cTok, condVec: cVec, timestep: t0, guidance: guidance, bboxGrid: bGrid, singleRefKV: refKVs)
             )
             guard let uTok, let uVec, guidance > 1.0 else { return vPos }
             let vNeg = module.predictVelocity(
-                FluxForwardInput(latent: curState, condTokens: uTok, condVec: uVec, timestep: t0, guidance: 1.0, bboxGrid: nil)
+                FluxForwardInput(latent: curState, condTokens: uTok, condVec: uVec, timestep: t0, guidance: 1.0, bboxGrid: nil, singleRefKV: refKVs)
             )
             return vNeg + guidance * (vPos - vNeg)
         }
@@ -385,13 +423,16 @@ extension S3DiTSynthesizer {
             channels: channels,
             promptVector: session.promptVector
         )
-        return CandidateOutcome(
+        var outcome = CandidateOutcome(
             encoded: encoded,
             seed: session.seed,
             stepsExecuted: session.teaCache.executedSteps,
             teacacheSkippedSteps: session.teaCache.skippedSteps,
             alignmentScore: score
         )
+        outcome.dimensions = dims
+        outcome.referenceKVReused = session.referenceKVReused
+        return outcome
     }
 
     func releaseCandidateSession(_ sessionID: Int) async {

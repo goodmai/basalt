@@ -56,8 +56,23 @@ public struct ConversionDraft: Sendable, Equatable {
     public init(sourceId: String, sourceBytes: Int64) {
         self.sourceId = sourceId
         self.sourceBytes = sourceBytes
+        let lower = sourceId.lowercased()
         let baseName = sourceId.split(separator: "/").last.map(String.init) ?? "model"
-        self.outputId = "local/\(baseName)-MACaQ-4bit-PV"
+        if lower.contains("seedvr2") || lower.contains("seed_vr2") {
+            self.family = .affine
+            self.bits = 8
+            self.recipe = "sinq"
+            self.pvTune = false
+            self.outputId = "local/\(baseName)-8bit"
+        } else if lower.contains("flux") || lower.contains("qwen-image") || lower.contains("fibo") || lower.contains("ace-step") {
+            self.family = .macaq
+            self.useMXFP4InMACaQ = true
+            self.hadamardBlock = 32
+            self.pvTune = false
+            self.outputId = "local/\(baseName)-MACaQ-MXFP4"
+        } else {
+            self.outputId = "local/\(baseName)-MACaQ-4bit-PV"
+        }
     }
 
     public var resolvedTarget: QuantizationTarget {

@@ -29,10 +29,12 @@ package enum UniversalSourceReader {
             let size = (try? fm.attributesOfItem(atPath: directory.path)[.size] as? Int64) ?? 0
             return DetectedSourceCheckpoint(format: "gguf", effectiveBPW: 4.5, totalBytes: size, requiresCanonicalDecode: true)
         }
-        let cfgURL = directory.appending(component: "config.json")
+        let rootCfg = directory.appending(component: "config.json")
+        let transCfg = directory.appending(path: "transformer/config.json")
+        let cfgURL = FileManager.default.fileExists(atPath: rootCfg.path) ? rootCfg : transCfg
         guard let cfgData = try? Data(contentsOf: cfgURL),
               let json = (try? JSONSerialization.jsonObject(with: cfgData)) as? [String: Any] else {
-            throw .modelConfigurationInvalid(path: cfgURL.path, reason: "missing or invalid config.json")
+            throw .modelConfigurationInvalid(path: rootCfg.path, reason: "missing or invalid config.json")
         }
         let bytes = directoryWeightBytes(directory)
         if let macaq = json["macaq_quantization"] as? [String: Any],
@@ -121,11 +123,14 @@ package enum UniversalSourceReader {
     }
 
     static func directoryWeightBytes(_ directory: URL) -> Int64 {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return 0 }
+        let fm = FileManager.default
         var total: Int64 = 0
-        for name in names where name.hasSuffix(".safetensors") || name.hasSuffix(".gguf") {
-            let path = directory.appending(component: name).path
-            total += (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+        for sub in [directory, directory.appending(component: "transformer")] {
+            guard let names = try? fm.contentsOfDirectory(atPath: sub.path) else { continue }
+            for name in names where name.hasSuffix(".safetensors") || name.hasSuffix(".gguf") {
+                let path = sub.appending(component: name).path
+                total += (try? fm.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+            }
         }
         return total
     }
@@ -154,6 +159,11 @@ extension UniversalSourceReader {
             let summary = try BasisTransformConverter.exportCanonicalShards(
                 from: source, to: output, dtype: dtype, prepareDenseSidecars: prepareCleanDenseConfigAndSidecars)
             onStep?("canonical basis decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
+            return summary
+        }
+        if detected.format.hasPrefix("macaq:"), DiTBlockQuantizer.isDiTCheckpoint(source) {
+            let summary = try DiTBlockQuantizer.dequantizeMACaQDirectory(source: source, output: output, dtype: dtype)
+            onStep?("canonical DiT MACaQ decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
             return summary
         }
         return try await exportContainerDense(from: source, to: output, dtype: dtype, onStep: onStep)
@@ -196,7 +206,7 @@ extension UniversalSourceReader {
         return summary
     }
 
-    private static func prepareCleanDenseConfigAndSidecars(from source: URL, to output: URL, dtype: DType) throws {
+    fileprivate static func prepareCleanDenseConfigAndSidecars(from source: URL, to output: URL, dtype: DType) throws {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let cfgURL = source.appending(component: "config.json")
         let rawCfg = try Data(contentsOf: cfgURL)
@@ -214,8 +224,10 @@ extension UniversalSourceReader {
         try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appending(component: "config.json"))
     }
+}
 
-    private static func exportContainerDense(
+extension UniversalSourceReader {
+    fileprivate static func exportContainerDense(
         from source: URL,
         to output: URL,
         dtype: DType,
@@ -256,7 +268,7 @@ extension UniversalSourceReader {
         }
     }
 
-    private static func copyNonWeightSidecars(from source: URL, to output: URL) throws {
+    fileprivate static func copyNonWeightSidecars(from source: URL, to output: URL) throws {
         let fm = FileManager.default
         for name in try fm.contentsOfDirectory(atPath: source.path) where !name.hasPrefix(".") {
             let lower = name.lowercased()

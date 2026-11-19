@@ -22,6 +22,8 @@ public enum ImageSSEDecoder {
         var seed: UInt64?
         var steps: Int?
         var teacacheSkipped: Int?
+        var referenceKVReused: Bool?
+        var upscaledBy: Int?
         var model: String?
         var licenseTier: String?
         var elapsedMs: Int?
@@ -36,6 +38,8 @@ public enum ImageSSEDecoder {
             case revisedPrompt = "revised_prompt"
             case hasAlpha = "has_alpha"
             case teacacheSkipped = "teacache_skipped"
+            case referenceKVReused = "reference_kv_reused"
+            case upscaledBy = "upscaled_by"
             case licenseTier = "license_tier"
             case elapsedMs = "elapsed_ms"
         }
@@ -92,6 +96,8 @@ public enum ImageSSEDecoder {
         part.seed = envelope.seed
         part.currentStep = totalSteps
         part.teacacheSkipped = envelope.teacacheSkipped ?? 0
+        part.referenceKVReused = envelope.referenceKVReused ?? false
+        part.upscaledBy = envelope.upscaledBy ?? 1
         part.licenseTier = envelope.licenseTier
         part.boxes = envelope.boxes ?? []
         let inlineBytes: Data?

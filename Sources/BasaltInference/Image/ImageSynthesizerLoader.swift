@@ -36,6 +36,11 @@ public enum ImageSynthesizerLoader {
                 sharedTextEmbedder: sharedTextEmbedder,
                 externalDecoderDirectory: externalDecoderDirectory
             )
+        case .seedVR2Upscaler:
+            return try SeedVR2OneStepUpscaler(
+                directory: directory,
+                identifier: identifier
+            )
         }
     }
 

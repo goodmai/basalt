@@ -11,6 +11,7 @@ public enum ImageArchitectureFamily: String, Sendable, Codable, Equatable, CaseI
     case step1XReasonEdit = "step1x_reason_edit"
     case unifiedMoT = "unified_mot"
     case audioToImage = "audio_to_image"
+    case seedVR2Upscaler = "seedvr2_upscaler"
 }
 
 public struct ImageMemoryFootprint: Sendable, Codable, Equatable {
@@ -57,6 +58,7 @@ public struct ImageModelDescriptor: Sendable, Codable, Equatable {
     public var usesVAE: Bool
     public var supportsNativeRGBA: Bool
     public var supportsMultiReferenceEdit: Bool
+    public var supportsReferenceKVCache: Bool
     public var maxReferences: Int
     public var supportsBBoxLayout: Bool
     public var supportsAudioConditioning: Bool
@@ -82,6 +84,7 @@ public struct ImageModelDescriptor: Sendable, Codable, Equatable {
         self.usesVAE = true
         self.supportsNativeRGBA = false
         self.supportsMultiReferenceEdit = false
+        self.supportsReferenceKVCache = false
         self.maxReferences = 0
         self.supportsBBoxLayout = false
         self.supportsAudioConditioning = false
@@ -101,8 +104,10 @@ extension ImageModelDescriptor {
     private static let detectionRules: [DetectionRule] = [
         DetectionRule(allOf: ["base"], anyOf: ["flux-3", "flux.3", "flux3", "flux3transformer"], build: flux3KleinBase(id:)),
         DetectionRule(allOf: [], anyOf: ["flux-3", "flux.3", "flux3", "flux3transformer"], build: flux3Klein(id:)),
+        DetectionRule(allOf: ["klein", "9b", "kv"], anyOf: [], build: flux2Klein9BKV(id:)),
         DetectionRule(allOf: ["klein", "9b"], anyOf: [], build: flux2Klein9BNonCommercial(id:)),
         DetectionRule(allOf: [], anyOf: ["klein", "flux.2", "flux2"], build: flux2Klein4B(id:)),
+        DetectionRule(allOf: [], anyOf: ["seedvr2", "seed_vr2"], build: seedVR2_3B(id:)),
         DetectionRule(allOf: [], anyOf: ["iris-3b", "iris_3b", "pixel_dit"], build: iris3BTurbo(id:)),
         DetectionRule(allOf: [], anyOf: ["hidream"], build: hiDreamO1(id:)),
         DetectionRule(allOf: [], anyOf: ["sana"], build: sana15(id:)),
@@ -162,6 +167,7 @@ extension ImageModelDescriptor {
             licenseTier: .permissiveCommercial, generatorBillionParams: 4.0, textEncoderFamily: "qwen3"
         )
         d.supportsMultiReferenceEdit = true
+        d.supportsReferenceKVCache = true
         d.maxReferences = 6
         d.defaultSteps = 4
         return d
@@ -173,7 +179,17 @@ extension ImageModelDescriptor {
             licenseTier: .nonCommercialResearch, generatorBillionParams: 9.0, textEncoderFamily: "qwen3"
         )
         d.supportsMultiReferenceEdit = true
+        d.supportsReferenceKVCache = true
         d.maxReferences = 8
+        return d
+    }
+
+    public static func flux2Klein9BKV(id: String = "black-forest-labs/FLUX.2-klein-9B-kv") -> ImageModelDescriptor {
+        var d = flux2Klein9BNonCommercial(id: id)
+        d.supportsNativeRGBA = true
+        d.supportsReferenceKVCache = true
+        d.maxReferences = 10
+        d.defaultSteps = 4
         return d
     }
 
@@ -183,7 +199,9 @@ extension ImageModelDescriptor {
             licenseTier: .revenueCappedCommercial, generatorBillionParams: 5.55, textEncoderFamily: "qwen3_vl"
         )
         d.textEncoderBillionParams = 4.4
+        d.supportsNativeRGBA = true
         d.supportsMultiReferenceEdit = true
+        d.supportsReferenceKVCache = true
         d.maxReferences = 10
         d.supportsBBoxLayout = true
         d.defaultSteps = 16
@@ -287,6 +305,7 @@ extension ImageModelDescriptor {
         d.textEncoderBillionParams = 8.0
         d.supportsNativeRGBA = true
         d.supportsMultiReferenceEdit = true
+        d.supportsReferenceKVCache = true
         d.maxReferences = 10
         d.supportsBBoxLayout = true
         return d
@@ -297,10 +316,26 @@ extension ImageModelDescriptor {
             id: id, family: .fiboPerceiver, licenseName: "CC BY-NC 4.0",
             licenseTier: .nonCommercialResearch, generatorBillionParams: 8.1, textEncoderFamily: "qwen3_vl"
         )
+        d.supportsNativeRGBA = true
         d.supportsMultiReferenceEdit = true
-        d.maxReferences = 5
+        d.supportsReferenceKVCache = true
+        d.maxReferences = 10
         d.supportsBBoxLayout = true
         d.defaultSteps = 4
+        d.minimumRecommendedBits = 8
+        return d
+    }
+
+    public static func seedVR2_3B(id: String = "ByteDance-Seed/SeedVR2-3B") -> ImageModelDescriptor {
+        var d = ImageModelDescriptor(
+            id: id, family: .seedVR2Upscaler, licenseName: "Apache-2.0",
+            licenseTier: .permissiveCommercial, generatorBillionParams: 3.0, textEncoderFamily: "none"
+        )
+        d.textEncoderBillionParams = 0.0
+        d.supportsNativeRGBA = true
+        d.supportsMultiReferenceEdit = true
+        d.maxReferences = 1
+        d.defaultSteps = 1
         d.minimumRecommendedBits = 8
         return d
     }

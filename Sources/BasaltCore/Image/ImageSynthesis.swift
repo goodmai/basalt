@@ -83,6 +83,8 @@ public struct ImageGenerationConfig: Sendable, Codable, Equatable {
     public var audioConditioning: Data?
     public var audioStrength: Double?
     public var upsampledPrompt: String?
+    public var reuseReferenceKV: Bool
+    public var upscaleFactor: Int?
 
     public init(
         guidanceScale: Double = 3.5,
@@ -104,6 +106,8 @@ public struct ImageGenerationConfig: Sendable, Codable, Equatable {
         self.audioConditioning = nil
         self.audioStrength = nil
         self.upsampledPrompt = nil
+        self.reuseReferenceKV = true
+        self.upscaleFactor = nil
     }
 }
 
@@ -182,6 +186,9 @@ public struct ImageGenerationRequest: Sendable, Codable, Equatable {
         guard (1 ... 64).contains(config.candidates) else {
             throw .invalidRequestStructure(details: "image: candidates must be within 1...64")
         }
+        if let scale = config.upscaleFactor, ![1, 2, 4].contains(scale) {
+            throw .invalidRequestStructure(details: "image: upscale_factor must be 1, 2 or 4")
+        }
     }
 
     public static func parseSize(_ size: String) throws(BasaltError) -> ImageDimensions {
@@ -225,6 +232,8 @@ public struct ImageCompletedArtifact: Sendable, Codable, Equatable {
     public var licenseTier: ImageLicenseTier
     public var upsampledPrompt: String?
     public var decoderModel: String?
+    public var referenceKVReused: Bool
+    public var upscaledBy: Int
     public var elapsedMs: Int
 
     public init(
@@ -247,6 +256,8 @@ public struct ImageCompletedArtifact: Sendable, Codable, Equatable {
         self.licenseTier = .permissiveCommercial
         self.upsampledPrompt = nil
         self.decoderModel = nil
+        self.referenceKVReused = false
+        self.upscaledBy = 1
         self.elapsedMs = 0
     }
 

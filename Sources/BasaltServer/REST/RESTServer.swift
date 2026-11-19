@@ -15,6 +15,7 @@ package struct RESTServer: Sendable {
     private(set) var compose: ComposeControl?
     private(set) var speechSynthesizer: (any SpeechSynthesizer)?
     private(set) var imageSynthesizer: (any ImageSynthesizer)?
+    private(set) var musicSynthesizer: (any MusicSynthesizer)?
     private(set) var imageStoreDirectory: URL?
     private(set) var modelHub = ModelHubOperations.live()
     private(set) var onReady: (@Sendable (Int) -> Void)?
@@ -177,6 +178,7 @@ package struct RESTServer: Sendable {
         oai.post("/systemone", use: SystemOneController(engine: { await registry.system(ComposeSpec.defaultPipeline)?.decisions }, log: orchestrator.sessionLog, telemetry: orchestrator.telemetry).decide)
         oai.post("/audio/transcriptions", use: TranscriptionsController(orchestrator: orchestrator).transcriptions)
         AudioSpeechController(synthesizer: speechSynthesizer, pipelines: registry).add(to: oai)
+        AudioMusicController(synthesizer: musicSynthesizer, pipelines: registry).add(to: oai)
         ImagesController(synthesizer: imageSynthesizer, pipelines: registry, storeDirectory: imageStoreDirectory).add(to: oai)
         oai.post("/ocr", use: OCRController(orchestrator: orchestrator).ocr)
         let pipelineController = PipelineController(registry: registry, chat: orchestrator)
@@ -213,6 +215,12 @@ extension RESTServer {
     package func withSpeechSynthesizer(_ synthesizer: (any SpeechSynthesizer)?) -> RESTServer {
         var server = self
         server.speechSynthesizer = synthesizer
+        return server
+    }
+
+    package func withMusicSynthesizer(_ synthesizer: (any MusicSynthesizer)?) -> RESTServer {
+        var server = self
+        server.musicSynthesizer = synthesizer
         return server
     }
 

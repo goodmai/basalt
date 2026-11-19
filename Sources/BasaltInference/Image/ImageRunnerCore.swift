@@ -10,10 +10,27 @@ struct PromptVectorPair: Sendable {
 
 struct CandidateOutcome: Sendable {
     let encoded: EncodedImageBuffer
+    var dimensions: ImageDimensions = ImageDimensions()
     let seed: UInt64
     let stepsExecuted: Int
     let teacacheSkippedSteps: Int
     let alignmentScore: Float
+    var referenceKVReused: Bool = false
+    var upscaledBy: Int = 1
+
+    init(
+        encoded: EncodedImageBuffer,
+        seed: UInt64,
+        stepsExecuted: Int,
+        teacacheSkippedSteps: Int,
+        alignmentScore: Float
+    ) {
+        self.encoded = encoded
+        self.seed = seed
+        self.stepsExecuted = stepsExecuted
+        self.teacacheSkippedSteps = teacacheSkippedSteps
+        self.alignmentScore = alignmentScore
+    }
 }
 
 protocol ImageStepRunner: ImageSynthesizer {
@@ -400,10 +417,13 @@ extension ImageRunnerCore {
         elapsed: Duration
     ) -> ImageCompletedArtifact {
         let elapsedMs = max(0, Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000))
+        let outDims = chosen.upscaledBy > 1
+            ? chosen.dimensions
+            : ImageDimensions(width: request.width, height: request.height)
         var artifact = ImageCompletedArtifact(
             imageData: chosen.encoded.data,
             format: chosen.encoded.format,
-            dimensions: ImageDimensions(width: request.width, height: request.height),
+            dimensions: outDims,
             hasAlpha: chosen.encoded.hasAlpha,
             seed: chosen.seed,
             model: runner.modelIdentifier
@@ -413,6 +433,8 @@ extension ImageRunnerCore {
         artifact.compute = runner.descriptor.defaultCompute
         artifact.licenseTier = runner.descriptor.licenseTier
         artifact.upsampledPrompt = request.config.upsampledPrompt
+        artifact.referenceKVReused = chosen.referenceKVReused
+        artifact.upscaledBy = chosen.upscaledBy
         artifact.elapsedMs = elapsedMs
         return artifact
     }
@@ -447,6 +469,28 @@ extension ImageRunnerCore {
                 continuation?.yield(.partial(partial))
             }
         }
-        return try await runner.finalizeCandidateSession(sessionID)
+        let baseOutcome = try await runner.finalizeCandidateSession(sessionID)
+        guard let scale = request.config.upscaleFactor, scale > 1 else {
+            return baseOutcome
+        }
+        let upscaler = SeedVR2OneStepUpscaler()
+        let wantsAlpha = wantsNativeAlpha(request: request, descriptor: runner.descriptor)
+        let (upEncoded, upDims) = try await upscaler.upscaleEncoded(
+            baseOutcome.encoded.data,
+            scaleFactor: scale,
+            format: request.outputFormat,
+            forceOpaque: !wantsAlpha
+        )
+        var upscaledOutcome = CandidateOutcome(
+            encoded: upEncoded,
+            seed: baseOutcome.seed,
+            stepsExecuted: baseOutcome.stepsExecuted,
+            teacacheSkippedSteps: baseOutcome.teacacheSkippedSteps,
+            alignmentScore: baseOutcome.alignmentScore
+        )
+        upscaledOutcome.dimensions = upDims
+        upscaledOutcome.referenceKVReused = baseOutcome.referenceKVReused
+        upscaledOutcome.upscaledBy = scale
+        return upscaledOutcome
     }
 }
