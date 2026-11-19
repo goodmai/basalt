@@ -90,6 +90,13 @@ public enum TelemetryExport {
             appendMetric("calibration_agreement_total", "counter", "Decisions agreeing with the teacher or verifier.", [("", Double(calibration.agreements))], into: &lines)
             appendMetric("calibration_ece", "gauge", "Expected calibration error across reliability bins.", [("", calibration.ece)], into: &lines)
         }
+        if let semantic = snapshot.semanticCache {
+            appendMetric("semantic_cache_hits_total", "counter", "LANTERN semantic cache hits since start.", [("", Double(semantic.hits))], into: &lines)
+            appendMetric("semantic_cache_misses_total", "counter", "LANTERN semantic cache misses since start.", [("", Double(semantic.misses))], into: &lines)
+            appendMetric("semantic_cache_evictions_total", "counter", "LANTERN semantic cache evictions since start.", [("", Double(semantic.evictions))], into: &lines)
+            appendMetric("semantic_cache_entries", "gauge", "Entries stored in the LANTERN semantic cache.", [("", Double(semantic.entryCount))], into: &lines)
+            appendMetric("semantic_cache_hit_ratio", "gauge", "LANTERN semantic cache hit ratio.", [("", semantic.hitRate)], into: &lines)
+        }
     }
 
     static func quantiles(_ windows: [TelemetryWindow], _ p50: KeyPath<TelemetryWindow, Double?>, _ p95: KeyPath<TelemetryWindow, Double?>) -> [(labels: String, value: Double)] {

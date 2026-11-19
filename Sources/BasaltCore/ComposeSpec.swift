@@ -112,6 +112,7 @@ public struct ComposeSpec: Sendable, Equatable {
     public var video: VideoComposeSpec?
     public var train: ComposeTrainSpec?
     public var cluster: ComposeClusterSpec?
+    public var semanticCache: SemanticCacheConfig?
 
     public init(name: String, models: [String: Model], answer: String) {
         (self.name, self.models, self.answer) = (name, models, answer)
