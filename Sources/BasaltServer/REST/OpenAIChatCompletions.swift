@@ -13,13 +13,22 @@ extension OpenAIController {
             let tools = try pipeline.tools(parsed.tools)
             let format = try pipeline.responseFormat(parsed.responseFormat)
             let stream = dto.stream == true
+            let anti = try pipeline.antiRepetition(parsed.antiRepetition, bodyBytes: buffer.readableBytes)
+            let chat = try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }
+            let model = dto.model ?? modelId
+            if anti.xrayTrace == true, !stream {
+                let topLP = anti.topLogprobs ?? anti.nProbs ?? 5
+                return try await XrayTokensController.chatXrayResponse(
+                    chat: chat, maxTokens: dto.maxTokens, temperature: dto.temperature,
+                    topLogprobs: topLP, model: model, orchestrator: orchestrator
+                )
+            }
             let prepared = try pipeline.prepare(ChatPipeline.Input(
-                chat: try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }, maxTokens: dto.maxTokens,
-                sampling: dto.sampling(try pipeline.antiRepetition(parsed.antiRepetition, bodyBytes: buffer.readableBytes)),
+                chat: chat, maxTokens: dto.maxTokens,
+                sampling: dto.sampling(anti),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
                 responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
-            let model = dto.model ?? modelId
             let includeUsage = dto.streamOptions?.includeUsage == true
             return await pipeline.respond(to: prepared, stream: stream) { chunks in
                 OpenAIChatStream(model: model, includeUsage: includeUsage).response(streaming: chunks)
@@ -89,12 +98,18 @@ extension OpenAIController {
         let choices: [Choice]
         let usage: Usage
 
+        struct ChoiceLogprobs: Codable, Sendable {
+            let content: [OutputTokenTelemetry]?
+            var summary: AttributedTokenTraceSummary? = nil
+        }
+
         struct Choice: Codable, Sendable {
             let index: Int
             let message: ChatMessage
             let finishReason: String
+            var logprobs: ChoiceLogprobs? = nil
             enum CodingKeys: String, CodingKey {
-                case index, message
+                case index, message, logprobs
                 case finishReason = "finish_reason"
             }
         }
@@ -124,9 +139,10 @@ extension OpenAIController.ChatCompletionResponse {
             role: "assistant", content: onlyCalls ? nil : .text(result.generatedText),
             toolCalls: calls.isEmpty ? nil : calls.map { OpenAIController.ChatToolCall($0) }, reasoning: result.reasoningText)
         let finishReason = OpenAIController.finishReason(result.finishReason, calledTools: !calls.isEmpty)
+        let choiceLogprobs = result.tokenTelemetry.map { ChoiceLogprobs(content: $0) }
         self = Self(
             id: "chatcmpl-\(UUID().uuidString)", object: "chat.completion", created: Int(Date().timeIntervalSince1970),
-            model: model, choices: [Choice(index: 0, message: message, finishReason: finishReason)],
+            model: model, choices: [Choice(index: 0, message: message, finishReason: finishReason, logprobs: choiceLogprobs)],
             usage: Usage(
                 promptTokens: result.promptTokens,
                 promptTokensDetails: OpenAIController.CachedTokens(cachedTokens: result.cachedPromptTokens),
@@ -194,7 +210,13 @@ struct OpenAIChatStream: EventStreamEncoder {
             yield(SSEFastWriter.errorFrame(message: ModelsController.generationFailed))
             return
         }
-        yield(writer.finish(OpenAIController.finishReason(final?.finishReason, calledTools: toolCallCount > 0)))
+        let finishReason = OpenAIController.finishReason(final?.finishReason, calledTools: toolCallCount > 0)
+        if let telemetry = final?.tokenTelemetry {
+            yield(XrayTokensController.streamingLogprobsFinishFrame(
+                id: id, created: created, model: model, finishReason: finishReason, telemetry: telemetry))
+        } else {
+            yield(writer.finish(finishReason))
+        }
         if includeUsage, let final {
             yield(writer.usage(final))
         }

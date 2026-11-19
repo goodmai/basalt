@@ -100,15 +100,18 @@ struct ChatRequestFastReader {
         _ root: UnsafeMutablePointer<yyjson_val>
     ) throws(DecodeError) -> ChatPipeline.AntiRepetition {
         var cursor = ObjectCursor(root)
-        let dryMultiplier = try cursor.double("dry_multiplier")
-        let dryBase = try cursor.double("dry_base")
-        let dryAllowedLength = try cursor.int("dry_allowed_length")
-        let drySequenceBreakers = try cursor.stringArray("dry_sequence_breakers")
-        let xtcThreshold = try cursor.double("xtc_threshold")
-        let xtcProbability = try cursor.double("xtc_probability")
-        return ChatPipeline.AntiRepetition(
-            dryMultiplier: dryMultiplier, dryBase: dryBase, dryAllowedLength: dryAllowedLength,
-            drySequenceBreakers: drySequenceBreakers, xtcThreshold: xtcThreshold, xtcProbability: xtcProbability)
+        var out = ChatPipeline.AntiRepetition()
+        out.dryMultiplier = try cursor.double("dry_multiplier")
+        out.dryBase = try cursor.double("dry_base")
+        out.dryAllowedLength = try cursor.int("dry_allowed_length")
+        out.drySequenceBreakers = try cursor.stringArray("dry_sequence_breakers")
+        out.xtcThreshold = try cursor.double("xtc_threshold")
+        out.xtcProbability = try cursor.double("xtc_probability")
+        out.logprobs = try cursor.bool("logprobs")
+        out.topLogprobs = try cursor.int("top_logprobs")
+        out.nProbs = try cursor.int("n_probs")
+        out.xrayTrace = try cursor.bool("xray_trace")
+        return out
     }
 }
 

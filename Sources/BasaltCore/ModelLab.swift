@@ -11,6 +11,7 @@ public protocol ModelLab: ModelResearch {
     func distill(_ request: DistillRequest, lease: StepLease?) async throws(BasaltError) -> DistillReport
     func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport
     func traceTokens(_ request: TokenTraceRequest) async throws(BasaltError) -> TokenTraceReport
+    func attributeTokens(_ request: AttributedTokenTraceRequest) async throws(BasaltError) -> AttributedTokenTraceReport
     func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport
     func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary
     func trainCorpus(_ request: CorpusTrainRequest, lease: StepLease?) async throws(BasaltError) -> CorpusTrainReport
@@ -27,6 +28,9 @@ extension ModelLab {
     public func distill(_ request: DistillRequest, lease: StepLease?) async throws(BasaltError) -> DistillReport { throw Self.unavailable("distillation") }
     public func score(_ request: ScoreRequest) async throws(BasaltError) -> ScoreReport { throw Self.unavailable("scoring") }
     public func traceTokens(_ request: TokenTraceRequest) async throws(BasaltError) -> TokenTraceReport { throw Self.unavailable("token tracing") }
+    public func attributeTokens(_ request: AttributedTokenTraceRequest) async throws(BasaltError) -> AttributedTokenTraceReport {
+        throw Self.unavailable("token attribution")
+    }
     public func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport {
         throw Self.unavailable("activation contrast")
     }

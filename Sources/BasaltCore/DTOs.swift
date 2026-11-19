@@ -113,6 +113,8 @@ public struct GenerationRequest: Codable, Sendable {
     public var drySequenceBreakers: [String]?
     public var xtcThreshold: Double?
     public var xtcProbability: Double?
+    public var logprobs: Bool? = nil
+    public var topLogprobs: Int? = nil
     public var logitProbe: LogitProbe? = nil
     public private(set) var recordConfidence = false
     public var ocrMode: OCRMode? = nil
@@ -123,6 +125,8 @@ public struct GenerationRequest: Codable, Sendable {
         case topK, presencePenalty, repetitionPenalty, thinkingBudget, responseFormat, speculativeLookup
         case grammarJumpForward = "grammar_jump_forward"
         case dryMultiplier, dryBase, dryAllowedLength, drySequenceBreakers, xtcThreshold, xtcProbability
+        case logprobs
+        case topLogprobs = "top_logprobs"
     }
 
     public init(
@@ -250,6 +254,7 @@ public struct GenerationRequest: Codable, Sendable {
         }
         try Self.require(xtcThreshold, in: 0.0...1.0, "xtc_threshold must be in [0.0, 1.0]")
         try Self.require(xtcProbability, in: 0.0...1.0, "xtc_probability must be in [0.0, 1.0]")
+        try Self.require(topLogprobs, in: 0...20, "top_logprobs must be in [0, 20]")
         if thinkingBudget != nil, !requestDisablesThinking, maxT - Self.thinkingAnswerReserve(maxTokens: maxT) < Self.thinkingTransitionHeadroom {
             throw .invalidRequestStructure(details:
                 "max_tokens \(maxT) cannot hold the thinking_budget transition (\(Self.thinkingTransitionHeadroom) tokens) and an answer reserve of min(512, max_tokens/4)")
@@ -271,11 +276,8 @@ public struct GenerationRequest: Codable, Sendable {
     }
 }
 
-/// Heuristic detector for background service requests (such as thread title generation)
 public enum ServiceRequestDetector: Sendable {
     public static func isTitleOrServiceRequest(prompt: String, maxTokens: Int? = nil) -> Bool {
-        // Only the tail: the title instruction is the latest turn, while the history before it
-        // can quote anything (a file mentioning "short title" would otherwise flag every turn).
         let p = String(prompt.suffix(1500)).lowercased()
         let keywords = [
             "thread title", "conversation title", "generate a title",
@@ -293,7 +295,6 @@ public enum ServiceRequestDetector: Sendable {
         return false
     }
 
-    /// Fast path: truncates massive prompt context for lightweight title requests
     public static func compactTitlePrompt(_ fullPrompt: String) -> String {
         if fullPrompt.count > 1000 {
             let tail = String(fullPrompt.suffix(800))
@@ -303,13 +304,10 @@ public enum ServiceRequestDetector: Sendable {
     }
 }
 
-// MARK: — Response DTOs
-
 public enum StreamChunk: Sendable, Codable {
     case text(String)
     case reasoning(String)
     case metadata(GenerationResponse)
-    /// The model called a function (parsed by the model's tool-call format).
     case toolCall(ToolCallOutput)
     
     enum CodingKeys: String, CodingKey {
@@ -388,6 +386,7 @@ public struct GenerationResponse: Codable, Sendable {
     public private(set) var draftSource: DraftSource?
     public private(set) var modelModified = false
     public private(set) var confidence: ResponseConfidence?
+    public private(set) var tokenTelemetry: [OutputTokenTelemetry]?
     package var cacheTelemetry: CacheTelemetry?
 
     public init(
@@ -448,11 +447,17 @@ public struct GenerationResponse: Codable, Sendable {
         return copy
     }
 
+    public func withTokenTelemetry(_ tokenTelemetry: [OutputTokenTelemetry]?) -> GenerationResponse {
+        var copy = self
+        copy.tokenTelemetry = tokenTelemetry
+        return copy
+    }
+
     enum CodingKeys: String, CodingKey {
         case generatedText, reasoningText, promptTokens, cachedPromptTokens, completionTokens
         case tokensPerSecond, generationTime, timeToFirstToken, memory, finishReason, toolCalls, reasoningTokens
         case draftTokens, acceptedDraftTokens, forcedTokens, modelCalls, toolCallRepairs, toolCallRejections
-        case degenerate, draftSource, modelModified, confidence
+        case degenerate, draftSource, modelModified, confidence, tokenTelemetry
     }
 
     public init(from decoder: Decoder) throws {
@@ -479,6 +484,7 @@ public struct GenerationResponse: Codable, Sendable {
         draftSource = try c.decodeIfPresent(DraftSource.self, forKey: .draftSource)
         modelModified = try c.decodeIfPresent(Bool.self, forKey: .modelModified) ?? false
         confidence = try c.decodeIfPresent(ResponseConfidence.self, forKey: .confidence)
+        tokenTelemetry = try c.decodeIfPresent([OutputTokenTelemetry].self, forKey: .tokenTelemetry)
     }
 
     public struct MemoryUsage: Codable, Sendable {

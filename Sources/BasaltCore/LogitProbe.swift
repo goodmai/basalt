@@ -149,11 +149,23 @@ public final class LogitProbe: Sendable {
         public var token: Int
         public var ids: [Int]
         public var logprobs: [Float]
+        public var sampledLogprob: Float?
+        public var entropy: Float?
+        public var margin: Float?
 
-        public init(token: Int, ids: [Int], logprobs: [Float]) {
+        public init(
+            token: Int,
+            ids: [Int],
+            logprobs: [Float],
+            entropy: Float? = nil,
+            margin: Float? = nil
+        ) {
             self.token = token
             self.ids = ids
             self.logprobs = logprobs
+            self.sampledLogprob = nil
+            self.entropy = entropy
+            self.margin = margin
         }
     }
 
@@ -166,14 +178,21 @@ public final class LogitProbe: Sendable {
 
     public var steps: [Step] { recorded.withLock { $0 } }
 
-    public func record(ids: [Int], logprobs: [Float]) {
-        recorded.withLock { $0.append(Step(token: -1, ids: ids, logprobs: logprobs)) }
+    public func record(ids: [Int], logprobs: [Float], entropy: Float? = nil, margin: Float? = nil) {
+        recorded.withLock { $0.append(Step(token: -1, ids: ids, logprobs: logprobs, entropy: entropy, margin: margin)) }
     }
 
-    public func sampled(_ token: Int) {
+    public func sampled(_ token: Int, exactLogprob: Float? = nil) {
         recorded.withLock { steps in
             guard let last = steps.indices.last else { return }
             steps[last].token = token
+            if let exactLogprob, exactLogprob.isFinite {
+                steps[last].sampledLogprob = exactLogprob
+            } else if let idx = steps[last].ids.firstIndex(of: token), idx < steps[last].logprobs.count {
+                steps[last].sampledLogprob = steps[last].logprobs[idx]
+            } else if let floor = steps[last].logprobs.last {
+                steps[last].sampledLogprob = floor
+            }
         }
     }
 }

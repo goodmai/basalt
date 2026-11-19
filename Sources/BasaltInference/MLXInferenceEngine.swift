@@ -61,6 +61,10 @@ public actor MLXInferenceEngine: InferenceEngine {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
         }
+        var request = request
+        if request.logprobs == true, request.logitProbe == nil {
+            request.logitProbe = LogitProbe(topK: max(64, request.topLogprobs ?? 5))
+        }
         guard request.adapter == activeAdapter else { throw .inferenceError("adapter \(request.adapter ?? "none") was asked for while \(activeAdapter ?? "the base model") is active") }
         let epoch = modelEpoch
         let (params, unbudgeted, shaping, exclusion, confidenceProbe) = try await checkedSampling(request)

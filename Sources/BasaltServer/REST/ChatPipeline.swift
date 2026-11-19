@@ -30,14 +30,12 @@ struct ChatPipeline: Sendable {
         var drySequenceBreakers: [String]?
         var xtcThreshold: Double?
         var xtcProbability: Double?
+        var logprobs: Bool?, topLogprobs: Int?, nProbs: Int?, xrayTrace: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case dryMultiplier = "dry_multiplier"
-            case dryBase = "dry_base"
-            case dryAllowedLength = "dry_allowed_length"
-            case drySequenceBreakers = "dry_sequence_breakers"
-            case xtcThreshold = "xtc_threshold"
-            case xtcProbability = "xtc_probability"
+            case dryMultiplier = "dry_multiplier", dryBase = "dry_base", dryAllowedLength = "dry_allowed_length"
+            case drySequenceBreakers = "dry_sequence_breakers", xtcThreshold = "xtc_threshold", xtcProbability = "xtc_probability"
+            case logprobs, topLogprobs = "top_logprobs", nProbs = "n_probs", xrayTrace = "xray_trace"
         }
     }
 
@@ -202,6 +200,7 @@ struct ChatPipeline: Sendable {
         built.drySequenceBreakers = input.sampling.antiRepetition.drySequenceBreakers
         built.xtcThreshold = input.sampling.antiRepetition.xtcThreshold
         built.xtcProbability = input.sampling.antiRepetition.xtcProbability
+        try applyLogprobs(input.sampling.antiRepetition, to: &built)
         let request = built.withSpeculativeLookup(input.sampling.speculativeLookup)
             .withGrammarJumpForward(input.sampling.grammarJumpForward)
             .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: input.stream))
@@ -213,6 +212,20 @@ struct ChatPipeline: Sendable {
         let restModel = input.model.map(ModelsController.restModel(from:))
         if restModel == .path { throw rejection(.badRequest, ModelsController.pathRejected) }
         return Prepared(request: request, requestedModel: restModel?.repoId)
+    }
+}
+
+extension ChatPipeline {
+    func applyLogprobs(_ anti: AntiRepetition, to built: inout GenerationRequest) throws {
+        if let nProbs = anti.nProbs, !(0 ... 20).contains(nProbs) {
+            throw rejection(.badRequest, "n_probs must be in [0, 20]")
+        }
+        if anti.logprobs == true || (anti.nProbs ?? 0) > 0 {
+            built.logprobs = true
+            built.topLogprobs = anti.topLogprobs ?? anti.nProbs ?? 5
+        } else if let topLP = anti.topLogprobs {
+            built.topLogprobs = topLP
+        }
     }
 
     func admitStream(_ request: GenerationRequest) async throws {

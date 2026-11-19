@@ -155,6 +155,7 @@ package struct RESTServer: Sendable {
         v1.post("/generate", use: controller.generate)
         v1.post("/generate/stream", use: controller.generateStream)
         ModelsConvertController(operations: modelHub).add(to: v1)
+        XrayTokensController(orchestrator: orchestrator).add(to: v1)
     }
 
     private func addModelRoutes(to oai: RouterGroup<BasicRequestContext>, _ controller: ModelsController) {
@@ -173,6 +174,7 @@ package struct RESTServer: Sendable {
         oai.post("/responses", use: openAI.responses)
         oai.post("/generate", use: openAI.generateRaw)
         oai.post("/score", use: openAI.score)
+        XrayTokensController(orchestrator: orchestrator).add(to: oai)
         oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
@@ -316,6 +318,7 @@ extension RESTServer {
         "/v1/responses":           { "post": { "summary": "OpenAI Responses API (Codex/Cursor)" } },
         "/v1/messages":            { "post": { "summary": "Anthropic-compatible messages API" } },
         "/v1/score":               { "post": { "summary": "Top-k logprobs of supplied completion token ids after chat messages, in one forward pass (teacher for on-policy distill)" } },
+        "/v1/xray/tokens":         { "post": { "summary": "Per-token output probabilities, entropy, top-2 margin, hallucination risk, and per-layer head/MoE-expert/logit-lens attribution" } },
         "/v1/embeddings":          { "post": { "summary": "OpenAI-compatible embeddings (serve --embedding-model)" } },
         "/v1/health/live":         { "get":  { "summary": "Liveness: 200 while the process serves HTTP" } },
         "/v1/health/ready":        { "get":  { "summary": "Readiness: 200 once the chat model and every resident compose model can serve, 503 with the models still waiting" } },

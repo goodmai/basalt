@@ -261,10 +261,43 @@ extension MLXInferenceEngine {
         let forcedTokens = inputs.constraint?.fastForward == true ? inputs.constraint?.session.totalForcedTokens : nil
         let modified = await self.modelModified(since: inputs.leaseID)
         let cacheTelemetry = await self.drainPromptCacheTelemetry()
+        let tokenTelemetry = await Self.buildTokenTelemetry(for: relay.setup.request, container: inputs.container)
         return relay.response(
             generationTime: generationTime, timeToFirstToken: timeToFirstToken,
             memory: GenerationResponse.MemoryUsage(peakBytes: mem.peakMemory, activeBytes: mem.activeMemory, cacheBytes: mem.cacheMemory),
             reasoningTokens: reasoningTokens, forcedTokens: forcedTokens, modelModified: modified
-        ).withCacheTelemetry(cacheTelemetry)
+        ).withCacheTelemetry(cacheTelemetry).withTokenTelemetry(tokenTelemetry)
+    }
+
+    private static func buildTokenTelemetry(
+        for request: GenerationRequest,
+        container: ModelContainer
+    ) async -> [OutputTokenTelemetry]? {
+        guard request.logprobs == true, let probe = request.logitProbe else { return nil }
+        let steps = probe.steps.filter { $0.token >= 0 }
+        let topLimit = max(0, min(20, request.topLogprobs ?? 5))
+        return await container.perform { context in
+            steps.enumerated().map { index, step in
+                let text = context.tokenizer.decode(tokenIds: [step.token], skipSpecialTokens: false)
+                let lp = step.sampledLogprob ?? step.logprobs.first ?? -20.0
+                var item = OutputTokenTelemetry(
+                    index: index,
+                    token: text,
+                    tokenId: step.token,
+                    logprob: lp,
+                    entropy: step.entropy ?? 0.0,
+                    margin: step.margin ?? 1.0
+                )
+                let n = min(topLimit, min(step.ids.count, step.logprobs.count))
+                if n > 0 {
+                    item.topLogprobs = (0 ..< n).map { k in
+                        let tid = step.ids[k]
+                        let tStr = context.tokenizer.decode(tokenIds: [tid], skipSpecialTokens: false)
+                        return TokenCandidateProbability(token: tStr, tokenId: tid, logprob: step.logprobs[k])
+                    }
+                }
+                return item
+            }
+        }
     }
 }
