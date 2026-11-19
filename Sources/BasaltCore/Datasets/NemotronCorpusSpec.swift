@@ -197,8 +197,14 @@ public struct CorpusTrainRequest: Sendable, Codable, Equatable {
     public var applyOverlay: Bool = false
     public var gate: GateRequest
     public var output: String?
+    public var dpoPairsPath: String?
+    public var quantizedBaseBits: Int?
+    public var adaLoRATargetRank: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveLearningRate: Float {
+        (try? QuantizedLRPolicy.effectiveLearningRate(baseLR: learningRate, weightBits: quantizedBaseBits)) ?? learningRate
+    }
 
     public init(corpus: CorpusSourceSpec, gate: GateRequest = GateRequest(heldOut: Self.defaultHeldOutPrompts)) {
         self.corpus = corpus
