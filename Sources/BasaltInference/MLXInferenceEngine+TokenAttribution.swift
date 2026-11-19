@@ -36,9 +36,12 @@ enum TokenAttributionAssembler {
             }
             let pos = promptCount - 1 + stepIdx
             if let table, pos >= 0, pos < table.tokens {
-                let pathways = tracedLayers.map { layer in
+                let rawPathways = tracedLayers.map { layer in
                     buildLayerPathway(layer: layer, pos: pos, topHeads: request.topHeads, table: table, context: context)
                 }
+                let pathways = HeadInfluenceCore.enrich(
+                    pathways: rawPathways, sampledId: cap.tokenId, finalProbability: item.probability
+                )
                 item.layers = pathways
                 item.onsetLayer = resolveOnsetLayer(pathways: pathways, sampledId: cap.tokenId)
                 let rescored = TokenHallucinationScorer.evaluate(
