@@ -34,6 +34,7 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var cache: CacheTelemetry?
     public var calibration: DecisionCalibrationTelemetry?
     public var semanticCache: SemanticCacheMetrics?
+    public var tieredKV: TieredKVMetrics?
 
     public init() {}
 
