@@ -2,6 +2,15 @@
 
 > Languages: [English](../../install.md) · [Русский](../ru/install.md) · [中文](../zh/install.md) · [Español](../es/install.md) · **Français** · [日本語](../ja/install.md) · [Deutsch](../de/install.md)
 
+## Binaire précompilé (deux lignes, sans Xcode)
+
+macOS 27+ et Apple Silicon suffisent. L'archive contient `basalt`, `mlx.metallib` et les bundles de ressources côte à côte ; gardez-les dans un même dossier.
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
+
 ## Démo en 60 secondes
 
 ```bash

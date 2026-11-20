@@ -66,6 +66,7 @@
 - **Длинный контекст в меньшей памяти.** Квантование KV с точными зонами (`4|8|k8v4`, а также 2D-балансировка `KVarN`, несмещённый 1-bit `QJL`, `ChanMix`/`ThinKV`, кросс-языковой перенос `HeadKV` RBO, центроидный `RQ-KV`, `turbo3|turbo4|turbo8v4` и парные RoPE-ключи `polar4`, [#472](https://github.com/goodmai/basalt/pull/472), [#590](https://github.com/goodmai/basalt/pull/590), [#602](https://github.com/goodmai/basalt/pull/602)): пик памяти на 16k-промпте — 1.03 ГБ вместо 3.11 ГБ на Qwen3-4B ([#159](https://github.com/goodmai/basalt/pull/159)).
 - **Видео, нейросетевой TTS, полнодуплексная речь, музыка и синтез 2K-изображений на MLX.** Пофазная 24 ГБ UMA Video Studio запускает `LTX-2.5 AV-DiT`, `Kandinsky 6.0 CrossDiT`, `LingBot-Video MoE` и `Wan 2.2` с каузальным 3D-VAE, brick-tiled STA Metal-ядрами и мультиплексированием `.mp4` через `AVAssetWriter` ([#608](https://github.com/goodmai/basalt/pull/608)–[#611](https://github.com/goodmai/basalt/pull/611)); дуплексные кодеки Mimi/SNAC `LFM2.5-Audio`, `SmartTurn` + `Sortformer`, `MossFormer2`, `Soprano-80M`, `Qwen3ForcedAligner`, `Zyphra/ZONOS3-Mini-hf` (`44.1 kHz`, 43 языка, 2.24 ГБ, RTF 0.228–0.263, [#527](https://github.com/goodmai/basalt/pull/527)) и `Kokoro-82M` обеспечивают `/v1/audio/*` ([#604](https://github.com/goodmai/basalt/pull/604)); 4-этапная композиция `FLUX.3`, апскейлинг `SeedVR2`, музыка `ACE-Step 1.5`, `Z-Image-Turbo`, `Iris-3B` и `SANA-1.5` работают за `/v1/images/*` и `/v1/music/*` ([#542](https://github.com/goodmai/basalt/pull/542), [#605](https://github.com/goodmai/basalt/pull/605)).
 - **Полный локальный стек + Swift SDK.** Вызов инструментов, вывод по JSON-schema, regex и грамматике (XGrammar), Meta `Muse-Glimmer-30B` ([#534](https://github.com/goodmai/basalt/pull/534)), `Ripple-65B`, `Nemotron-3.5-Lightning` ([#522](https://github.com/goodmai/basalt/pull/522)), `DeepSeek-OCR-2` ([#476](https://github.com/goodmai/basalt/pull/476)), `/v1/embeddings`, `/v1/rerank`, Swift SDK `BasaltFoundationModels` ([#606](https://github.com/goodmai/basalt/pull/606)), загрузка через Xet в `swift-huggingface` ([#587](https://github.com/goodmai/basalt/pull/587)), выбор адаптеров LoRA/PHM/OFT на уровне запроса и упорядоченные уровни резервного фолбэка LAN-перед-облаком ([#480](https://github.com/goodmai/basalt/pull/480)).
+- **PV-MACaQ 3-bit: 27B помещается и летает на 24 ГБ.** `Qwen3.8-27B-PV-MACaQ-3bit` проходит Official Ladder 5/5 (включая `lunar` 6/6) в 11.5–12.4 ГБ на 15.6–16.7 tok/s на M4 Pro против 4/5 ступеней, 15.3 ГБ и 11.6 tok/s у обычного 4-bit. `--speculative-lookup` теперь работает и на чекпоинтах Qwen3.5/3.8 с vision-башней (принятие драфта 43–51%, +17% на правках кода), а `--kv-bits kvarn|kvarn-qjl` (2-bit KV) и `--attention-backend moba` подключены к `basalt serve` и проходят 4k passkey ([#632](https://github.com/goodmai/basalt/issues/632), [#634](https://github.com/goodmai/basalt/issues/634)). Чекпоинты: [`goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX), [`goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX).
 
 Подробнее: [REST API](docs/i18n/ru/rest-api.md) · [интеграции](docs/i18n/ru/integrations.md) · [команды и флаги](docs/i18n/ru/commands.md) · [модели](docs/i18n/ru/models.md) · [бенчмарки](docs/i18n/ru/benchmarks.md)
 
@@ -101,6 +102,13 @@
 - **Compose Video Studio, 2K Image Studio и UI универсального конвертера.** Генерируйте и воспроизводите A/V-видео `.mp4` на Mac с 24 ГБ ([#611](https://github.com/goodmai/basalt/pull/611)), редактируйте 2K RGBA-изображения со слайдером «До / После» ([#519](https://github.com/goodmai/basalt/pull/519)), конвертируйте модели и проводите их QAT-аудит прямо в `ConvertModelSheet` ([#623](https://github.com/goodmai/basalt/pull/623)), просматривайте и публикуйте модели на Hugging Face с SSE-телеметрией 10 Гц и загрузкой через Xet ([#587](https://github.com/goodmai/basalt/pull/587)).
 - **Профили Compose (`⌥⌘C`), полнодуплексный голос и запуск в 1 клик по `basalt://`.** Автоматически подбирает лучшие профили под объём RAM вашего Mac (`16–256 GB`, [#528](https://github.com/goodmai/basalt/pull/528)), обеспечивает непрерывный голосовой диалог через `SpeechAnalyzer` / `LFM2.5-Audio` / `ZONOS3-Mini` ([#604](https://github.com/goodmai/basalt/pull/604)), поддерживает ссылки `basalt://run?model=...`, быстрый запрос по `⌥Space`, Быстрые команды (Shortcuts), Spotlight и нотаризованную упаковку в `.dmg`.
 
+
+**Basalt.app: запущенный Compose и чат с инспектором** (macOS 27 Liquid Glass, тёмная и светлая темы):
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-compose-dark.png"><img src="docs/assets/screenshots/app-compose-light.png" alt="Basalt.app — Compose-профиль активен на движке" width="49%"></picture></p>
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-chat-dark.png"><img src="docs/assets/screenshots/app-chat-light.png" alt="Basalt.app — чат с открытым инспектором" width="49%"></picture></p>
+
 Подробнее: [Basalt for Mac](docs/i18n/ru/mac-app.md)
 
 ---
@@ -108,6 +116,13 @@
 ## Быстрый старт
 
 Требования: macOS 27+, Xcode 27.0+ / Swift 6.4 с Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`), Apple Silicon M1–M4, от 2 до 38 ГБ на диске в зависимости от модели. Подробные шаги, сборка из исходников и лаунчер `./basalt-claude` описаны в [docs/i18n/ru/install.md](docs/i18n/ru/install.md).
+
+**Без Xcode и сборки — готовый бинарник для Apple Silicon в две строки** (macOS 27+, Apple Silicon; `mlx.metallib` внутри архива; первый запуск скачает модель на 12 ГБ, для лёгкого старта возьмите `goodmai/gemma-4-12B-it-qat-4bit`):
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt

@@ -66,6 +66,7 @@
 - **更小内存承载更长上下文。** 带精确分区的 KV 量化（`4|8|k8v4`，外加 `KVarN` 二维均衡、无偏 1-bit `QJL`、`ChanMix`/`ThinKV`、跨语言 `HeadKV` RBO 迁移、质心 `RQ-KV`、`turbo3|turbo4|turbo8v4` 与 `polar4` RoPE 成对键量化，[#472](https://github.com/goodmai/basalt/pull/472)、[#590](https://github.com/goodmai/basalt/pull/590)、[#602](https://github.com/goodmai/basalt/pull/602)）：在 Qwen3-4B 上处理 16k 提示词时，峰值内存从 3.11 GB 降至 1.03 GB（[#159](https://github.com/goodmai/basalt/pull/159)）。
 - **视频、神经 TTS、全双工语音、音乐与 2K MLX 图像生成。** 分阶段 24 GB UMA 视频工作室支持 `LTX-2.5 AV-DiT`、`Kandinsky 6.0 CrossDiT`、`LingBot-Video MoE` 与 `Wan 2.2`，配备因果 3D-VAE、分块 STA Metal 内核与 `AVAssetWriter` `.mp4` 封装（[#608](https://github.com/goodmai/basalt/pull/608)–[#611](https://github.com/goodmai/basalt/pull/611)）；`LFM2.5-Audio` Mimi/SNAC 双工编解码器、`SmartTurn` + `Sortformer`、`MossFormer2`、`Soprano-80M`、`Qwen3ForcedAligner`、`Zyphra/ZONOS3-Mini-hf`（`44.1 kHz`、43 种语言、2.24 GB、RTF 0.228–0.263，[#527](https://github.com/goodmai/basalt/pull/527)）及 `Kokoro-82M` 驱动 `/v1/audio/*`（[#604](https://github.com/goodmai/basalt/pull/604)）；`FLUX.3` 四阶段生成管线、`SeedVR2` 超分、`ACE-Step 1.5` 音乐生成、`Z-Image-Turbo`、`Iris-3B` 与 `SANA-1.5` 驱动 `/v1/images/*` 和 `/v1/music/*`（[#542](https://github.com/goodmai/basalt/pull/542)、[#605](https://github.com/goodmai/basalt/pull/605)）。
 - **完整本地软件栈 + Swift SDK。** 工具调用、JSON-schema / 正则表达式 / 语法约束输出（XGrammar）、Meta `Muse-Glimmer-30B`（[#534](https://github.com/goodmai/basalt/pull/534)）、`Ripple-65B`、`Nemotron-3.5-Lightning`（[#522](https://github.com/goodmai/basalt/pull/522)）、`DeepSeek-OCR-2`（[#476](https://github.com/goodmai/basalt/pull/476)）、`/v1/embeddings`、`/v1/rerank`、`BasaltFoundationModels` Swift SDK（[#606](https://github.com/goodmai/basalt/pull/606)）、`swift-huggingface` Xet 下载（[#587](https://github.com/goodmai/basalt/pull/587)）、按请求动态切换的 LoRA/PHM/OFT 适配器，以及局域网优先于云端的有序回退层级（[#480](https://github.com/goodmai/basalt/pull/480)）。
+- **PV-MACaQ 3-bit 让 27B 在 24 GB 上装得下、跑得快。** `Qwen3.8-27B-PV-MACaQ-3bit` 在 M4 Pro 上以 11.5–12.4 GB、15.6–16.7 tok/s 通过 Official Ladder 5/5（含 `lunar` 6/6），而原版 4-bit 为 4/5 级、15.3 GB、11.6 tok/s。`--speculative-lookup` 现已支持带视觉塔的 Qwen3.5/3.8 检查点（草稿接受率 43–51%，代码编辑提速 17%），`--kv-bits kvarn|kvarn-qjl`（2-bit KV）与 `--attention-backend moba` 已接入 `basalt serve` 并通过 4k passkey（[#632](https://github.com/goodmai/basalt/issues/632)、[#634](https://github.com/goodmai/basalt/issues/634)）。检查点：[`goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX)、[`goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX)。
 
 详情请参阅：[REST API](docs/i18n/zh/rest-api.md) · [集成指南](docs/i18n/zh/integrations.md) · [命令与参数](docs/i18n/zh/commands.md) · [模型列表](docs/i18n/zh/models.md) · [基准测试](docs/i18n/zh/benchmarks.md)
 
@@ -101,6 +102,13 @@
 - **Compose 视频工作室、2K 图像工作室与通用转换器界面。** 在 24 GB Mac 上生成并播放音视频 `.mp4`（[#611](https://github.com/goodmai/basalt/pull/611)）、使用前后对比滑块编辑 2K RGBA 图像（[#519](https://github.com/goodmai/basalt/pull/519)）、直接在 `ConvertModelSheet` 中完成模型转换与 QAT 审计（[#623](https://github.com/goodmai/basalt/pull/623)），并在应用内以 10 Hz SSE 遥测和 Xet 下载浏览/发布 Hugging Face 模型（[#587](https://github.com/goodmai/basalt/pull/587)）。
 - **Compose 配置档案（`⌥⌘C`）、全双工语音与 `basalt://` 一键启动。** 根据当前 Mac 的内存档位自动推荐最佳配置（`16–256 GB`，[#528](https://github.com/goodmai/basalt/pull/528)），通过 `SpeechAnalyzer` / `LFM2.5-Audio` / `ZONOS3-Mini` 实现免提流式语音对话（[#604](https://github.com/goodmai/basalt/pull/604)），并支持 `basalt://run?model=...` 链接、`⌥Space` 快捷提问、Shortcuts 快捷指令、Spotlight 搜索与已公证 `.dmg` 打包。
 
+
+**Basalt.app：引擎上运行中的 Compose 与带检视器的聊天界面**（macOS 27 Liquid Glass，深色与浅色）：
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-compose-dark.png"><img src="docs/assets/screenshots/app-compose-light.png" alt="Basalt.app — 引擎上已激活的 Compose 配置" width="49%"></picture></p>
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-chat-dark.png"><img src="docs/assets/screenshots/app-chat-light.png" alt="Basalt.app — 打开检视器的聊天" width="49%"></picture></p>
+
 详情请参阅：[Basalt for Mac](docs/i18n/zh/mac-app.md)
 
 ---
@@ -108,6 +116,13 @@
 ## 快速开始
 
 环境要求：macOS 27+、Xcode 27.0+ / Swift 6.4 及 Metal 工具链（`xcodebuild -downloadComponent MetalToolchain`）、Apple Silicon M1–M4 芯片，以及视模型而定 2–38 GB 可用磁盘空间。完整安装步骤、源码编译与 `./basalt-claude` 启动器请参阅 [docs/i18n/zh/install.md](docs/i18n/zh/install.md)。
+
+**无需 Xcode、无需编译——两行命令运行预编译的 Apple Silicon 二进制**（macOS 27+、Apple Silicon；`mlx.metallib` 已包含在压缩包内；首次运行会下载 12 GB 模型，想轻量启动可改用 `goodmai/gemma-4-12B-it-qat-4bit`）：
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
