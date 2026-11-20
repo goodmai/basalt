@@ -87,6 +87,16 @@ public struct SwiftMetricsSink: TelemetrySink, Sendable {
         cacheEntries.record(cache.cachedEntries)
         cacheTokens.record(cache.cachedTokens)
         cacheBytes.record(cache.cachedBytes)
+        guard let tiered = cache.tiered else { return }
+        Gauge(label: "basalt_tiered_kv_l0_hits", factory: factory).record(tiered.l0Hits)
+        Gauge(label: "basalt_tiered_kv_l1_hits", factory: factory).record(tiered.l1Hits)
+        Gauge(label: "basalt_tiered_kv_l2_hits", factory: factory).record(tiered.l2Hits)
+        Gauge(label: "basalt_tiered_kv_misses", factory: factory).record(tiered.misses)
+        Gauge(label: "basalt_tiered_kv_demotions", factory: factory).record(tiered.demotions)
+        Gauge(label: "basalt_tiered_kv_zero_copy_promotions", factory: factory).record(tiered.zeroCopyPromotions)
+        Gauge(label: "basalt_tiered_kv_l0_bytes", factory: factory).record(tiered.l0Bytes)
+        Gauge(label: "basalt_tiered_kv_l1_bytes", factory: factory).record(tiered.l1Bytes)
+        Gauge(label: "basalt_tiered_kv_l2_bytes", factory: factory).record(tiered.l2Bytes)
     }
 
     public func recordCalibration(confidence: Double, agreed: Bool, telemetry: DecisionCalibrationTelemetry) {

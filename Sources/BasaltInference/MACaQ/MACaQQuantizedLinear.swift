@@ -63,6 +63,7 @@ package struct MACaQSwitchGeometry: Sendable, Equatable {
 package final class MACaQQuantizedLinear: QuantizedLinear {
     package let hadamardBlock: Int
     package var activationMode: MACaQActivationMode
+    package var useSmallMKernel: Bool = false
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
     @ParameterInfo(key: "row_scale") package var rowScale: MLXArray?
 
@@ -124,6 +125,14 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
         let rotated = training
             ? MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock)
             : MACaQFusedKernels.blockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
+        if !training, useSmallMKernel, let biases, SmallMQuantizedMatmul.handles(rotated, layer: self) {
+            let raw = SmallMQuantizedMatmul.matmul(rotated, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
+            if let rowScale {
+                let scaled = (raw.asType(.float32) * rowScale.asType(.float32)).asType(x.dtype)
+                return bias.map { scaled + $0 } ?? scaled
+            }
+            return bias.map { raw + $0 } ?? raw
+        }
         if let rowScale {
             let raw = quantizedMM(
                 rotated, weight, scales: scales, biases: biases,

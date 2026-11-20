@@ -343,19 +343,28 @@ extension MLXInferenceEngine {
     }
 
     func probeQuest() async {
-        guard let questTopK = configuration.questTopK, modelFacts.capabilities.allows(.quest), let container else { return }
+        let needsAttentionProbe = configuration.questTopK != nil
+            || configuration.attentionBackend != .standard
+            || configuration.kvPrecision?.isKVarN == true
+        guard needsAttentionProbe, modelFacts.capabilities.allows(.quest), let container else { return }
         let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {
-                logger.warn("--quest-top-k does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so they cannot attend to a selection of blocks; attention stays dense")
+                logger.warn("Custom full-attention cache does not apply to this model: its full-attention layers read the whole cache through cache.update (Gemma 4 does), so attention stays dense")
                 return
             }
         } catch {
-            logger.warn("--quest-top-k: probing the model failed (\(error.localizedDescription)); attention stays dense")
+            logger.warn("Custom full-attention cache probe failed (\(error.localizedDescription)); attention stays dense")
             return
         }
         record(.learned(epoch) { $0.questApplies = true })
-        logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
+        if let questTopK = configuration.questTopK {
+            logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
+        } else if configuration.attentionBackend != .standard {
+            logger.info("Attention backend: \(configuration.attentionBackend.rawValue) (mobaTopK=\(configuration.mobaTopK)) enabled on full-attention layers")
+        } else if let prec = configuration.kvPrecision, prec.isKVarN {
+            logger.info("KV cache: \(prec) 2-bit tile compression enabled on full-attention layers")
+        }
     }
 
     func routesExperts(_ container: ModelContainer, epoch: ModelEpoch) async -> Bool {

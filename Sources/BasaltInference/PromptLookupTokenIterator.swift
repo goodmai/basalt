@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 import MLX
 import MLXLMCommon
@@ -207,7 +208,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private func lookupDraft(remaining: Int) -> [Int] {
         guard speculativeLookup && backoffs.lookup.allowsDraft else { return [] }
-        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.draftLimit
+        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.effectiveLimit()
         return Self.draft(after: history, limit: Swift.min(limit, remaining - 1, draftRoom))
     }
 
@@ -513,9 +514,26 @@ struct DraftBackoff {
     private(set) var pause = 0
     private(set) var probing = true
     private(set) var draftLimit = maxDraftLimit
+    private(set) var acceptanceEMA = SpeculativeAcceptanceEMA()
     private var nextPause = 1
 
     var allowsDraft: Bool { pause == 0 }
+
+    func effectiveLimit(
+        thermalLevel: ThermalLevel = ThermalLevel(ProcessInfo.processInfo.thermalState),
+        isLowPowerModeEnabled: Bool = ProcessInfo.processInfo.isLowPowerModeEnabled,
+        activeBatchSize: Int = 1
+    ) -> Int {
+        let budget = DynamicTreeBudget.compute(
+            thermalLevel: thermalLevel,
+            isLowPowerModeEnabled: isLowPowerModeEnabled,
+            acceptanceEMA: acceptanceEMA.value,
+            activeBatchSize: activeBatchSize)
+        if thermalLevel == .nominal, !isLowPowerModeEnabled, activeBatchSize <= 1, acceptanceEMA.value >= 0.65 {
+            return draftLimit
+        }
+        return Swift.min(draftLimit, Swift.max(Self.minDraftLimit, budget.verifyBudget))
+    }
 
     mutating func tick() {
         pause = Swift.max(0, pause - 1)
@@ -524,10 +542,11 @@ struct DraftBackoff {
     mutating func record(acceptedDrafts: Int, drafted: Int = 0, pauseScale: Int = 1) {
         let isProfitable: Bool
         if drafted > 0 {
+            let matched = Swift.max(0, pauseScale > 1 ? acceptedDrafts + 1 : acceptedDrafts)
+            acceptanceEMA.observe(accepted: matched, drafted: drafted)
             isProfitable = acceptedDrafts >= 3
                 || (drafted <= 2 && acceptedDrafts >= 1)
                 || (Double(acceptedDrafts) / Double(drafted) >= 0.25)
-            let matched = pauseScale > 1 ? acceptedDrafts + 1 : acceptedDrafts
             if !isProfitable || matched <= 1 {
                 draftLimit = Self.minDraftLimit
             } else {

@@ -1,12 +1,20 @@
 import Foundation
 import Synchronization
 
+public enum AttentionBackend: String, Sendable, Codable, CaseIterable, Equatable {
+    case standard
+    case sagemx
+    case moba
+}
+
 public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public let keyBits: Int
     public let valueBits: Int
     public let rotatesValues: Bool
     public let turbo: Bool
     public let polarRotated: Int?
+    public private(set) var isKVarN: Bool
+    public private(set) var useQJL: Bool
     public private(set) var centroidClusters: Int?
 
     public static let q8 = KVPrecision(bits: 8)
@@ -17,9 +25,11 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
     public static let turbo4 = KVPrecision(keyBits: 4, valueBits: 4, turbo: true)
     public static let turbo8v4 = KVPrecision(keyBits: 8, valueBits: 4, turbo: true)
     public static let polar4 = KVPrecision(keyBits: 4, valueBits: 4, polarRotated: 0)
+    public static let kvarn = KVPrecision(bits: 2).withKVarN(qjl: false)
+    public static let kvarnQJL = KVPrecision(bits: 2).withKVarN(qjl: true)
     public static let supportedBits = [2, 3, 4, 5, 6, 8]
     public static let supportedCentroidClusters = [4, 8, 16]
-    static let named = [k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4]
+    static let named = [k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4, kvarn, kvarnQJL]
 
     public init(keyBits: Int, valueBits: Int, rotatesValues: Bool = false, turbo: Bool = false, polarRotated: Int? = nil) {
         self.keyBits = keyBits
@@ -27,6 +37,8 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
         self.rotatesValues = rotatesValues
         self.turbo = turbo
         self.polarRotated = polarRotated
+        self.isKVarN = false
+        self.useQJL = false
         self.centroidClusters = nil
     }
 
@@ -46,11 +58,22 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
 
     public var isUniform: Bool { keyBits == valueBits }
     public var isPolar: Bool { polarRotated != nil }
-    public var isUniformAffine: Bool { isUniform && !turbo && !isPolar && !rotatesValues && centroidClusters == nil }
+    public var isUniformAffine: Bool { isUniform && !turbo && !isPolar && !isKVarN && !rotatesValues && centroidClusters == nil }
 
     public func resolvingPolar(rotated: Int) -> KVPrecision {
-        var copy = KVPrecision(keyBits: keyBits, valueBits: valueBits, rotatesValues: rotatesValues, turbo: turbo, polarRotated: rotated)
+        var copy = KVPrecision(
+            keyBits: keyBits, valueBits: valueBits, rotatesValues: rotatesValues,
+            turbo: turbo, polarRotated: rotated)
+        copy.isKVarN = isKVarN
+        copy.useQJL = useQJL
         copy.centroidClusters = centroidClusters
+        return copy
+    }
+
+    public func withKVarN(qjl: Bool) -> KVPrecision {
+        var copy = self
+        copy.isKVarN = true
+        copy.useQJL = qjl
         return copy
     }
 
@@ -72,6 +95,9 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
         if let fixed, fixed.turbo, zones {
             return "--kv-bits \(fixed) replaces each full-attention cache with the TurboQuant cache, so it does not combine with --kv-zones; use \(k8v4) with --kv-zones, or \(fixed) alone"
         }
+        if let fixed, fixed.isKVarN, zones {
+            return "--kv-bits \(fixed) replaces each full-attention cache with the KVarN tile cache, so it does not combine with --kv-zones"
+        }
         if let fixed, fixed.isPolar, !zones {
             return "--kv-bits \(fixed) needs --kv-zones: polar keys are a format of the zoned cache's quantized middle (experimental, #351)"
         }
@@ -90,6 +116,7 @@ public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
 
     public var description: String {
         let suffix = centroidClusters.map { "+rq\($0)" } ?? ""
+        if isKVarN { return (useQJL ? "kvarn-qjl" : "kvarn") + suffix }
         if turbo { return (isUniform ? "turbo\(keyBits)" : "turbo\(keyBits)v\(valueBits)") + suffix }
         if isPolar { return "polar\(valueBits)" + suffix }
         return (isUniform ? "\(keyBits)-bit" : "k\(keyBits)v\(valueBits)") + (rotatesValues ? "h" : "") + suffix

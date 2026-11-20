@@ -83,6 +83,7 @@ extension ServeCommand {
         speculative.configure(&configuration)
         (configuration.kvPrecision, configuration.kvZones) = (kvCache.bits?.fixedPrecision, kvCache.zones)
         (configuration.kvHeadSplit, configuration.questTopK) = (kvCache.headSplit, kvCache.questTopK)
+        (configuration.attentionBackend, configuration.mobaTopK) = (kvCache.attentionBackend, kvCache.mobaTopK)
         configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
         configuration.wiresWorkingSet = wiredLimit
         configuration.expertStreaming = expertStreaming.setting

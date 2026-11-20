@@ -6,6 +6,8 @@ import BasaltCore
 enum FreshCache: Equatable {
     case headSplit(KVHeadMask, HeadSplitKVCache.Zoning?)
     case quest(topK: Int)
+    case sageMX(SageMXKVCache.Mode)
+    case kvarn(useQJL: Bool)
     case zoned(KVZones, KVPrecision)
     case evicting(KVZones)
     case stock
@@ -13,11 +15,23 @@ enum FreshCache: Equatable {
     static func plan(
         kvBitsSet: Bool, headMask: KVHeadMask?, questTopK: Int?, zones: KVZones?, precision: KVPrecision?
     ) -> FreshCache {
-        if let zones, zones.middleStaysFullPrecision, precision != nil { return .evicting(zones) }
-        let zoning = zones.flatMap { zones in precision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
-        if let headMask, !kvBitsSet || zoning != nil { return .headSplit(headMask, zoning) }
-        if !kvBitsSet, let questTopK { return .quest(topK: questTopK) }
-        if let zones, let precision { return .zoned(zones, precision) }
+        plan(options: LaunchOptions(
+            params: GenerateParameters(kvBits: kvBitsSet ? 4 : nil),
+            kvZones: zones, kvHeadMask: headMask, questTopK: questTopK, kvPrecision: precision))
+    }
+
+    static func plan(options: LaunchOptions) -> FreshCache {
+        let kvBitsSet = options.params.kvBits != nil || options.params.kvScheme != nil
+        if let zones = options.kvZones, zones.middleStaysFullPrecision, options.kvPrecision != nil { return .evicting(zones) }
+        let zoning = options.kvZones.flatMap { zones in options.kvPrecision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
+        if let headMask = options.kvHeadMask, !kvBitsSet || zoning != nil { return .headSplit(headMask, zoning) }
+        if let precision = options.kvPrecision, precision.isKVarN, !kvBitsSet { return .kvarn(useQJL: precision.useQJL) }
+        if !kvBitsSet, let questTopK = options.questTopK { return .quest(topK: questTopK) }
+        if !kvBitsSet, options.attentionBackend != .standard {
+            let mode: SageMXKVCache.Mode = options.attentionBackend == .sagemx ? .sagemx : .moba(topBlocks: options.mobaTopK)
+            return .sageMX(mode)
+        }
+        if let zones = options.kvZones, let precision = options.kvPrecision { return .zoned(zones, precision) }
         return .stock
     }
 }
@@ -49,6 +63,8 @@ struct LaunchOptions {
     var kvZones: KVZones?
     var kvHeadMask: KVHeadMask?
     var questTopK: Int?
+    var attentionBackend: AttentionBackend = .standard
+    var mobaTopK = 8
     var kvPrecision: KVPrecision?
     var mtp = false
     var mtpBlockSize = 4
@@ -112,6 +128,14 @@ struct GenerationLauncher {
         case .quest(let topK):
             let cache = QuestKVCache.replacingFullAttention(try model.newCache(parameters: params), topK: topK)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
+        case .sageMX(let mode):
+            let cache = SageMXKVCache.replacingFullAttention(try model.newCache(parameters: params), mode: mode)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
+        case .kvarn(let useQJL):
+            var exact = params
+            (exact.kvBits, exact.kvScheme) = (nil, nil)
+            let cache = KVarNKVCache.replacingFullAttention(try model.newCache(parameters: exact), useQJL: useQJL)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .zoned(let zones, let precision):
             var exact = params
             (exact.kvBits, exact.kvScheme) = (nil, nil)

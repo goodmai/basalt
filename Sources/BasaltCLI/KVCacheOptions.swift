@@ -1,10 +1,12 @@
 import ArgumentParser
 import BasaltCore
 
+extension AttentionBackend: ExpressibleByArgument {}
+
 struct KVCacheOptions: ParsableArguments {
     @Option(
         name: .customLong("kv-bits"),
-        help: "Quantize the KV cache to 4 or 8 bits, k8v4 (8-bit keys, 4-bit values; needs --kv-zones; experimental k8v4h also Walsh–Hadamard-rotates the values; experimental turbo3, turbo4 and turbo8v4 run the TurboQuant cache on full-attention layers, without --kv-zones, measured in #471 at 8–13% slower decode than 4-bit and no smaller; experimental polar4 stores the zoned middle's keys as one byte per RoPE pair, 5-bit phase and 3-bit modulus, on Qwen3, Qwen3.5 and LFM2 only, measured no better than affine in #351), or `auto`: fp16 until a request's max_tokens does not fit, then 8-bit, k8v4 with --kv-zones, then 4-bit (default: full precision)"
+        help: "Quantize the KV cache to 4 or 8 bits, k8v4 (8-bit keys, 4-bit values; needs --kv-zones; experimental k8v4h also Walsh–Hadamard-rotates the values; experimental turbo3, turbo4 and turbo8v4 run the TurboQuant cache on full-attention layers, without --kv-zones, measured in #471 at 8–13% slower decode than 4-bit and no smaller; experimental polar4 stores the zoned middle's keys as one byte per RoPE pair, 5-bit phase and 3-bit modulus, on Qwen3, Qwen3.5 and LFM2 only, measured no better than affine in #351; experimental kvarn and kvarn-qjl run 2-bit variance-balanced tile compression with optional 1-bit QJL residual flash-decode, #550/#634), or `auto`: fp16 until a request's max_tokens does not fit, then 8-bit, k8v4 with --kv-zones, then 4-bit (default: full precision)"
     )
     var bits: KVBitsSetting?
 
@@ -20,6 +22,12 @@ struct KVCacheOptions: ParsableArguments {
     @Option(name: .customLong("quest-top-k"), help: ArgumentHelp("Experimental: on long prompts, each decode step of a full-attention layer attends to 128 sink tokens, the last 256 or more, and only these many 64-token blocks between them, picked per KV head by their key bounds (Quest). Models whose attention reads the whole cache, like Gemma 4, stay dense. Not with --kv-bits, --kv-zones or --kv-head-split, and only for requests without a prompt-cache namespace"))
     var questTopK: Int?
 
+    @Option(name: .customLong("attention-backend"), help: ArgumentHelp("Experimental: full-attention Metal backend for non-cached requests: standard (default MLX SDPA), sagemx (SageAttention/MXAttention UOS+PNQ mean-centered kernel, #551/#634), or moba (MoBA centroid-routed block-sparse Metal kernel, #551/#634)"))
+    var attentionBackend: AttentionBackend = .standard
+
+    @Option(name: .customLong("moba-top-k"), help: ArgumentHelp("With --attention-backend moba, number of 64-token middle blocks selected per query head alongside sink and recent blocks (1...4096, default 8)"))
+    var mobaTopK: Int = 8
+
     var zones: KVZones? { KVBitsSetting.zones(zoned, evicting: evict) }
 
     func validateCombination() throws {
@@ -34,6 +42,12 @@ struct KVCacheOptions: ParsableArguments {
             guard (1 ... 4096).contains(questTopK) else { throw ValidationError("--quest-top-k takes a number of blocks in 1...4096") }
             guard bits == nil, !zoned, headSplit == nil else {
                 throw ValidationError("--quest-top-k does not combine with --kv-bits, --kv-zones or --kv-head-split")
+            }
+        }
+        guard (1 ... 4096).contains(mobaTopK) else { throw ValidationError("--moba-top-k takes a number of blocks in 1...4096") }
+        if attentionBackend != .standard {
+            guard bits == nil, !zoned, headSplit == nil, questTopK == nil else {
+                throw ValidationError("--attention-backend \(attentionBackend.rawValue) does not combine with --kv-bits, --kv-zones, --kv-head-split or --quest-top-k")
             }
         }
     }

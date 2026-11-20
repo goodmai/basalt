@@ -149,12 +149,22 @@ final class SmallMQuantizedLinear: QuantizedLinear {
 
     @discardableResult
     static func install(in model: Module) -> Int {
+        if let macaq = model as? MACaQQuantizedLinear, SmallMQuantizedMatmul.fits(macaq) {
+            macaq.useSmallMKernel = true
+            return 1
+        }
+        var macaqCount = 0
         let updates = model.leafModules().flattened().compactMap { path, module -> (String, Module)? in
+            if let macaq = module as? MACaQQuantizedLinear, SmallMQuantizedMatmul.fits(macaq) {
+                macaq.useSmallMKernel = true
+                macaqCount += 1
+                return nil
+            }
             guard let layer = module as? QuantizedLinear, type(of: layer) == QuantizedLinear.self,
                   SmallMQuantizedMatmul.fits(layer) else { return nil }
             return (path, SmallMQuantizedLinear(replacing: layer))
         }
         if !updates.isEmpty { model.update(modules: ModuleChildren.unflattened(updates)) }
-        return updates.count
+        return updates.count + macaqCount
     }
 }
