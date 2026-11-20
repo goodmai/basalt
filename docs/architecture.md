@@ -1,5 +1,7 @@
 # Architecture
 
+> Languages: **English** · [Русский](i18n/ru/architecture.md) · [中文](i18n/zh/architecture.md) · [Español](i18n/es/architecture.md) · [Français](i18n/fr/architecture.md) · [日本語](i18n/ja/architecture.md) · [Deutsch](i18n/de/architecture.md)
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │                       Basalt                           │
@@ -47,7 +49,9 @@ Symbols newly shared across targets use the `package` access level (existing pub
 
 ## Architecture Notes
 
-**Dynamic Quantization & MoE** — `MLXInferenceEngine` automatically parses `config.json` to detect 2/3/4/8-bit quantization and dynamically switches between Dense and Sparse MoE (Mixture of Experts) architectures (e.g. using highly optimized `SwitchGLU` Metal kernels).
+**Dynamic Quantization, MACaQ & MoE** — `MLXInferenceEngine` parses `config.json` (including `macaq_quantization`, `flatquant_quantization`, `lirquant_quantization`) to dispatch Dense and Sparse MoE checkpoints onto optimized Metal kernels (`SwitchGLU`, single-pass `MACaQSwitchLinear` WHT + `MLX.gatherQuantizedMM` `#628`, `E8P` 2-bit lattice, `QTIP`, `STA` 3D video attention `#609`).
+
+**SDK, Governance & Tiered Memory (`v0.12`)** — `BasaltFoundationModels` provides a Swift SDK bridge (`#606`); `VideoRunnerCore` phases 24 GB UMA video generation (`#611`); `TieredKVHierarchyCore` manages L0/L1/L2 unified-memory KV tiers (`#627`); `SemanticCacheActor`, `HITLApprovalActor`, and `SymbolicKnowledgeGraph` enforce enterprise routing and Human-in-the-Loop approvals (`#625`, `#626`).
 
 **Actor isolation** — `ModelOrchestratorActor` is a Swift 6 actor. All inference calls are serialised (FIFO) without explicit locking. Both MCP and REST share one actor instance.
 

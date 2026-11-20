@@ -1,5 +1,7 @@
 # Model X-ray and research tools (#328)
 
+> Languages: **English** · [Русский](i18n/ru/research-tools.md) · [中文](i18n/zh/research-tools.md) · [Español](i18n/es/research-tools.md) · [Français](i18n/fr/research-tools.md) · [日本語](i18n/ja/research-tools.md) · [Deutsch](i18n/de/research-tools.md)
+
 Basalt's MCP server can show what the loaded model is doing and run small, reversible experiments on it. The read-only X-ray tools are always listed. The experiment tools are listed and accepted only when the server starts with `basalt serve --mcp --research-tools`.
 
 Every call runs through the generation gate at background priority, so user requests go first. Responses are bounded: statistics and small slices, never a whole tensor or a full attention matrix.
@@ -12,7 +14,7 @@ The examples are the `arguments` object of an MCP `tools/call` request.
 
 | Tool | What it returns | Example arguments |
 |---|---|---|
-| `model_describe` | Model type, architecture, per-layer kind (full attention, sliding window, linear attention, mamba, conv), heads, KV heads, head size, window, experts, KV-cache class, quantization, parameter count and bytes | `{}` |
+| `model_describe` | Model type, architecture, per-layer kind (full attention, sliding window, linear attention, mamba, conv), heads, KV heads, head size, window, experts, KV-cache class, quantization (including `MACaQ` / `FlatQuant` / `LIRQuant` module manifests alongside base precision, `#630`), parameter count and bytes | `{}` |
 | `model_tensors` | Parameter names with shape, dtype and whether they are quantized; `filter` is a substring of the name | `{"filter": "layers.3.mlp"}` |
 | `model_tensor` | Mean, std, min, max, L2 and the p1/p5/p50/p95/p99 of \|x\| for one tensor (dequantized), plus up to `maxValues` values of a slice. With `"spectrum": true` also the spectrum of the matrix, or of one expert of a 3-D stack picked by the slice: Marchenko–Pastur noise variance, bulk edges and eigenvalue mass above the bulk, Gavish–Donoho rank, power-law tail exponent `alpha` and the seconds it took (Gram WᵀW of the smaller side on the GPU, `eigvalsh` on the CPU; smaller side ≤ 8192; only with `serve --research-tools`, since it holds the model for seconds) | `{"name": "model.layers.3.input_layernorm.weight", "slice": [[0, 64]], "maxValues": 64}`, `{"name": "model.layers.3.mlp.down_proj.weight", "maxValues": 0, "spectrum": true}` |
 | `kv_inspect` | The prompt-cache tree per namespace: nodes, leaves, tokens, bytes, recurrent snapshots, pins, last use; budget and evictions | `{"namespace": "claude-code"}` |
@@ -166,3 +168,10 @@ The procedure for a behaviour such as refusal: trace → contrast → conditiona
 4. **`experiment_compare`** with the conditional overlay, against a static `ablate_*` overlay of the same component and a `steer_commit` adapter: KL, perplexity, the texts and `triggerRate` (the share of tokens the conditional edit applied to).
 
 Not wired yet: the System One readout as a trigger or labeller, sampled (non-greedy) traces, chat messages as input (apply the template yourself), and a dedicated evaluation runner for refusal rate, accuracy and decode speed.
+
+## Recent additions (`v0.12`)
+
+- **Automatic BOS handling in raw X-Ray traces (`#630`):** `trace_run`, `trace_tokens`, `experiment_compare`, `contrast`, `activation_contrast`, `steer_search` and `TokenAttribution` share `ModelProbe.encoded(_:_:)` so tokenizers whose `encode(addSpecialTokens: true)` omits `bosToken` (such as Gemma 4) still receive `<bos>` at position 0, preserving BOS attention-sink layers (`L43–L56`) without double-BOS.
+- **Per-token logprobs, attribution & hallucination risk (`#613`, `#614`):** `POST /v1/xray/tokens` and generation routes expose per-token logprobs, top-k entropy, layer/head/MoE attribution and hallucination risk signals.
+- **Mechanistic surgery & influence attribution (`#600`, `#622`):** GQA KV-group patching, cognitive nullspace projection, anti-steering guard, `MAO-SNMF` feature decomposition, `Score d'influence` head attribution (`HeadInfluenceCore`) and temperature-scaled routing (`CalibratedRouterGate`).
+- **HITL governance (`#626`):** `HITLGovernanceCore` / `HITLApprovalActor` gate high-impact MCP actions via `/v1/mcp/approvals`, paired with the LAAS-CNRS `SymbolicKnowledgeGraph`.

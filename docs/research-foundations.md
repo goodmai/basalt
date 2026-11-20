@@ -1,5 +1,7 @@
 # Mathematical & Scientific Research Foundations of Basalt
 
+> Languages: **English** · [Русский](i18n/ru/research-foundations.md) · [中文](i18n/zh/research-foundations.md) · [Español](i18n/es/research-foundations.md) · [Français](i18n/fr/research-foundations.md) · [日本語](i18n/ja/research-foundations.md) · [Deutsch](i18n/de/research-foundations.md)
+
 Basalt stands on the shoulders of the global open-science community. Every Metal kernel, quantization codec, KV-cache compressor, speculative verifier, epistemic gate, and post-training objective in Basalt is grounded in peer-reviewed mathematical theory and open-access preprints across international research ecosystems — spanning **North American, European, Chinese, Russian, South Korean, and Japanese** scientific schools.
 
 ---
@@ -121,3 +123,16 @@ To keep 32k–131k Chain-of-Thought (`Long-CoT`) sessions memory-resident withou
 | **ADPO / cADPO** (*S. Oi et al.*, Science Tokyo / MBZUAI / AIST / NII LLMC), **EMA-QLoRA** (*Gaipnazarov & Zhumakulov*) & **PHM / OFT** | *NLP2026 P9-7* · *VAK 2026* · NeurIPS / ICLR | Prefix-factored autoregressive preference loss with adaptive $m$-segment alignment (`40.3% -> 45.8%` AlpacaEval 2 LC Win Rate), hypercomplex Kronecker `PHM`, and orthogonal `OFT` adapters | `MLXInferenceEngine+LabTrain`, `CorpusTrain`, `DistillTrain` (`#563`) |
 | **DiLoCo**, **Zero-Bubble Pipeline (`ZB-H1`)**, **ZeRO-2** & **PowerSGD** | [arXiv:2311.08105](https://arxiv.org/abs/2311.08105) · [arXiv:2401.10241](https://arxiv.org/abs/2401.10241) · [arXiv:1910.02054](https://arxiv.org/abs/1910.02054) · [arXiv:1905.13727](https://arxiv.org/abs/1905.13727) | Multi-Mac Thunderbolt 5 / LAN federated Nesterov outer momentum, bubble-free backward `$B/W$` split, sharded optimizer states, and error-feedback gradient sketching | Distributed Training & Cluster Calibration (`#564`) |
 | **Apple Silicon Roofline, ANE Transformers & Out-of-Core MoE** | [Apple ANE Transformers](https://machinelearning.apple.com/research/neural-engine-transformers) · [Apple MLX M5](https://machinelearning.apple.com/research/exploring-llms-mlx-m5) · [Apple MLX Distributed](https://machinelearning.apple.com/research/mlx-distributed-inference) · [arXiv:2402.16363](https://arxiv.org/abs/2402.16363) · [arXiv:2608.16157](https://arxiv.org/abs/2608.16157) | Unified-memory bandwidth roofline pacing, GPU + Neural Engine hybrid scheduling, and zero-swap `POSIX AIO` SSD expert streaming | `MemoryCoordinator`, `SystemProfiler`, `ComposeProfileCatalog`, `POSIXAIOStreamer` (`#45`, `#225`, `#272`, `#274`, `#399`) |
+
+---
+
+## 10. European (FR / DACH) Epistemic Calibration, Governance, Semantic Caching & UMA Tiering (`#621`)
+
+| Work | Venue / Ecosystem | Core Mathematical Principle | Basalt Subsystem / PRs & Issues |
+|---|---|---|---|
+| **Score d'influence & Temperature-Scaled Routing** | FR / DACH ML Calibration (2025–2026) | Per-head causal influence scoring and temperature-calibrated router confidence gating | `HeadInfluenceCore`, `CalibratedRouterGate` (`#615`, `#622`) |
+| **Domain-Aware QAT STE & Post-Quantization Audit** | Quantization Safety & Fairness (2025–2026) | Straight-through-estimator domain QAT paired with quality, fairness and leakage regression audits | `QATFakeQuantizer`, `QuantizationAuditCore` (`#616`, `#623`) |
+| **Quantized AdaLoRA (`LR/40`), Two-Stage SFT→DPO, Self-Appraisal & RLVR Audit** | Alignment & Post-Training (2025–2026) | Quantization-scaled learning rate (`LR/40`), adaptive rank scheduling, staged preference alignment and shortcut-exploitation auditing | `QuantizedLRPolicy`, `AdaLoRARankScheduler`, `TwoStageSFTDPOPolicy`, `SelfAppraisalCore`, `ShortcutAuditCore` (`#617`, `#624`) |
+| **LANTERN Semantic Caching & 5-Component Business Orchestrator** | European Systems & Enterprise AI (2025–2026) | Embedding-indexed semantic response reuse with bounded staleness and multi-component enterprise routing | `SemanticCacheCore`, `SemanticCacheActor`, `BusinessOrchestratorCore` (`#618`, `#625`) |
+| **LAAS-CNRS Neuro-Symbolic Knowledge Core & HITL Governance** | LAAS-CNRS / Toulouse Robotics & Safety AI | Symbolic knowledge graph constraints paired with deterministic Human-in-the-Loop approval gates | `SymbolicKnowledgeGraph`, `HITLGovernanceCore`, `HITLApprovalActor` (`#619`, `#626`) |
+| **UMA-Aware L0/L1/L2 Tiered KV Hierarchy & Adaptive Heterogeneous Planning** | Unified-Memory Systems Architecture (2025–2026) | Shared unified-memory L0/L1/L2 KV budgeting with zero-copy `L1 → L0` promotion and heterogeneous cluster scheduling | `TieredKVHierarchyCore`, `AdaptiveHeterogeneousPlanner` (`#620`, `#627`) |

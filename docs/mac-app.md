@@ -1,5 +1,7 @@
 # Basalt for Mac
 
+> Languages: **English** · [Русский](i18n/ru/mac-app.md) · [中文](i18n/zh/mac-app.md) · [Español](i18n/es/mac-app.md) · [Français](i18n/fr/mac-app.md) · [日本語](i18n/ja/mac-app.md) · [Deutsch](i18n/de/mac-app.md)
+
 A native app around basalt: a chat window and a Monitor window, on a local engine that the app starts and supervises. Design and phases are in #434. This is phase 1.
 
 ## Build and run
@@ -93,6 +95,11 @@ From a build folder without bundling, point the app at the engine: `BASALT_HELPE
   - It writes `Casks/basalt-app.rb` from `Casks/basalt-app.rb.template` in the same PR that moves the formula.
   - Without the secrets, the release ships the formula only, with a notice.
 - **Install:** once a release carries the app, run `brew install --cask goodmai/basalt/basalt-app`.
+
+## Compose Video Studio, Universal Converter & Live Hub (`v0.12`)
+- **Compose Video Studio:** Phased 24 GB UMA video generation and inline playback (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`) with `.mp4` export (`#611`).
+- **Universal Converter (`ConvertModelSheet`):** Full any-to-any quantization UI (`MACaQ` dense/MoE, `FlatQuant`, `LIRQuant`, `SINQ`, `QTIP`, `E8P`, `PV-Tuning`, `QAT STE` + `QuantizationAuditCore`) in English and Russian (`#546`, `#599`, `#623`).
+- **Live Hub & 10 Hz SSE Telemetry:** Powered by `swift-huggingface` with Xet downloads, live Hub search/publish, and 10 Hz streaming telemetry in Monitor (`#587`).
 
 ## Budgets
 Measured on an M4 Pro with 24 GB at 530aa28, with Gemma 4 12B in the engine (#434):
