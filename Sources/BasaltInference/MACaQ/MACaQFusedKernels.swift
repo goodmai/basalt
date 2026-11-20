@@ -89,9 +89,9 @@ package enum MACaQFusedKernels {
                 x, signs: scaleVector, blockSize: blockSize, isInverse: isInverse)
         }
         let cleanScale = dtypes.contains(scaleVector.dtype) ? scaleVector : scaleVector.asType(.float32)
-        let scaleParam = MLXArray([1.0 / Float(blockSize).squareRoot()])
+        let simdPerTG = totalBlocks.isMultiple(of: 4) ? 4 : (totalBlocks.isMultiple(of: 2) ? 2 : 1)
         let out = singleSimdBlockWHTKernel(
-            [x.reshaped(totalBlocks, blockSize), cleanScale.reshaped(width), scaleParam],
+            [x.reshaped(totalBlocks, blockSize), cleanScale.reshaped(width)],
             template: [
                 ("T", origType),
                 ("TS", cleanScale.dtype),
@@ -100,7 +100,7 @@ package enum MACaQFusedKernels {
                 ("IS_INV", isInverse),
             ],
             grid: (32, totalBlocks, 1),
-            threadGroup: (32, 1, 1),
+            threadGroup: (32, simdPerTG, 1),
             outputShapes: [[totalBlocks, blockSize]],
             outputDTypes: [origType]
         )[0]
@@ -130,9 +130,9 @@ package enum MACaQFusedKernels {
         }
         let numBlocks = width / blockSize
         let cleanScale = dtypes.contains(preScale.dtype) ? preScale : preScale.asType(.float32)
-        let scaleParam = MLXArray([1.0 / Float(blockSize).squareRoot()])
+        let simdPerTG = numBlocks.isMultiple(of: 4) ? 4 : (numBlocks.isMultiple(of: 2) ? 2 : 1)
         let out = switchSimdBlockWHTKernel(
-            [xExp.reshaped(flatTasks, width), idxExp.reshaped(flatTasks), cleanScale, scaleParam],
+            [xExp.reshaped(flatTasks, width), idxExp.reshaped(flatTasks), cleanScale],
             template: [
                 ("T", origType),
                 ("TS", cleanScale.dtype),
@@ -142,7 +142,7 @@ package enum MACaQFusedKernels {
                 ("PER_EXPERT_PRE", preScale.ndim == 2),
             ],
             grid: (32, numBlocks, flatTasks),
-            threadGroup: (32, 1, 1),
+            threadGroup: (32, simdPerTG, 1),
             outputShapes: [[flatTasks, width]],
             outputDTypes: [origType]
         )[0]
@@ -167,11 +167,11 @@ private enum MACaQFusedMetal {
     static let blockWHTSource = """
         constexpr int R = (N >= 32) ? (N / 32) : 1;
         constexpr int INNER = (N < 32) ? N : 32;
-        const int blk_idx = int(threadgroup_position_in_grid.y);
+        const int blk_idx = int(thread_position_in_grid.y);
         const int lane = int(thread_index_in_simdgroup);
         const size_t base = size_t(blk_idx) * size_t(N);
         const size_t sign_base = size_t(blk_idx % NUM_BLOCKS) * size_t(N);
-        const float scale = float(params[0]);
+        const float scale = rsqrt(float(N));
         float a[R];
         for (int r = 0; r < R; ++r) {
             const int col = r * 32 + lane;
@@ -209,8 +209,8 @@ private enum MACaQFusedMetal {
     static let switchBlockWHTSource = """
         constexpr int R = (N >= 32) ? (N / 32) : 1;
         constexpr int INNER = (N < 32) ? N : 32;
-        const int blk = int(threadgroup_position_in_grid.y);
-        const int task = int(threadgroup_position_in_grid.z);
+        const int blk = int(thread_position_in_grid.y);
+        const int task = int(thread_position_in_grid.z);
         const int lane = int(thread_index_in_simdgroup);
         const int e = int(rhs_indices[task]);
         const size_t row_off = size_t(task) * size_t(K) + size_t(blk) * size_t(N);
@@ -222,7 +222,7 @@ private enum MACaQFusedMetal {
             return;
         }
         const size_t p_off = (PER_EXPERT_PRE ? (size_t(e) * size_t(K)) : size_t(0)) + size_t(blk) * size_t(N);
-        const float scale = float(params[0]);
+        const float scale = rsqrt(float(N));
         float a[R];
         for (int r = 0; r < R; ++r) {
             const int col = r * 32 + lane;
@@ -256,7 +256,7 @@ private enum MACaQFusedMetal {
 
 private let singleSimdBlockWHTKernel = MLXFast.metalKernel(
     name: "macaq_single_simd_wht",
-    inputNames: ["inp", "signs", "params"],
+    inputNames: ["inp", "signs"],
     outputNames: ["out"],
     source: MACaQFusedMetal.blockWHTSource,
     header: MACaQFusedMetal.header
@@ -264,7 +264,7 @@ private let singleSimdBlockWHTKernel = MLXFast.metalKernel(
 
 private let switchSimdBlockWHTKernel = MLXFast.metalKernel(
     name: "macaq_switch_simd_wht",
-    inputNames: ["inp", "rhs_indices", "signs", "params"],
+    inputNames: ["inp", "rhs_indices", "signs"],
     outputNames: ["out"],
     source: MACaQFusedMetal.switchBlockWHTSource,
     header: MACaQFusedMetal.header

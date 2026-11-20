@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import MLX
+import MLXNN
 import MLXLMCommon
 import MLXLLM
 @testable import BasaltCore
@@ -491,5 +492,53 @@ struct PromptLookupDecodingTests {
                 print("[BENCH] size=\(size) miss=\(String(format: "%.1f", missUs))µs hit=\(String(format: "%.1f", hitUs))µs")
             }
         }
+    }
+
+}
+
+@Suite("Prompt lookup on stateful VLMs (#632)")
+struct StatefulVLMPromptLookupTests {
+    @Test("Stateful VLMs returning immutable LMOutput.State (Qwen3.5/3.8 ropeDeltas) accept prompt-lookup drafts with bit-identical greedy output (#632)")
+    func statefulVLMLookupEquivalence() throws {
+        let model = StatefulVLMWrapper(base: try TinyModel.make(.qwen35))
+        let expected = try LookupFixture.baseline(model)
+        let (tokens, iterator, _) = try LookupFixture.lookup(model)
+        expectTokenSequence(tokens, expected)
+        #expect(try #require(iterator.speculativeDecodingTelemetry).acceptedDraftTokenCount > 0)
+        #expect(iterator.state != nil)
+    }
+}
+
+private final class StatefulVLMWrapper: Module, LanguageModel {
+    let base: any LanguageModel
+
+    init(base: any LanguageModel) {
+        self.base = base
+        super.init()
+    }
+
+    func prepare(
+        _ input: LMInput, cache: [any KVCache], state: LMOutput.State?, prefill: PrefillParameters
+    ) throws -> PrepareResult {
+        switch try base.prepare(input, cache: cache, state: state, prefill: prefill) {
+        case .logits(let out):
+            return .logits(LMOutput(logits: out.logits, state: LMOutput.State()))
+        case .tokens(let rest):
+            let out = base(rest[text: .newAxis], cache: cache, state: nil)
+            return .logits(LMOutput(logits: out.logits, state: LMOutput.State()))
+        }
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        try prepare(input, cache: cache, state: nil, prefill: PrefillParameters(stepSize: windowSize ?? 512))
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        let out = base(input, cache: cache, state: nil)
+        return LMOutput(logits: out.logits, state: state)
+    }
+
+    func newCache(parameters: GenerateParameters?) throws -> [KVCache] {
+        try base.newCache(parameters: parameters)
     }
 }

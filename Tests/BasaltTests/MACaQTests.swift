@@ -491,4 +491,33 @@ struct MACaQMixedAndDiTLoaderTests {
         #expect(!artifact.imageData.isEmpty)
         await (synth as? FluxKleinSynthesizer)?.unload()
     }
+
+    @Test("Multi-simdgroup blockHadamard and switchBlockHadamard without host scaleParam match differentiable references across odd/even/4x block counts (#632)")
+    func multiSimdgroupWHTParity() {
+        for (blocks, blockSize) in [(1, 64), (2, 64), (3, 64), (4, 64), (5, 32), (80, 64)] {
+            let width = blocks * blockSize
+            let x = MLXRandom.normal([1, 2, width]).asType(.bfloat16)
+            let pre = MLXRandom.uniform(low: 0.5, high: 1.5, [width]).asType(.bfloat16)
+            let got = MACaQFusedKernels.blockHadamard(x, scaleVector: pre, blockSize: blockSize, isInverse: false)
+            let ref = MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: pre, blockSize: blockSize)
+            eval(got, ref)
+            let maxDiff = abs(got.asType(.float32) - ref.asType(.float32)).max().item(Float.self)
+            #expect(maxDiff < 0.05, "blockHadamard mismatch blocks=\(blocks) N=\(blockSize): \(maxDiff)")
+
+            let inv = MACaQFusedKernels.blockHadamard(got, scaleVector: MLXArray.ones([width], dtype: .bfloat16), blockSize: blockSize, isInverse: true)
+            let expectedUnrot = (x.asType(.float32) * pre.asType(.float32))
+            eval(inv, expectedUnrot)
+            let invDiff = abs(inv.asType(.float32) - expectedUnrot).max().item(Float.self)
+            #expect(invDiff < 0.05, "inverse blockHadamard mismatch blocks=\(blocks) N=\(blockSize): \(invDiff)")
+        }
+
+        let xSw = MLXRandom.normal([1, 1, 1, 256]).asType(.bfloat16)
+        let idx = MLXArray([Int32(0), 2, 1, 3]).reshaped(1, 4)
+        let preSw = MLXRandom.uniform(low: 0.5, high: 1.5, [4, 256]).asType(.bfloat16)
+        let gotSw = MACaQFusedKernels.switchBlockHadamard(xSw, indices: idx, preScale: preSw, blockSize: 64, numExperts: 4)
+        let refSw = MACaQFusedKernels.differentiableSwitchHadamard(xSw, indices: idx, preScale: preSw, blockSize: 64)
+        eval(gotSw, refSw)
+        let swDiff = abs(gotSw.asType(.float32) - refSw.asType(.float32)).max().item(Float.self)
+        #expect(swDiff < 0.05, "switchBlockHadamard mismatch: \(swDiff)")
+    }
 }
