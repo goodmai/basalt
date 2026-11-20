@@ -153,7 +153,7 @@ extension MLXInferenceEngine {
     static func compareRow(
         _ prompt: String, context: ModelContext, maxTokens: Int, pristine: [String: AppliedDelta]? = nil, probe: () -> InterventionProbe?
     ) throws -> CompareRow {
-        let ids = context.tokenizer.encode(text: prompt, addSpecialTokens: true)
+        let ids = ModelProbe.encoded(prompt, context.tokenizer)
         guard !ids.isEmpty else { throw BasaltError.invalidRequestStructure(details: "an empty prompt has no next token to compare") }
         let stops = stopTokenIds(context)
         let reference = { () throws -> ([Int], MLXArray) in

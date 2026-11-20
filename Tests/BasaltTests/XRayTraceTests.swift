@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import MLXLMCommon
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -92,5 +93,58 @@ struct XRayTraceTests {
     func refused(request: TraceRequest) async throws {
         let engine = try await TinyModel.engine(.qwen35)
         await #expect(throws: BasaltError.self) { try await engine.trace(request) }
+    }
+
+    @Test("X-Ray traces prepend BOS once for tokenizers whose encode omits bosToken and keep empty prompts empty (#629)")
+    func prependsOmittedBOS() throws {
+        let tokenizer = OmittedBOSTokenizer()
+        let raw = tokenizer.encode(text: "hi", addSpecialTokens: true)
+        #expect(raw.first != OmittedBOSTokenizer.bosId)
+        #expect(ModelProbe.encoded("hi", tokenizer) == [OmittedBOSTokenizer.bosId] + raw)
+        #expect(ModelProbe.encoded("<bos>hi", tokenizer) == [OmittedBOSTokenizer.bosId] + raw)
+        #expect(ModelProbe.encoded("", tokenizer).isEmpty)
+        #expect(ModelProbe.encoded("hi", ByteTokenizer()) == ByteTokenizer().encode(text: "hi", addSpecialTokens: true))
+
+        let model = try TinyModel.make(.qwen35)
+        let context = ModelContext(
+            configuration: ModelConfiguration(id: "tiny-bos"),
+            model: model, processor: ByteInputProcessor(), tokenizer: tokenizer)
+        let trace = try MLXInferenceEngine.capture(TraceRequest(prompt: "hi", topK: 3), context: context)
+        #expect(trace.tokens.first == "<bos>")
+        #expect(trace.tokens.count == raw.count + 1)
+
+        let anatomy = AnatomyScan(model: model, caches: try model.newCache(parameters: nil)).anatomy(config: [:])
+        let tokenRun = try MLXInferenceEngine.tokenTrace(
+            TokenTraceRequest(prompt: "hi", maxTokens: 2), anatomy: anatomy, interventions: [], context: context)
+        #expect(tokenRun.ids.first == OmittedBOSTokenizer.bosId)
+        #expect(tokenRun.promptTokens == raw.count + 1)
+    }
+}
+
+private struct OmittedBOSTokenizer: MLXLMCommon.Tokenizer {
+    static let bosId = 2
+    private let base = ByteTokenizer()
+
+    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+        if text.hasPrefix("<bos>") {
+            return [Self.bosId] + base.encode(text: String(text.dropFirst(5)), addSpecialTokens: false)
+        }
+        return base.encode(text: text, addSpecialTokens: addSpecialTokens)
+    }
+
+    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+        tokenIds.map { $0 == Self.bosId ? (skipSpecialTokens ? "" : "<bos>") : base.decode(tokenIds: [$0], skipSpecialTokens: skipSpecialTokens) }.joined()
+    }
+
+    func convertTokenToId(_ token: String) -> Int? { token == "<bos>" ? Self.bosId : nil }
+    func convertIdToToken(_ id: Int) -> String? { id == Self.bosId ? "<bos>" : base.convertIdToToken(id) }
+    var bosToken: String? { "<bos>" }
+    var eosToken: String? { nil }
+    var unknownToken: String? { nil }
+
+    func applyChatTemplate(
+        messages: [[String: any Sendable]], tools: [[String: any Sendable]]?, additionalContext: [String: any Sendable]?
+    ) throws -> [Int] {
+        [Self.bosId] + (try base.applyChatTemplate(messages: messages, tools: tools, additionalContext: additionalContext))
     }
 }

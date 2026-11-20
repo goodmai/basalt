@@ -178,6 +178,7 @@ extension ModelProbe {
 
     static func encoded(_ text: String, _ tokenizer: any MLXLMCommon.Tokenizer) -> [Int] {
         let ids = tokenizer.encode(text: text, addSpecialTokens: true)
+        guard !ids.isEmpty else { return ids }
         guard let bos = tokenizer.bosToken.flatMap(tokenizer.convertTokenToId), ids.first != bos else { return ids }
         return [bos] + ids
     }

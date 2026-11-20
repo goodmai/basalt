@@ -45,7 +45,7 @@ extension MLXInferenceEngine {
     }
 
     static func tokenTrace(_ request: TokenTraceRequest, anatomy: ModelAnatomy, interventions: [Intervention], context: ModelContext) throws -> TokenTraceRun {
-        let prompt = context.tokenizer.encode(text: request.prompt, addSpecialTokens: true)
+        let prompt = ModelProbe.encoded(request.prompt, context.tokenizer)
         guard !prompt.isEmpty else { throw BasaltError.invalidRequestStructure(details: "the prompt encodes to no tokens") }
         let total = prompt.count + request.maxTokens
         guard total <= TokenTraceRequest.tokenLimit else { throw BasaltError.contextLengthExceeded(maxTokens: TokenTraceRequest.tokenLimit, requested: total) }

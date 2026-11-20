@@ -23,4 +23,45 @@ struct ArchitectureLinesTests {
         #expect(dynamic[3] == "Quantization: Dynamic Quantization (DQ - per-layer, 2 layers)")
         #expect(architectureLines(config: [:])[3] == "Quantization: None (FP16/BF16 Base)")
     }
+
+    @Test("Module-manifest quantization reports MACaQ/FlatQuant/LIRQuant details alongside any base quantization (#629)")
+    func moduleManifestQuantization() {
+        let hybrid = architectureLines(config: [
+            "model_type": "qwen3_5",
+            "quantization": ["bits": 8, "group_size": 64, "mode": "affine"],
+            "macaq_quantization": [
+                "version": 1,
+                "modules": [
+                    "layers.0.mlp.gate_proj": ["bits": 4, "group_size": 64, "mode": "affine"],
+                    "layers.0.mlp.up_proj": ["bits": 4, "group_size": 64, "mode": "affine"],
+                ],
+            ],
+        ])
+        #expect(hybrid[3] == "Quantization: MACaQ 4-bit (Group Size: 64) [affine] (2 modules) + 8-bit (Group Size: 64) [affine]")
+
+        let mixed = architectureLines(config: [
+            "model_type": "gemma4",
+            "macaq_quantization": [
+                "version": 1,
+                "modules": [
+                    "layers.0.mlp.gate_proj": ["bits": 3, "group_size": 64, "mode": "affine"],
+                    "layers.0.mlp.down_proj": ["bits": 4, "group_size": 32, "mode": "mxfp4"],
+                ],
+            ],
+        ])
+        #expect(mixed[3] == "Quantization: MACaQ 3/4-bit (Group Size: 32/64) [affine/mxfp4] (2 modules)")
+
+        let flat = architectureLines(config: [
+            "flatquant_quantization": [
+                "modules": ["layers.0.mlp.up_proj": ["bits": 4, "group_size": 64, "mode": "affine"]],
+            ],
+        ])
+        #expect(flat[3] == "Quantization: FlatQuant 4-bit (Group Size: 64) [affine] (1 module)")
+
+        let emptyManifest = architectureLines(config: [
+            "quantization": ["bits": 4, "group_size": 64, "mode": "affine"],
+            "macaq_quantization": ["version": 1, "modules": [String: Any]()],
+        ])
+        #expect(emptyManifest[3] == "Quantization: 4-bit (Group Size: 64) [affine]")
+    }
 }
