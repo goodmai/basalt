@@ -1,5 +1,7 @@
 # Integrations
 
+> Languages: **English** · [Русский](i18n/ru/integrations.md) · [中文](i18n/zh/integrations.md) · [Español](i18n/es/integrations.md) · [Français](i18n/fr/integrations.md) · [日本語](i18n/ja/integrations.md) · [Deutsch](i18n/de/integrations.md)
+
 ## Use it from your tools
 
 basalt speaks three client protocols at once, so pick whatever your tool already uses.

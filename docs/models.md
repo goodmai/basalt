@@ -1,5 +1,7 @@
 # Models
 
+> Languages: **English** · [Русский](i18n/ru/models.md) · [中文](i18n/zh/models.md) · [Español](i18n/es/models.md) · [Français](i18n/fr/models.md) · [日本語](i18n/ja/models.md) · [Deutsch](i18n/de/models.md)
+
 ## Verified Models
 
 Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Over 42 verified chat, MoE, QTIP, PV-Tuned, GSQ-RCO, OCR, neural TTS, embedding, rerank and System One decision checkpoints are published with one-click **Run with Basalt** ([`goodmai-run-with-basalt.static.hf.space`](https://goodmai-run-with-basalt.static.hf.space/?lang=en) → `basalt://run?model=...`) buttons in the [`goodmai` Hugging Face collection](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc).
@@ -8,6 +10,21 @@ Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`
 basalt models download goodmai/gemma-4-12B-it-qat-4bit
 basalt models download goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native
 ```
+
+### Measured for 0.12
+
+M4 Pro, 24 GB, release build (`620641c` / `82a99d4`), November 2026 (`--reasoning-effort none --kv-bits 4`).
+
+| Model | Role / Architecture | Active memory | Decode tok/s | Ladder / Notes |
+|---|---|---|---|---|
+| `goodmai/gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX` | 31B dense hybrid (4-bit attn/embed + 3-bit affine PV-MACaQ MLP) | 15.1 GB (18.09 GB peak) | 11.6–13.5 (p50 `14.07`, p95 `14.42`) | **3/3 warmup, 4/5 rungs + Lunar 4/6**, `probe_ppl = 2.39`, 50.6% lookup accept; fits 24 GB Mac where 4-bit OOMs (`--prompt-cache-mb 0 --wired-limit`) |
+| `goodmai/Qwen3.8-27B-PV-MACaQ-4bit-Affine-MLX` | 27B dense hybrid (48 linear + 16 full attn, 496 MACaQ 4-bit g64 modules) | 15.3 GB (17.45 GB peak) | 9.4–11.4 (p50 `11.59`, p95 `11.86`) | **3/3 warmup, 4/5 rungs**, `probe_ppl = 1.23`, `SQNR 20.61 → 21.59 dB` (`MSE −19.5%`), max 64-layer drift `5.53%` (`#630`) |
+| `Qwen3.5-9B-PV-MACaQ-4bit` (from `Qwen3.5-9B-8bit`) | 9B hybrid (24 linear + 8 full attn, 200 MACaQ 4-bit g64 modules) | 6.68 GB (−33% vs 8-bit) | 35.6–41.6 (p50 `43.22`, +52% vs 8-bit) | **3/3 warmup, 4/5 rungs** (100% parity with 8-bit ref `24.7–27.3 tok/s`), `valKL = 0.0044`, `probe_ppl = 1.28`, max layer drift `3.37%` |
+| `goodmai/gemma-4-26B-A4B-it-PV-MACaQ-4bit-Affine-MLX` | 26B MoE (`A4B`, 128 experts, top-8, g32 affine MACaQ + 8-bit shared MLP) | 16.75 GB | 49.2–54.8 (+82% from `#628` switch WHT) | **3/3 warmup, 3/5 rungs** (`biquad-complex`, `fourier`, `pump`); `3.41×` kernel speedup (`2.06 → 0.60 ms`, `#628`) |
+| `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` | 35B MoE (`A3B`, 120 `MACaQSwitchLinear` layers) | 14.64 GB | 64.0–74.7 (68.7 at 8k) | **3/3 warmup, 1/5 rungs**, `probe_ppl = 1.46`, single-pass switch WHT (`#628`) |
+| `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE (`A4B`, QAT 4-bit) | 14.92 GB | 56.0–63.4 | **3/3 warmup, 4/5 rungs** (`pump` ✅, `lunar 5/6`) |
+| `goodmai/gemma-4-12B-it-qat-4bit` | 12B dense QAT 4-bit | 10.51 GB | 18.8–22.2 | **3/3 warmup, 4/5 rungs** (`lunar` ✅ 6/6) |
+| Video / Speech / Music (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | Phased 24 GB UMA Video Studio, duplex Mimi/SNAC audio & 4-stage image/music | ≤ 18 GB phased | 3D-VAE + STA Metal kernel | Verified in `#542`, `#604`, `#605`, `#608`–`#611` |
 
 ### Measured for 0.11
 

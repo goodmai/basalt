@@ -1,5 +1,7 @@
 # Features and benchmarks
 
+> Languages: **English** · [Русский](i18n/ru/benchmarks.md) · [中文](i18n/zh/benchmarks.md) · [Español](i18n/es/benchmarks.md) · [Français](i18n/fr/benchmarks.md) · [日本語](i18n/ja/benchmarks.md) · [Deutsch](i18n/de/benchmarks.md)
+
 ## Features at a glance
 
 Every speed-up is opt-in and keeps greedy output identical unless the row says otherwise. Numbers: M4 Pro 24 GB on power, release build.
@@ -36,6 +38,9 @@ Each number on the README's first screen comes from a logged run, and the PR tha
 | Recursive `Flint-40B-A2.5B` (`oQ3e`) at 67.02 tok/s decode (273.5 tok/s prefill) in 17.61 GB on M4 Pro 24 GB | [#522](https://github.com/goodmai/basalt/pull/522) |
 | `Zyphra/ZONOS3-Mini-hf` 44.1 kHz neural TTS in 2.24 GB at RTF 0.228–0.263 (3.8–4.4× real time) across EN/DE/RU | [#527](https://github.com/goodmai/basalt/pull/527) |
 | 84 hardware-tiered Compose profiles (`16–256 GB × 12`) with `Basalt.app` RAM tier auto-recommendation | [#528](https://github.com/goodmai/basalt/pull/528) |
+| Single-pass `MACaQSwitchLinear` WHT + `gatherQuantizedMM`: `3.41×` MoE kernel (`2.06 → 0.60 ms`), `+82%` end-to-end on Gemma 4 26B-A4B (`49.2–54.8 tok/s`), `64–75 tok/s` on Ornith 35B-A3B 3-bit | [#628](https://github.com/goodmai/basalt/pull/628) |
+| `Qwen3.5-9B-PV-MACaQ-4bit`: `4/5` exact Ladder parity with 8-bit, `+52%` decode (`43.2 tok/s` p50), `−33%` RAM (`6.68 vs 9.97 GB`), max layer drift `3.37%` | [#545](https://github.com/goodmai/basalt/pull/545), [#630](https://github.com/goodmai/basalt/pull/630) |
+| `goodmai/gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX`: `15.1 GB` RAM (`18.09 GB` peak) on 24 GB Mac, `4/5` Ladder + `4/6` Lunar at `14.1 tok/s` p50 (4-bit ref OOMs) | [#628](https://github.com/goodmai/basalt/pull/628), [#630](https://github.com/goodmai/basalt/pull/630) |
 
 The golden-tested models in the README are checked by `scripts/check_readme_models.swift` in CI: a model listed there must link an existing fixture in `Tests/BasaltTests/Fixtures/golden`.
 
@@ -80,6 +85,14 @@ template's `<think>` block: on by default for reasoning models, disabled with
 
 | Model | Warm-up | Ladder | Top rung | ARC-AGI mini | tok/s |
 |---|---|---|---|---|---|
+| `goodmai/gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX` (thinking off, 24 GB) | 3/3 | **4/5** | 4/6 invariants | — | 11.6–13.5 (p50 14.1) |
+| `goodmai/Qwen3.8-27B-PV-MACaQ-4bit-Affine-MLX` (thinking off, 24 GB) | 3/3 | **4/5** | 0/6 (length) | — | 9.4–11.4 (p50 11.6) |
+| `Qwen3.5-9B-PV-MACaQ-4bit` (thinking off) | 3/3 | **4/5** | 0/6 (prose) | — | 35.6–41.6 (p50 43.2) |
+| `mlx-community/Qwen3.5-9B-8bit` (ref, thinking off) | 3/3 | **4/5** | 0/6 (prose) | — | 24.7–27.3 |
+| `goodmai/gemma-4-26B-A4B-it-qat-4bit` (thinking off) | 3/3 | **4/5** | 5/6 invariants | — | 56.0–63.4 |
+| `goodmai/gemma-4-12B-it-qat-4bit` (thinking off) | 3/3 | **4/5** | **6/6 PASS** | — | 18.8–22.2 |
+| `goodmai/gemma-4-26B-A4B-it-PV-MACaQ-4bit-Affine-MLX` (thinking off, `#628`) | 3/3 | 3/5 | 0/6 | — | 49.2–54.8 |
+| `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` (thinking off, `#628`) | 3/3 | 1/5 | 0/6 | — | 64.0–74.7 |
 | `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking off) | 3/3 | 1/4 ² | not run | 0/3 ¹ | ~45 |
 | `ornith-ai/Ornith-1.5-9B-MLX-4bit` (thinking on) | 2/3 | 0/4 ² | not run | not run | ~43 |
 

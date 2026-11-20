@@ -1,5 +1,7 @@
 # basalt compose
 
+> Languages: **English** · [Русский](i18n/ru/compose.md) · [中文](i18n/zh/compose.md) · [Español](i18n/es/compose.md) · [Français](i18n/fr/compose.md) · [日本語](i18n/ja/compose.md) · [Deutsch](i18n/de/compose.md)
+
 `basalt compose` serves a model system described in one YAML file. The file lists local and cloud models and how each is kept in memory. It also describes the pipelines that route a request between them. Each pipeline runs perceive (OCR, speech), then decide (System One), then answer (a chat model). This is a mixture of models, in the style of a docker-compose file for models.
 
 ```bash
@@ -458,3 +460,4 @@ Compose `version: "2.2"` (compatible with `version: 2`) adds declarative configu
 - Root `voice` (`mode`, `sts_model`, `denoise`, `turn_detection` with `model` and `diarization`, `tts_fallback`, `aligner`).
 - Root `music` (`model`, `steps`, `duration_seconds`) and `video` (`model`, `vae_tiling`, `sta_sparse`, `fps`, `frames`).
 - Root `train` (`method`, `segments`, `ema_decay`) and `cluster` (`topology`, `peers`, `compression`).
+- Enterprise routing, caching & governance (`v0.12`): `BusinessOrchestratorCore` 5-component routing, `LANTERN` semantic cache (`SemanticCacheCore` / `SemanticCacheActor`, `#625`), `HITL` approval gate (`/v1/mcp/approvals`) + LAAS-CNRS `SymbolicKnowledgeGraph` (`#626`), and UMA-aware L0/L1/L2 `TieredKVHierarchyCore` + `AdaptiveHeterogeneousPlanner` (`#627`).

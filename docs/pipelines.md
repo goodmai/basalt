@@ -1,5 +1,7 @@
 # Pipeline presets and memory modes
 
+> Languages: **English** · [Русский](i18n/ru/pipelines.md) · [中文](i18n/zh/pipelines.md) · [Español](i18n/es/pipelines.md) · [Français](i18n/fr/pipelines.md) · [日本語](i18n/ja/pipelines.md) · [Deutsch](i18n/de/pipelines.md)
+
 `/v1/pipeline` (MCP `basalt_pipeline`) runs perceive (OCR, speech) → decide (System One) → answer (the chat model) in one process. A preset fills the serve flags for a shipped profile; any flag you give explicitly wins:
 
 ```bash

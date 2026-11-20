@@ -1,5 +1,7 @@
 # REST API
 
+> Languages: **English** · [Русский](i18n/ru/rest-api.md) · [中文](i18n/zh/rest-api.md) · [Español](i18n/es/rest-api.md) · [Français](i18n/fr/rest-api.md) · [日本語](i18n/ja/rest-api.md) · [Deutsch](i18n/de/rest-api.md)
+
 Base URL: `http://127.0.0.1:8080` — **no authentication required**.
 
 ## Security
@@ -134,6 +136,15 @@ scrape_configs:
 ```
 
 Telemetry holds counts, timings and histograms only: no prompt or answer text (#450).
+
+## Multimodal, Converter, X-Ray & Governance Endpoints (`v0.12`)
+
+- **Video Studio (`/v1/videos/generations`, `/v1/videos/{id}`)** — Phased 24 GB UMA generation (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video MoE`, `Wan 2.2`) returning `.mp4` muxed via `AVAssetWriter` (`#608`–`#611`).
+- **Audio & Music (`/v1/audio/speech`, `/v1/audio/transcriptions`, `/v1/music/generations`)** — `ZONOS3-Mini`, `Kokoro-82M`, `LFM2.5-Audio` Mimi/SNAC duplex codecs, `SmartTurn`/`Sortformer`, `MossFormer2`, `Soprano-80M`, `Qwen3ForcedAligner`, `ACE-Step 1.5` (`#604`, `#605`).
+- **Images (`/v1/images/generations`, `/v1/images/edits`)** — `FLUX.3`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5`, `SeedVR2` upscaling, RGBA support (`#542`, `#605`).
+- **Universal Converter (`/v1/models/convert`, `/v1/models/convert/jobs/{id}`)** — Async any-to-any quantization (`MACaQ`, `FlatQuant`, `LIRQuant`, `SINQ`, `QTIP`, `E8P`, `PV-Tuning`, `QAT STE` + `QuantizationAuditCore`, `#546`, `#623`).
+- **Token Attribution & Hallucination Risk (`POST /v1/xray/tokens`)** — Per-token logprobs, top-k entropy, layer/head/MoE attribution and hallucination risk signals (`#613`, `#614`).
+- **HITL Governance (`/v1/mcp/approvals`)** — Human-in-the-loop approval queue for high-impact MCP tool calls, paired with `HITLGovernanceCore` and `SymbolicKnowledgeGraph` (`#626`).
 
 ## Swagger UI
 

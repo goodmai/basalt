@@ -59,6 +59,9 @@
 <tr><td>Recursive <code>Flint-40B-A2.5B</code> (<code>oQ3e</code>) at 67.02 tok/s decode (273.5 tok/s prefill) in 17.61 GB on M4 Pro 24 GB</td><td><a href="https://github.com/goodmai/basalt/pull/522">#522</a></td></tr>
 <tr><td><code>Zyphra/ZONOS3-Mini-hf</code> 44.1 kHz neural TTS in 2.24 GB at RTF 0.228–0.263 (3.8–4.4× real time) across EN/DE/RU</td><td><a href="https://github.com/goodmai/basalt/pull/527">#527</a></td></tr>
 <tr><td>84 hardware-tiered Compose profiles (<code>16–256 GB × 12</code>) with <code>Basalt.app</code> RAM tier auto-recommendation</td><td><a href="https://github.com/goodmai/basalt/pull/528">#528</a></td></tr>
+<tr><td>Single-pass <code>MACaQSwitchLinear</code> WHT + <code>gatherQuantizedMM</code>: <code>3.41×</code> MoE kernel (<code>2.06 → 0.60 ms</code>), <code>+82%</code> end-to-end on Gemma 4 26B-A4B (<code>49.2–54.8 tok/s</code>), <code>64–75 tok/s</code> on Ornith 35B-A3B 3-bit</td><td><a href="https://github.com/goodmai/basalt/pull/628">#628</a></td></tr>
+<tr><td><code>Qwen3.5-9B-PV-MACaQ-4bit</code>: <code>4/5</code> exact Ladder parity with 8-bit, <code>+52%</code> decode (<code>43.2 tok/s</code> p50), <code>−33%</code> RAM (<code>6.68 vs 9.97 GB</code>), max layer drift <code>3.37%</code></td><td><a href="https://github.com/goodmai/basalt/pull/545">#545</a>, <a href="https://github.com/goodmai/basalt/pull/630">#630</a></td></tr>
+<tr><td><code>goodmai/gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX</code>: <code>15.1 GB</code> RAM (<code>18.09 GB</code> peak) on 24 GB Mac, <code>4/5</code> Ladder + <code>4/6</code> Lunar at <code>14.1 tok/s</code> p50 (4-bit ref OOMs)</td><td><a href="https://github.com/goodmai/basalt/pull/628">#628</a>, <a href="https://github.com/goodmai/basalt/pull/630">#630</a></td></tr>
 </tbody></table>
   <h2>Benchmark Harnesses</h2>
   <table><thead><tr><th>Harness</th><th>Directory</th><th>Tracked Assets</th><th>Verification Scope</th></tr></thead><tbody>
@@ -69,6 +72,14 @@
 </tbody></table>
   <h2>Ladder &amp; ARC-AGI Logged Results</h2>
   <table><thead><tr><th>Model</th><th>Warm-up</th><th>Ladder</th><th>Top rung</th><th>ARC-AGI mini</th><th>tok/s</th></tr></thead><tbody>
+<tr><td><code>goodmai/gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX</code> (thinking off, 24 GB)</td><td>3/3</td><td>**4/5**</td><td>4/6 invariants</td><td>—</td><td>11.6–13.5 (p50 14.1)</td></tr>
+<tr><td><code>goodmai/Qwen3.8-27B-PV-MACaQ-4bit-Affine-MLX</code> (thinking off, 24 GB)</td><td>3/3</td><td>**4/5**</td><td>0/6 (length)</td><td>—</td><td>9.4–11.4 (p50 11.6)</td></tr>
+<tr><td><code>Qwen3.5-9B-PV-MACaQ-4bit</code> (thinking off)</td><td>3/3</td><td>**4/5**</td><td>0/6 (prose)</td><td>—</td><td>35.6–41.6 (p50 43.2)</td></tr>
+<tr><td><code>mlx-community/Qwen3.5-9B-8bit</code> (ref, thinking off)</td><td>3/3</td><td>**4/5**</td><td>0/6 (prose)</td><td>—</td><td>24.7–27.3</td></tr>
+<tr><td><code>goodmai/gemma-4-26B-A4B-it-qat-4bit</code> (thinking off)</td><td>3/3</td><td>**4/5**</td><td>5/6 invariants</td><td>—</td><td>56.0–63.4</td></tr>
+<tr><td><code>goodmai/gemma-4-12B-it-qat-4bit</code> (thinking off)</td><td>3/3</td><td>**4/5**</td><td>**6/6 PASS**</td><td>—</td><td>18.8–22.2</td></tr>
+<tr><td><code>goodmai/gemma-4-26B-A4B-it-PV-MACaQ-4bit-Affine-MLX</code> (thinking off, <code>#628</code>)</td><td>3/3</td><td>3/5</td><td>0/6</td><td>—</td><td>49.2–54.8</td></tr>
+<tr><td><code>goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX</code> (thinking off, <code>#628</code>)</td><td>3/3</td><td>1/5</td><td>0/6</td><td>—</td><td>64.0–74.7</td></tr>
 <tr><td><code>ornith-ai/Ornith-1.5-9B-MLX-4bit</code> (thinking off)</td><td>3/3</td><td>1/4 ²</td><td>not run</td><td>0/3 ¹</td><td>~45</td></tr>
 <tr><td><code>ornith-ai/Ornith-1.5-9B-MLX-4bit</code> (thinking on)</td><td>2/3</td><td>0/4 ²</td><td>not run</td><td>not run</td><td>~43</td></tr>
 </tbody></table>
