@@ -21,6 +21,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let replaysRejections: Bool
     let stagesRounds: Bool
     private let kvQuantization: GenerateParameters?
+    private let draftConditions: DraftConditions?
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
     var evaluatedModel: (any LanguageModel)? { model }
@@ -57,6 +58,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         self.speculativeLookup = lookup.speculative
         self.grammarJumpForward = lookup.jumpForward
         self.kvQuantization = lookup.kvQuantization
+        self.draftConditions = lookup.draftConditions
         self.replaysRejections = Self.isReplayableHybrid(cache)
         self.stagesRounds = !PromptCache(cache).isSharable && !replaysRejections && Self.stagesRounds(cache)
         self.model = model
@@ -208,7 +210,11 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private func lookupDraft(remaining: Int) -> [Int] {
         guard speculativeLookup && backoffs.lookup.allowsDraft else { return [] }
-        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.effectiveLimit()
+        let conditions = draftConditions ?? .live
+        let limit = replaysRejections && backoffs.lookup.probing
+            ? Self.replayedProbeLimit
+            : backoffs.lookup.effectiveLimit(
+                thermalLevel: conditions.thermalLevel, isLowPowerModeEnabled: conditions.isLowPowerModeEnabled)
         return Self.draft(after: history, limit: Swift.min(limit, remaining - 1, draftRoom))
     }
 

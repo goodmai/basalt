@@ -36,12 +36,26 @@ enum FreshCache: Equatable {
     }
 }
 
+struct DraftConditions: Sendable, Equatable {
+    var thermalLevel: ThermalLevel
+    var isLowPowerModeEnabled: Bool
+
+    static let nominal = DraftConditions(thermalLevel: .nominal, isLowPowerModeEnabled: false)
+
+    static var live: DraftConditions {
+        DraftConditions(
+            thermalLevel: ThermalLevel(ProcessInfo.processInfo.thermalState),
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled)
+    }
+}
+
 struct LookupOptions {
     var speculative = false
     var recycling = false
     var jumpForward = false
     var routesExperts = true
     var kvQuantization: GenerateParameters?
+    var draftConditions: DraftConditions?
 
     var requested: Bool { speculative || jumpForward }
 }

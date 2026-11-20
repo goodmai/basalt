@@ -480,11 +480,12 @@ def flight_launch(env):
 
 
 def _propagated(env, cache={}):
-    key = id(env)
-    if key not in cache:
+    # Keyed by the namespace itself, not id(): a freed namespace's id can be reused by the next answer.
+    if cache.get("env") is not env:
         cache.clear()
-        cache[key] = list(_timed(env["propagate"], _four_body_state0(), (0.0, 2 * 86400.0), 300.0))
-    return cache[key]
+        cache["trajectory"] = list(_timed(env["propagate"], _four_body_state0(), (0.0, 2 * 86400.0), 300.0))
+        cache["env"] = env
+    return cache["trajectory"]
 
 
 def flight_transfer(env):
@@ -525,12 +526,12 @@ def flight_braking(env):
 
 
 def _landed(env, cache={}):
-    key = id(env)
-    if key not in cache:
+    if cache.get("env") is not env:
         cache.clear()
         touchdown, fuel, telemetry = _timed(env["soft_landing"], LANDING0, None)
-        cache[key] = (tuple(touchdown), fuel, [tuple(row) for row in telemetry])
-    return cache[key]
+        cache["landing"] = (tuple(touchdown), fuel, [tuple(row) for row in telemetry])
+        cache["env"] = env
+    return cache["landing"]
 
 
 def flight_touchdown(env):

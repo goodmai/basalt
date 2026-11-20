@@ -59,13 +59,14 @@ enum LookupFixture {
 
     static func lookup(
         _ model: any LanguageModel, prompt: [Int] = prompt, maxTokens: Int = 64,
-        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler(), recycling: Bool = false
+        processor: LogitProcessor? = nil, sampler: LogitSampler = ArgMaxSampler(), recycling: Bool = false,
+        conditions: DraftConditions = .nominal
     ) throws -> (tokens: [Int], iterator: PromptLookupTokenIterator, cache: [KVCache]) {
         let cache = try model.newCache(parameters: nil)
         var iterator = try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: LMInput(tokens: MLXArray(prompt.map(Int32.init))), history: prompt), model: model, cache: cache,
             decoding: DecodingSettings(processor: processor, sampler: sampler, prefill: .init(), maxTokens: maxTokens),
-            lookup: LookupOptions(speculative: true, recycling: recycling))
+            lookup: LookupOptions(speculative: true, recycling: recycling, draftConditions: conditions))
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         return (tokens, iterator, cache)
@@ -126,6 +127,22 @@ struct PromptLookupDecodingTests {
         expectTokenSequence(run.tokens, continuation)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
+    }
+
+    @Test("A hot Mac shortens the draft without changing the tokens, and the test fixture pins nominal conditions")
+    func thermalStateShortensDraftsOnly() throws {
+        let continuation = (0 ..< 12).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
+        let hot = DraftConditions(thermalLevel: .critical, isLowPowerModeEnabled: false)
+        let cool = try LookupFixture.lookup(
+            try TinyModel.make(.qwen3), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
+        let throttled = try LookupFixture.lookup(
+            try TinyModel.make(.qwen3), maxTokens: continuation.count, sampler: ScriptedSampler(continuation),
+            conditions: hot)
+        expectTokenSequence(throttled.tokens, continuation)
+        let coolRounds = try #require(cool.iterator.speculativeDecodingTelemetry).roundCount
+        let hotRounds = try #require(throttled.iterator.speculativeDecodingTelemetry).roundCount
+        #expect(coolRounds == 1)
+        #expect(hotRounds > coolRounds)
     }
 
     @Test("A hybrid's first draft is a 4-token probe, and only an accepted probe opens the full draft limit; a dense model drafts the full limit at once",
