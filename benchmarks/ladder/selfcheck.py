@@ -145,6 +145,24 @@ LUNAR_FREE_FUEL = broken("        m -= thrust / v_e * dt\n", "        m -= 0.5 *
 LUNAR_HARD_LANDING = broken("v_ref = -max(0.8, profile)", "v_ref = -max(6.0, profile)")
 LUNAR_SNAP_TURN = broken("tilt += max(-5 * dt, min(5 * dt, tilt_cmd - tilt))", "tilt = tilt_cmd")
 
+SPINS_AT_IMPORT = lunar_answer("""import math
+
+def exhaust_velocity(Q, eta):
+    return math.sqrt(2 * eta * Q)
+
+while True:
+    pass
+""")
+
+
+def spin_verdict():
+    ladder.EXEC_TIMEOUT_S = 1
+    try:
+        return ladder.check_lunar(SPINS_AT_IMPORT)
+    finally:
+        ladder.EXEC_TIMEOUT_S = 60
+
+
 checks = [
     ("algebra accepts the answer",        ladder.check_algebra("Therefore x = 5."),            True),
     ("algebra rejects a wrong answer",    ladder.check_algebra("Therefore x = 7."),            False),
@@ -168,6 +186,7 @@ checks = [
     ("lunar flight catches free fuel",    flight(LUNAR_FREE_FUEL, "replay: replayed"),    True),
     ("lunar flight catches a hard landing", flight(LUNAR_HARD_LANDING, "touchdown: touchdown at"), True),
     ("lunar flight catches a snap turn",  flight(LUNAR_SNAP_TURN, "limits: tilt turns"), True),
+    ("a script that never returns is cut off", spin_verdict(),                               False),
     ("fourier needs a code block",        ladder.check_fourier("I would use numpy."),          False),
 ]
 

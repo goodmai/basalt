@@ -139,6 +139,9 @@ def code_blocks(text):
     return list(reversed(blocks))
 
 
+EXEC_TIMEOUT_S = 60
+
+
 def environments(text, wanted_def=None):
     """Executable namespaces from the answer's code blocks.
 
@@ -150,10 +153,14 @@ def environments(text, wanted_def=None):
         if wanted_def and wanted_def not in b:
             continue
         env = {}
+        signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
+        signal.alarm(EXEC_TIMEOUT_S)
         try:
             exec(b, env)
         except Exception:
             continue
+        finally:
+            signal.alarm(0)
         yield env
 
 
