@@ -112,7 +112,7 @@ def broken(old, new):
 
 def flight(answer, wanted):
     """(does the detail carry this flight verdict, detail): the rung's own pass rule is separate."""
-    _, detail = ladder.check_lunar(answer)
+    _, detail = ladder.check_lunar_flight(answer)
     return wanted in detail, detail
 
 
@@ -158,13 +158,16 @@ checks = [
     ("biquad-complex accepts the full one", ladder.check_biquad_complex(BIQUAD_FULL),           True),
     ("lunar needs exhaust_velocity",      ladder.check_lunar("I would use a Hohmann transfer."), False),
     ("lunar reference passes the rung",   ladder.check_lunar(lunar_answer(REFERENCE)),         True),
+    ("lunar-flight passes the reference", ladder.check_lunar_flight(lunar_answer(REFERENCE)), True),
+    ("lunar-flight fails the stub",       ladder.check_lunar_flight(LUNAR_STUB),               False),
+    ("lunar rung detail is unchanged",    ("flight" not in ladder.check_lunar(LUNAR_STUB)[1], ladder.check_lunar(LUNAR_STUB)[1]), True),
     ("lunar reference flies 7/7",         flight(lunar_answer(REFERENCE), "flight 7/7"),       True),
     ("lunar stub still passes the rung",  ladder.check_lunar(LUNAR_STUB),                      True),
     ("lunar stub does not fly",           flight(LUNAR_STUB, "flight 0/7"),                    True),
     ("lunar flight catches a missing Moon", flight(LUNAR_NO_MOON_PULL, "transfer: craft is"),  True),
     ("lunar flight catches free fuel",    flight(LUNAR_FREE_FUEL, "replay: replayed"),    True),
-    ("lunar flight catches a hard landing", flight(LUNAR_HARD_LANDING, "flight 6/7 (touchdown: touchdown at"), True),
-    ("lunar flight catches a snap turn",  flight(LUNAR_SNAP_TURN, "flight 6/7 (limits: tilt turns"), True),
+    ("lunar flight catches a hard landing", flight(LUNAR_HARD_LANDING, "touchdown: touchdown at"), True),
+    ("lunar flight catches a snap turn",  flight(LUNAR_SNAP_TURN, "limits: tilt turns"), True),
     ("fourier needs a code block",        ladder.check_fourier("I would use numpy."),          False),
 ]
 

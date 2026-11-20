@@ -17,9 +17,10 @@ executed against inputs the prompt never showed it.
     basalt serve --model <id> --rest &
     python3 benchmarks/ladder/run.py --port 8080
 
-The top rung passes on six invariants (engine numbers, four stages present) and
-reports `flight k/7` beside them: the stages are run and checked against physics
-the grader computes itself. See lunar_task.md for the table of checks.
+`--flight` appends one more step after the ladder, outside its score: the same
+lunar mission with the data formats fixed, so the grader can run the four stages
+and check them against physics it computes itself (`flight k/7`). See
+lunar_task.md for the table of checks.
 
 `--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
 that any instruct model should clear; they are not part of the ladder score.
@@ -114,6 +115,13 @@ Return ONLY one ```python code block, no explanation."""
 # are deliberately kept out of the prompt (see lunar_task.md).
 LUNAR = (Path(__file__).with_name("lunar_prompt.md")
          .read_text(encoding="utf-8").split("---", 1)[1].strip())
+
+# The flight step asks the same mission and also fixes the data formats it will be run with.
+_REQUIREMENTS = "## Требования к решению"
+assert _REQUIREMENTS in LUNAR
+LUNAR_FLIGHT = LUNAR.replace(
+    _REQUIREMENTS,
+    Path(__file__).with_name("lunar_flight_formats.md").read_text(encoding="utf-8") + _REQUIREMENTS, 1)
 
 # ── validators ───────────────────────────────────────────────────────────────
 #
@@ -356,20 +364,16 @@ def check_lunar(text):
         else:
             notes.append(f"{name} missing")
 
-    # Both numeric invariants plus all four mission stages decide the rung, as before, so
-    # published tables stay comparable. Whether the stages actually fly is scored beside it.
-    flight, flight_notes = lunar_flight(env)
-    detail = f"{scored}/6 invariants — " + "; ".join(notes[:4] or ["all present"])
-    detail += f"; flight {flight}/{len(FLIGHT_CHECKS)}"
-    if flight_notes:
-        detail += " (" + "; ".join(flight_notes[:3]) + ")"
-    return scored == 6, detail
+    # Both numeric invariants plus all four mission stages, or it did not fly.
+    return scored == 6, f"{scored}/6 invariants — " + "; ".join(notes[:4] or ["all present"])
 
 
 # ── lunar flight: the mission stages are run, not just found ─────────────────
-# Data formats are fixed in lunar_prompt.md ("Форматы данных"). Every check calls the
-# model's code on inputs the prompt never showed and compares against physics the
-# grader computes itself.
+# A separate, opt-in step (--flight). The lunar rung above only finds the four stage
+# functions; this one calls them. Its prompt is the lunar prompt plus the data formats
+# in lunar_flight_formats.md, so the rung's own prompt and score stay as published.
+# Every check runs the model's code on inputs the prompt never showed and compares
+# against physics the grader computes itself.
 
 MU_SUN, MU_EARTH, MU_MOON = 1.32712440018e20, 3.986004418e14, 4.9048695e12
 R_EARTH, R_MOON, OMEGA_EARTH = 6_371_000.0, 1_737_400.0, 7.292115e-5
@@ -594,12 +598,29 @@ def lunar_flight(env):
     return score, notes
 
 
+def check_lunar_flight(text):
+    rung_ok, rung_detail = check_lunar(text)
+    env = next(environments(text, "def exhaust_velocity"), None)
+    if env is None:
+        return False, rung_detail
+    flight, notes = lunar_flight(env)
+    detail = f"flight {flight}/{len(FLIGHT_CHECKS)}; {rung_detail.split(' — ')[0]}"
+    if notes:
+        detail += " — " + "; ".join(notes[:3])
+    return rung_ok and flight == len(FLIGHT_CHECKS), detail
+
+
 RUNGS = [
     ("biquad-real",    BIQUAD_REAL,    check_biquad_real),
     ("biquad-complex", BIQUAD_COMPLEX, check_biquad_complex),
     ("fourier",        FOURIER,        check_fourier),
     ("pump",           PUMP,           check_pump),
     ("lunar",          LUNAR,          check_lunar),
+]
+
+# Opt-in with --flight, after the rungs, and outside the ladder score like the warm-up.
+FLIGHT = [
+    ("lunar-flight", LUNAR_FLIGHT, check_lunar_flight),
 ]
 
 WARMUP = [
@@ -631,11 +652,13 @@ def main():
     p.add_argument("--only", nargs="+", help="run a subset by name")
     p.add_argument("--warmup", action="store_true",
                    help="also run the three cheap smoke tests, before the ladder")
+    p.add_argument("--flight", action="store_true",
+                   help="also run the lunar flight step after the ladder; it is not part of the score")
     p.add_argument("--json", help="write the results to this file")
     args = p.parse_args()
 
     base = f"http://127.0.0.1:{args.port}"
-    tasks = (WARMUP if args.warmup else []) + RUNGS
+    tasks = (WARMUP if args.warmup else []) + RUNGS + (FLIGHT if args.flight or "lunar-flight" in (args.only or []) else [])
     tasks = [t for t in tasks if not args.only or t[0] in args.only]
     rows = []
     for name, prompt, check in tasks:
@@ -651,10 +674,13 @@ def main():
         print(f"{'':12} [{tok} tok, finish={finish}, {dt:.0f}s, {tok/dt if dt else 0:.1f} tps]",
               flush=True)
 
-    rungs = [r for r in rows if r["task"] not in {w[0] for w in WARMUP}]
+    def named(group):
+        return [r for r in rows if r["task"] in {t[0] for t in group}]
+
+    rungs, warmup, flight = named(RUNGS), named(WARMUP), named(FLIGHT)
     print(f"\nladder: {sum(r['passed'] for r in rungs)}/{len(rungs)} rungs"
-          + (f", warmup: {sum(r['passed'] for r in rows if r not in rungs)}/{len(rows) - len(rungs)}"
-             if len(rows) != len(rungs) else ""))
+          + (f", warmup: {sum(r['passed'] for r in warmup)}/{len(warmup)}" if warmup else "")
+          + (f", flight: {'PASS' if flight[0]['passed'] else 'FAIL'}" if flight else ""))
     if args.json:
         json.dump({"rungs_passed": sum(r["passed"] for r in rungs),
                    "rungs_total": len(rungs), "tasks": rows},

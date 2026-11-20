@@ -71,16 +71,17 @@ number. Its prompt lives in `benchmarks/ladder/lunar_prompt.md`; the reference
 values in `lunar_task.md` are never shown to the model.
 
 Those six invariants check the engine numbers and that the four mission stages
-exist. Whether the stages fly is scored beside them as `flight k/7`, from the
-same answer: the grader runs the model's `launch_to_leo`, `propagate`,
-`lunar_braking` and `soft_landing` on inputs the prompt never showed. It compares
-a two-day four-body coast against its own integration, checks energy and angular
-momentum drift, checks the braking burn against the orbit energy change, and
-replays the landing telemetry through its own dynamics before crediting the
-touchdown. The rung's pass rule is unchanged, so earlier tables stay comparable;
-results measured before this score existed carry no flight number.
+exist. `--flight` appends one more step, `lunar-flight`, after the ladder and
+outside its score: the same mission with the data formats fixed
+(`lunar_flight_formats.md`), so the grader can run the model's `launch_to_leo`,
+`propagate`, `lunar_braking` and `soft_landing` on inputs the prompt never showed.
+It compares a two-day four-body coast against its own integration, checks energy
+and angular momentum drift, checks the braking burn against the orbit energy
+change, and replays the landing telemetry through its own dynamics before
+crediting the touchdown. The step passes at `flight 7/7` with the six invariants.
+No model results are published for it yet.
 `python3 benchmarks/ladder/selfcheck.py` proves the checks on a reference answer
-and on four broken ones.
+and on broken ones.
 
 `--warmup` prepends three cheap smoke tests (algebra, Fibonacci, translation)
 that any instruct model should clear. They are not part of the ladder score.
