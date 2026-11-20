@@ -98,6 +98,53 @@ def verify_solution(a, b, c, x, tol=1e-10):
 ```
 """
 
+REFERENCE = Path(__file__).with_name("lunar_reference.py").read_text()
+
+
+def lunar_answer(source):
+    return "Mission code:\n\n```python\n" + source + "\n```\n"
+
+
+def broken(old, new):
+    assert old in REFERENCE, old
+    return lunar_answer(REFERENCE.replace(old, new))
+
+
+def flight(answer, wanted):
+    """(does the detail carry this flight verdict, detail): the rung's own pass rule is separate."""
+    _, detail = ladder.check_lunar(answer)
+    return wanted in detail, detail
+
+
+# Every stage is present and the two engine numbers are right, so the rung's six
+# invariants pass. Nothing flies. This is the answer the flight score exists to expose.
+LUNAR_STUB = lunar_answer("""import math
+
+def exhaust_velocity(Q, eta):
+    return math.sqrt(2 * eta * Q)
+
+def stage_delta_v(m0, m_fuel, v_e):
+    return v_e * math.log(m0 / (m0 - m_fuel))
+
+def launch_to_leo(lat_deg, lon_deg, target_alt_m, azimuth_deg):
+    return 9400.0, 1500.0, 150.0, 465.0
+
+def propagate(state0, t_span, dt_max):
+    return [(t_span[0], state0), (t_span[1], state0)]
+
+def lunar_braking(approach_state, target_orbit_alt):
+    return 800.0, 300.0, 3000.0
+
+def soft_landing(initial_state, controller=None):
+    h, vz, vh, m = initial_state
+    return (0.0, 0.0, 0.0, m - 500.0), 500.0, [(0.0, h, vz, vh, m, 1.0, 0.0), (0.05, 0.0, 0.0, 0.0, m - 500.0, 1.0, 0.0)]
+""")
+
+LUNAR_NO_MOON_PULL = broken("pull(c, e, MU_EARTH), pull(c, m, MU_MOON))", "pull(c, e, MU_EARTH), [0.0, 0.0, 0.0])")
+LUNAR_FREE_FUEL = broken("        m -= thrust / v_e * dt\n", "        m -= 0.5 * thrust / v_e * dt\n")
+LUNAR_HARD_LANDING = broken("v_ref = -max(0.8, profile)", "v_ref = -max(6.0, profile)")
+LUNAR_SNAP_TURN = broken("tilt += max(-5 * dt, min(5 * dt, tilt_cmd - tilt))", "tilt = tilt_cmd")
+
 checks = [
     ("algebra accepts the answer",        ladder.check_algebra("Therefore x = 5."),            True),
     ("algebra rejects a wrong answer",    ladder.check_algebra("Therefore x = 7."),            False),
@@ -110,6 +157,14 @@ checks = [
     ("biquad-complex wants verify_solution", ladder.check_biquad_complex(BIQUAD_GOOD),          False),
     ("biquad-complex accepts the full one", ladder.check_biquad_complex(BIQUAD_FULL),           True),
     ("lunar needs exhaust_velocity",      ladder.check_lunar("I would use a Hohmann transfer."), False),
+    ("lunar reference passes the rung",   ladder.check_lunar(lunar_answer(REFERENCE)),         True),
+    ("lunar reference flies 7/7",         flight(lunar_answer(REFERENCE), "flight 7/7"),       True),
+    ("lunar stub still passes the rung",  ladder.check_lunar(LUNAR_STUB),                      True),
+    ("lunar stub does not fly",           flight(LUNAR_STUB, "flight 0/7"),                    True),
+    ("lunar flight catches a missing Moon", flight(LUNAR_NO_MOON_PULL, "transfer: craft is"),  True),
+    ("lunar flight catches free fuel",    flight(LUNAR_FREE_FUEL, "replay: replayed"),    True),
+    ("lunar flight catches a hard landing", flight(LUNAR_HARD_LANDING, "flight 6/7 (touchdown: touchdown at"), True),
+    ("lunar flight catches a snap turn",  flight(LUNAR_SNAP_TURN, "flight 6/7 (limits: tilt turns"), True),
     ("fourier needs a code block",        ladder.check_fourier("I would use numpy."),          False),
 ]
 
