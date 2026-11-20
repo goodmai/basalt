@@ -2,6 +2,15 @@
 
 > Languages: [English](../../install.md) · **Русский** · [中文](../zh/install.md) · [Español](../es/install.md) · [Français](../fr/install.md) · [日本語](../ja/install.md) · [Deutsch](../de/install.md)
 
+## Готовый бинарник (две строки, без Xcode)
+
+Достаточно macOS 27+ и Apple Silicon. В архиве рядом лежат `basalt`, `mlx.metallib` и бандлы ресурсов — держите их в одной папке.
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
+
 ## Демо за 60 секунд
 
 ```bash

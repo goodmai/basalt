@@ -515,7 +515,7 @@ public struct HealthResponse: Codable, Sendable {
     public let isReady: Bool
     public let version: String
 
-    public static let version = "0.11.0"
+    public static let version = "0.12.0"
 
     package init(status: String, modelId: String?, isReady: Bool, version: String) {
         self.status = status

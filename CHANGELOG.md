@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.12.0 — 2026-11-20
+
+### Upgrading from 0.11.0
+- **Prebuilt binary.** Each release now attaches `basalt-macos-arm64.tar.gz` (also versioned as `basalt-v0.12.0-macos-arm64.tar.gz`, with SHA-256 sums): `basalt`, `mlx.metallib` and the resource bundles in one folder. Two lines run it, no Xcode: `curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz`, then `./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest`. Homebrew still builds from source.
+- New serve flags: `--kv-bits kvarn|kvarn-qjl` (2-bit variance-balanced KV tiles, optional 1-bit QJL residual), `--attention-backend standard|sagemx|moba` with `--moba-top-k N`. All are experimental and apply to full-attention layers; a load-time probe keeps models whose attention reads the whole cache through `update()` on dense attention.
+- `--speculative-lookup` and `--speculative-recycling` now run on stateful VLM checkpoints (`Qwen3_5ForConditionalGeneration`: every Qwen3.5/3.8 repo that ships a vision tower). Before, `state == nil` silently turned drafting off (#632).
+- `--experimental-smallm-kernel` also covers 4-bit affine `MACaQQuantizedLinear` layers (#634).
+- `/metrics` and `/api/v1/stats` carry `basalt_tiered_kv_*` L0/L1/L2 gauges (#634).
+
+### Measured on an M4 Pro, 24 GB (`-c release`, one GPU job at a time)
+| Model | RAM / peak GPU | Official Ladder | Decode p50 / p95 | Draft acceptance |
+|---|---|---|---|---|
+| `mlx-community/Qwen3.8-27B-4bit` | 15.3 / 17.5 GB | 3/3 warmup, 4/5 | 11.6 / 11.9 tok/s | 0% (VLM bug) |
+| `goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX` | 12.4 / 14.5 GB | 3/3 warmup, 5/5 (`lunar` 6/6) | 15.6 / 16.9 tok/s | 50.6% |
+| `goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX` | 11.5 / 13.1 GB | 3/3 warmup, 5/5 (`lunar` 6/6) | 16.7 / 17.2 tok/s | 43.0% |
+- Code edits with `--speculative-lookup`: 14.6 → 17.2 tok/s on the Heretic 3-bit checkpoint; prose is unchanged.
+- 4k passkey (4,073 prompt tokens), Heretic 3-bit: dense, `--kv-bits 4`, `--kv-bits kvarn`, `--kv-bits kvarn-qjl` and `--attention-backend moba` find the token; `--quest-top-k 8` and `--attention-backend sagemx` do not. The KVarN and MoBA runs peak at 15.3 GB against 15.9 GB dense.
+- `goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-4bit-Affine-MLX` (15.1 GB, SQNR 20.59 → 21.59 dB) is published but was not benchmarked on the Mac for this release.
+- Not measured: a side-by-side with `llama.cpp` GGUF quantizations of the same model.
+
+### Quantization
+- New PV-MACaQ checkpoints: `Qwen3.8-27B-PV-MACaQ-4bit-Affine-MLX`, `Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX`, Heretic 3-bit and 4-bit variants built from the BF16 weights, `gemma-4-31B-it-PV-MACaQ-3.2bpw-MLX` (the only 31B that runs cleanly on 24 GB) and `Qwen3.5-9B-PV-MACaQ-4bit` (+52% decode and -33% RAM against 8-bit).
+- MACaQ decode: no host-side `MLXArray` allocation per Walsh–Hadamard call and up to four simdgroups per threadgroup (#633), single-pass switch WHT for MoE decode (#628).
+- `model_describe` and the load log report the `macaq_quantization` / `flatquant_quantization` / `lirquant_quantization` manifests next to the base quantization (#630).
+
+### Fixes
+- X-Ray traces prepend the omitted `<bos>`, which removes the Gemma 4 L43–L56 attention-sink collapse in `trace_run`, `trace_tokens`, `experiment_compare`, `activation_contrast`, `steer_search` and `TokenAttribution` (#629, #630).
+- A test that drew from the global MLX RNG could flake under `swift test --parallel`; it now owns its random state.
+
+### Models, video, speech and research (merged since 0.11.0)
+- Audio-visual video: `LTX-2.5`, `Kandinsky 6.0`, `LingBot-Video` and `Wan 2.2` with a causal 3D-VAE, fractional 3D RoPE, brick-tiled sparse attention and an `.mp4` muxer in a phased 24 GB runner, over REST, MCP, CLI, Compose and the Mac app (#581–#584, #608–#611).
+- Speech and images: LFM2.5-Audio duplex codecs, SmartTurn, Sortformer, MossFormer2, Soprano (#575, #604); multi-reference image edit, SeedVR2 and ACE-Step 1.5 (#576, #605).
+- Compose v2.2 with RAM deduplication and specialist profiles, a 5-component business router with the LANTERN semantic cache, and an HITL approval gate for mutating MCP actions (#578, #607, #618, #619, #625, #626).
+- Swift: `BasaltFoundationModels` provider, `MaterializedArray` bridge (#577, #606); swift-huggingface with Xet downloads and live Hub search and publish (#585, #587).
+- Quantization and training: universal any-to-any converter parity for FlatQuant and LIRQuant, SINQ, SVD-LLM V2 with OBR restoration, router-weighted MoE Hessian, QAT with a post-quantization audit, AdaLoRA, two-stage SFT→DPO, reference ADPO (#547–#552, #561, #569, #571, #594, #599, #601, #616, #617, #623, #624).
+- Distributed and KV: cluster transport, DDP/ZeRO-2, DiLoCo, ZB-H1 pipeline, expert parallel (#565–#568, #595–#598); L0/L1/L2 tiered KV core (#620, #627); per-token logprobs and head attribution (#612, #613, #615, #622).
+- SpecTr / Residual Race verification and EAGLE-3 fusion remain standalone cores that `serve` does not call; Fast-dLLM and DFlash stay behind `--experimental-dllm` / `--experimental-dflash` (#574, #593, #603).
+- Retrospective audit remediation across Core, Inference, CLI, Server, Speech, App and Bench (#544, #555–#559, #579).
+
 ## 0.11.0 — 2026-11-17
 
 ### Upgrading from 0.10.0

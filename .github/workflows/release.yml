@@ -124,9 +124,27 @@ jobs:
         if: needs.main-tests.outputs.green != 'true'
         run: swift test --no-parallel
 
-      # No prebuilt binary is published: the binary alone is useless without the
-      # Metal library beside it, and a 130 MB metallib in every release is not
-      # worth it when the formula builds from source anyway.
+      # The binary is useless without mlx.metallib and the resource bundles beside it, so the
+      # archive carries all three in one folder. curl does not set the quarantine attribute,
+      # so the two-line quick start runs without a Gatekeeper prompt. The unversioned name
+      # keeps releases/latest/download/basalt-macos-arm64.tar.gz stable for the README.
+      - name: Package the prebuilt binary
+        id: bin
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          BIN=$(swift build -c release --show-bin-path)
+          DIR=basalt-macos-arm64
+          rm -rf "$DIR" && mkdir "$DIR"
+          cp "$BIN/Basalt" "$DIR/basalt"
+          if [ -f "$BIN/mlx.metallib" ]; then cp "$BIN/mlx.metallib" "$DIR/mlx.metallib"; else cp default.metallib "$DIR/mlx.metallib"; fi
+          for b in "$BIN"/*.bundle; do cp -R "$b" "$DIR/"; done
+          "./$DIR/basalt" --version
+          tar -czf "basalt-$VERSION-macos-arm64.tar.gz" "$DIR"
+          cp "basalt-$VERSION-macos-arm64.tar.gz" basalt-macos-arm64.tar.gz
+          shasum -a 256 "basalt-$VERSION-macos-arm64.tar.gz" basalt-macos-arm64.tar.gz > basalt-sha256.txt
+          cat basalt-sha256.txt
+          ls -lh basalt-*.tar.gz
+
       - name: Hash the source tarball
         id: pkg
         run: |
@@ -143,9 +161,20 @@ jobs:
           generate_release_notes: true
           files: |
             sboms/*
+            basalt-*.tar.gz
+            basalt-sha256.txt
             ${{ steps.app.outputs.zip }}
           body: |
             ## Basalt ${{ steps.pkg.outputs.version }}
+
+            Prebuilt Apple Silicon binary, no Xcode (macOS 27+):
+
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+            ./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+            ```
+
+            Or with Homebrew:
 
             ```bash
             brew tap goodmai/basalt https://github.com/${{ github.repository }}

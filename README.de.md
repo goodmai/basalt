@@ -66,6 +66,7 @@ Jede Model Card unter [`goodmai`](https://huggingface.co/goodmai) enthält eine 
 - **Lange Kontexte mit weniger Speicher.** KV-Quantisierung mit exakten Zonen (`4|8|k8v4`, plus `KVarN`-2D-Balancing, unverzerrtem 1-bit-`QJL`, `ChanMix`/`ThinKV`, sprachübergreifendem `HeadKV`-RBO-Transfer, Centroid-`RQ-KV`, `turbo3|turbo4|turbo8v4` und `polar4`-RoPE-Paar-Keys, [#472](https://github.com/goodmai/basalt/pull/472), [#590](https://github.com/goodmai/basalt/pull/590), [#602](https://github.com/goodmai/basalt/pull/602)): Ein 16k-Prompt erreicht bei Qwen3-4B einen Peak von 1.03 GB statt 3.11 GB ([#159](https://github.com/goodmai/basalt/pull/159)).
 - **Video, neuronales TTS, Vollduplex-Sprache, Musik & 2K-MLX-Bildsynthese.** Ein phasenweises 24-GB-UMA-Video-Studio führt `LTX-2.5 AV-DiT`, `Kandinsky 6.0 CrossDiT`, `LingBot-Video MoE` und `Wan 2.2` mit kausalem 3D-VAE, Brick-Tiled-STA-Metal-Kernels und `AVAssetWriter`-`.mp4`-Muxing aus ([#608](https://github.com/goodmai/basalt/pull/608)–[#611](https://github.com/goodmai/basalt/pull/611)); `LFM2.5-Audio`-Mimi/SNAC-Duplex-Codecs, `SmartTurn` + `Sortformer`, `MossFormer2`, `Soprano-80M`, `Qwen3ForcedAligner`, `Zyphra/ZONOS3-Mini-hf` (`44.1 kHz`, 43 Sprachen, 2.24 GB, RTF 0.228–0.263, [#527](https://github.com/goodmai/basalt/pull/527)) und `Kokoro-82M` betreiben `/v1/audio/*` ([#604](https://github.com/goodmai/basalt/pull/604)); 4-stufiges `FLUX.3`-Compose, `SeedVR2`-Upscaling, `ACE-Step 1.5`-Musik, `Z-Image-Turbo`, `Iris-3B` und `SANA-1.5` treiben `/v1/images/*` und `/v1/music/*` an ([#542](https://github.com/goodmai/basalt/pull/542), [#605](https://github.com/goodmai/basalt/pull/605)).
 - **Ein kompletter lokaler Stack + Swift SDK.** Tool-Aufrufe, JSON-Schema-, Regex- und Grammatik-Ausgabe (XGrammar), Meta `Muse-Glimmer-30B` ([#534](https://github.com/goodmai/basalt/pull/534)), `Ripple-65B`, `Nemotron-3.5-Lightning` ([#522](https://github.com/goodmai/basalt/pull/522)), `DeepSeek-OCR-2` ([#476](https://github.com/goodmai/basalt/pull/476)), `/v1/embeddings`, `/v1/rerank`, `BasaltFoundationModels` Swift SDK ([#606](https://github.com/goodmai/basalt/pull/606)), `swift-huggingface`-Xet-Downloads ([#587](https://github.com/goodmai/basalt/pull/587)), pro Request wählbare LoRA/PHM/OFT-Adapter sowie geordnete LAN-vor-Cloud-Fallback-Stufen ([#480](https://github.com/goodmai/basalt/pull/480)).
+- **PV-MACaQ 3-Bit: 27B passt und fliegt auf 24 GB.** `Qwen3.8-27B-PV-MACaQ-3bit` besteht die Official Ladder 5/5 (inkl. `lunar` 6/6) in 11.5–12.4 GB mit 15.6–16.7 tok/s auf einem M4 Pro, gegenüber 4/5 Sprossen, 15.3 GB und 11.6 tok/s beim Standard-4-Bit. `--speculative-lookup` läuft jetzt auch auf Qwen3.5/3.8-Checkpoints mit Vision-Tower (43–51 % Draft-Akzeptanz, +17 % bei Code-Edits), und `--kv-bits kvarn|kvarn-qjl` (2-Bit-KV) sowie `--attention-backend moba` sind in `basalt serve` verdrahtet und bestehen einen 4k-Passkey ([#632](https://github.com/goodmai/basalt/issues/632), [#634](https://github.com/goodmai/basalt/issues/634)). Checkpoints: [`goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX), [`goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX).
 
 Details: [REST-API](docs/i18n/de/rest-api.md) · [Integrationen](docs/i18n/de/integrations.md) · [Befehle und Flags](docs/i18n/de/commands.md) · [Modelle](docs/i18n/de/models.md) · [Benchmarks](docs/i18n/de/benchmarks.md)
 
@@ -101,6 +102,13 @@ Details: [Forschungstools](docs/i18n/de/research-tools.md) · [Wissenschaftliche
 - **Compose Video Studio, 2K Image Studio & Universal Converter UI.** Erzeuge und spiele A/V-`.mp4`-Videos auf 24-GB-Macs ([#611](https://github.com/goodmai/basalt/pull/611)), bearbeite 2K-RGBA-Bilder mit Vorher/Nachher-Schieberegler ([#519](https://github.com/goodmai/basalt/pull/519)), konvertiere und QAT-auditiere Modelle direkt in `ConvertModelSheet` ([#623](https://github.com/goodmai/basalt/pull/623)) und durchstöbere/veröffentliche auf Hugging Face mit 10-Hz-SSE-Telemetrie & Xet-Downloads ([#587](https://github.com/goodmai/basalt/pull/587)).
 - **Compose Profiles (`⌥⌘C`), Vollduplex-Sprache & `basalt://`-1-Klick-Start.** Empfiehlt automatisch passende Top-Profile für die RAM-Stufe deines Macs (`16–256 GB`, [#528](https://github.com/goodmai/basalt/pull/528)), streamt Freisprech-Sprache über `SpeechAnalyzer` / `LFM2.5-Audio` / `ZONOS3-Mini` ([#604](https://github.com/goodmai/basalt/pull/604)) und unterstützt `basalt://run?model=...`-Links, `⌥Space`-Schnellanfrage, Kurzbefehle, Spotlight und notarisierte `.dmg`-Paketierung.
 
+
+**Basalt.app: laufendes Compose auf der Engine und der Chat mit Inspektor** (macOS 27 Liquid Glass, dunkel & hell):
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-compose-dark.png"><img src="docs/assets/screenshots/app-compose-light.png" alt="Basalt.app — Compose-Profil aktiv auf der Engine" width="49%"></picture></p>
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-chat-dark.png"><img src="docs/assets/screenshots/app-chat-light.png" alt="Basalt.app — Chat mit geöffnetem Inspektor" width="49%"></picture></p>
+
 Details: [Basalt for Mac](docs/i18n/de/mac-app.md)
 
 ---
@@ -108,6 +116,13 @@ Details: [Basalt for Mac](docs/i18n/de/mac-app.md)
 ## Schnellstart
 
 Voraussetzungen: macOS 27+, Xcode 27.0+ / Swift 6.4 mit der Metal-Toolchain (`xcodebuild -downloadComponent MetalToolchain`), Apple Silicon M1–M4, 2–38 GB Speicherplatz je nach Modell. Alle Schritte, Bauen aus dem Quelltext und der `./basalt-claude`-Launcher stehen in [docs/i18n/de/install.md](docs/i18n/de/install.md).
+
+**Ohne Xcode, ohne Build — das vorkompilierte Apple-Silicon-Binary in zwei Zeilen starten** (macOS 27+, Apple Silicon; `mlx.metallib` liegt im Archiv; der erste Start lädt das 12-GB-Modell, für einen leichteren Einstieg `goodmai/gemma-4-12B-it-qat-4bit` nehmen):
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt

@@ -66,6 +66,7 @@
 - **より少ないメモリでロングコンテキストを実現。** 厳密ゾーン指定付き KV 量子化（`4|8|k8v4` に加え、`KVarN` 2D バランシング、不偏 1-bit `QJL`、`ChanMix`/`ThinKV`、クロスリンガル `HeadKV` RBO 転移、セントロイド `RQ-KV`、`turbo3|turbo4|turbo8v4`、RoPE ペアキー用 `polar4`、[#472](https://github.com/goodmai/basalt/pull/472), [#590](https://github.com/goodmai/basalt/pull/590), [#602](https://github.com/goodmai/basalt/pull/602)）により、Qwen3-4B で 16k プロンプトのピークメモリが 3.11 GB から 1.03 GB に削減されます（[#159](https://github.com/goodmai/basalt/pull/159)）。
 - **動画、ニューラル TTS、全二重音声、音楽、2K MLX 画像合成。** フェーズ分割 24 GB UMA Video Studio が `LTX-2.5 AV-DiT`、`Kandinsky 6.0 CrossDiT`、`LingBot-Video MoE`、`Wan 2.2` を因果 3D-VAE、ブリックタイリング STA Metal カーネル、`AVAssetWriter` `.mp4` 多重化で実行（[#608](https://github.com/goodmai/basalt/pull/608)–[#611](https://github.com/goodmai/basalt/pull/611)）。`/v1/audio/*` は `LFM2.5-Audio` Mimi/SNAC 全二重コーデック、`SmartTurn` + `Sortformer`、`MossFormer2`、`Soprano-80M`、`Qwen3ForcedAligner`、`Zyphra/ZONOS3-Mini-hf`（`44.1 kHz`、43 言語、2.24 GB、RTF 0.228–0.263、[#527](https://github.com/goodmai/basalt/pull/527)）、`Kokoro-82M` に対応（[#604](https://github.com/goodmai/basalt/pull/604)）。`/v1/images/*` および `/v1/music/*` は `FLUX.3` 4 段階コンポーズ、`SeedVR2` アップスケール、`ACE-Step 1.5` 音楽生成、`Z-Image-Turbo`、`Iris-3B`、`SANA-1.5` を動かします（[#542](https://github.com/goodmai/basalt/pull/542), [#605](https://github.com/goodmai/basalt/pull/605)）。
 - **包括的なローカルスタック + Swift SDK。** ツール呼び出し、JSON スキーマ・正規表現・文法制約出力（XGrammar）、Meta `Muse-Glimmer-30B`（[#534](https://github.com/goodmai/basalt/pull/534)）、`Ripple-65B`、`Nemotron-3.5-Lightning`（[#522](https://github.com/goodmai/basalt/pull/522)）、`DeepSeek-OCR-2`（[#476](https://github.com/goodmai/basalt/pull/476)）、`/v1/embeddings`、`/v1/rerank`、`BasaltFoundationModels` Swift SDK（[#606](https://github.com/goodmai/basalt/pull/606)）、`swift-huggingface` Xet ダウンロード（[#587](https://github.com/goodmai/basalt/pull/587)）、リクエストごとの LoRA/PHM/OFT アダプタ切り替え、クラウドより LAN を優先する順序付きフォールバックティア（[#480](https://github.com/goodmai/basalt/pull/480)）を備えています。
+- **PV-MACaQ 3-bit で 27B が 24 GB に収まり高速動作。** `Qwen3.8-27B-PV-MACaQ-3bit` は M4 Pro で 11.5–12.4 GB・15.6–16.7 tok/s のまま Official Ladder 5/5（`lunar` 6/6 を含む）を通過。標準 4-bit は 4/5 段、15.3 GB、11.6 tok/s でした。`--speculative-lookup` はビジョンタワー付き Qwen3.5/3.8 チェックポイントでも動作するようになり（ドラフト採択率 43–51%、コード編集で +17%）、`--kv-bits kvarn|kvarn-qjl`（2-bit KV）と `--attention-backend moba` が `basalt serve` に接続され 4k passkey を通過します（[#632](https://github.com/goodmai/basalt/issues/632)、[#634](https://github.com/goodmai/basalt/issues/634)）。チェックポイント: [`goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX)、[`goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX`](https://huggingface.co/goodmai/Qwen3.8-27B-Heretic-PV-MACaQ-3bit-Affine-MLX)。
 
 詳細: [REST API](docs/i18n/ja/rest-api.md) · [外部ツール連携](docs/i18n/ja/integrations.md) · [コマンドとフラグ](docs/i18n/ja/commands.md) · [モデル一覧](docs/i18n/ja/models.md) · [ベンチマーク](docs/i18n/ja/benchmarks.md)
 
@@ -101,6 +102,13 @@
 - **Compose Video Studio、2K Image Studio & ユニバーサルコンバータ UI。** 24 GB Mac 上で A/V `.mp4` 動画を生成・再生し（[#611](https://github.com/goodmai/basalt/pull/611)）、Before/After スライダー付きで 2K RGBA 画像を編集（[#519](https://github.com/goodmai/basalt/pull/519)）、`ConvertModelSheet` からモデルの変換と QAT 監査を直接実行（[#623](https://github.com/goodmai/basalt/pull/623)）、10 Hz SSE テレメトリと Xet ダウンロードで Hugging Face を閲覧・公開できます（[#587](https://github.com/goodmai/basalt/pull/587)）。
 - **Compose Profiles（`⌥⌘C`）、全二重音声 & `basalt://` ワンクリック起動。** Mac の RAM 階層（`16–256 GB`、[#528](https://github.com/goodmai/basalt/pull/528)）に応じた上位プロファイルを自動推奨し、`SpeechAnalyzer` / `LFM2.5-Audio` / `ZONOS3-Mini` によるハンズフリー音声ストリーミング（[#604](https://github.com/goodmai/basalt/pull/604)）、さらに `basalt://run?model=...` リンク、`⌥Space` クイック質問、Shortcuts、Spotlight、公証済み `.dmg` パッケージングに対応しています。
 
+
+**Basalt.app: エンジン上で稼働中の Compose とインスペクタ付きチャット**（macOS 27 Liquid Glass、ダーク/ライト）:
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-compose-dark.png"><img src="docs/assets/screenshots/app-compose-light.png" alt="Basalt.app — エンジン上で有効な Compose プロファイル" width="49%"></picture></p>
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/app-chat-dark.png"><img src="docs/assets/screenshots/app-chat-light.png" alt="Basalt.app — インスペクタを開いたチャット" width="49%"></picture></p>
+
 詳細: [Basalt for Mac](docs/i18n/ja/mac-app.md)
 
 ---
@@ -108,6 +116,13 @@
 ## クイックスタート
 
 動作要件: macOS 27+、Xcode 27.0+ / Swift 6.4（Metal ツールチェーン `xcodebuild -downloadComponent MetalToolchain` を含む）、Apple Silicon M1–M4、モデルに応じて 2–38 GB のディスク空き容量。詳細な手順、ソースからのビルド、および `./basalt-claude` ランチャーについては [docs/i18n/ja/install.md](docs/i18n/ja/install.md) を参照してください。
+
+**Xcode もビルドも不要 — ビルド済み Apple Silicon バイナリを 2 行で実行**（macOS 27+、Apple Silicon。`mlx.metallib` はアーカイブに同梱。初回起動で 12 GB のモデルをダウンロードします。軽く始めるなら `goodmai/gemma-4-12B-it-qat-4bit` を指定）:
+
+```bash
+curl -fsSL https://github.com/goodmai/basalt/releases/latest/download/basalt-macos-arm64.tar.gz | tar -xz
+./basalt-macos-arm64/basalt serve --model goodmai/Qwen3.8-27B-PV-MACaQ-3bit-Affine-MLX --speculative-lookup --rest
+```
 
 ```bash
 brew tap goodmai/basalt https://github.com/goodmai/basalt
