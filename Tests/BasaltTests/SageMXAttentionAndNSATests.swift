@@ -8,7 +8,10 @@ import Testing
 struct SageMXAttentionAndNSATests {
     @Test("MXAttention PNQ preserves exact partition-of-unity on constant V and matches pure CPU float32 reference (#228)")
     func mxAttentionPNQAndCPUReferenceParity() {
-        MLXRandom.seed(5510)
+        withRandomState(MLXRandom.RandomState(seed: 5510)) { mxAttentionPNQAndCPUReferenceParityBody() }
+    }
+
+    private func mxAttentionPNQAndCPUReferenceParityBody() {
         let (heads, lQ, lK, d) = (2, 12, 24, 64)
         let q = MLXRandom.normal([heads, lQ, d], dtype: .float32) + MLXRandom.normal([heads, 1, d], dtype: .float32) * Float(3.0)
         let k = MLXRandom.normal([heads, lK, d], dtype: .float32) + MLXRandom.normal([heads, 1, d], dtype: .float32) * Float(4.0)
