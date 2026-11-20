@@ -7,6 +7,7 @@ public struct CacheTelemetry: Sendable, Codable, Equatable {
     public var cachedEntries: Int
     public var cachedTokens: Int
     public var cachedBytes: Int64
+    public var tiered: TieredKVMetrics?
 
     public init(
         hits: Int = 0, misses: Int = 0, evictions: Int = 0,
@@ -18,6 +19,13 @@ public struct CacheTelemetry: Sendable, Codable, Equatable {
         self.cachedEntries = max(0, cachedEntries)
         self.cachedTokens = max(0, cachedTokens)
         self.cachedBytes = max(0, cachedBytes)
+        self.tiered = nil
+    }
+
+    public func withTiered(_ tiered: TieredKVMetrics?) -> CacheTelemetry {
+        var copy = self
+        copy.tiered = tiered
+        return copy
     }
 
     public var hitRatio: Double? {
@@ -36,10 +44,11 @@ public struct CacheTelemetry: Sendable, Codable, Equatable {
         cachedEntries = max(0, delta.cachedEntries)
         cachedTokens = max(0, delta.cachedTokens)
         cachedBytes = max(0, delta.cachedBytes)
+        if let tiered = delta.tiered { self.tiered = tiered }
     }
 
     enum CodingKeys: String, CodingKey {
-        case hits, misses, evictions
+        case hits, misses, evictions, tiered
         case cachedEntries = "cached_entries", cachedTokens = "cached_tokens", cachedBytes = "cached_bytes"
     }
 }

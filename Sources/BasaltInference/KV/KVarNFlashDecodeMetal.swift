@@ -29,6 +29,10 @@ package enum KVarNFlashDecodeMetal {
     }
 
     package static func flashDecode(_ inputs: Inputs) -> MLXArray {
+        flashDecodeWithLSE(inputs).output
+    }
+
+    package static func flashDecodeWithLSE(_ inputs: Inputs) -> (output: MLXArray, lse: MLXArray) {
         let origType = inputs.queries.dtype
         let d = inputs.keyTile.headDim
         let t = inputs.keyTile.tokens
@@ -50,7 +54,7 @@ package enum KVarNFlashDecodeMetal {
         let qjlNorm = inputs.keyTile.qjlNorm ?? dummyF32
         let params = MLXArray([inputs.scale, KVarNTileCodec.qjlScaleFactor / Float(d)])
         let shapes = MLXArray([Int32(heads), Int32(t), Int32(d)])
-        let out = flashDecodeKernel(
+        let outs = flashDecodeKernel(
             [
                 qRot.asType(origType),
                 qJL.asType(.float32),
@@ -72,10 +76,10 @@ package enum KVarNFlashDecodeMetal {
             ],
             grid: (32, heads, 1),
             threadGroup: (32, 1, 1),
-            outputShapes: [[heads, d]],
-            outputDTypes: [origType]
-        )[0]
-        return out.reshaped(inputs.queries.shape)
+            outputShapes: [[heads, d], [heads]],
+            outputDTypes: [origType, .float32]
+        )
+        return (outs[0].reshaped(inputs.queries.shape), outs[1])
     }
 
     package static func cpuFlashDecode(_ inputs: Inputs) -> [Float] {
@@ -182,6 +186,9 @@ private let flashDecodeSource = """
         const float v_unrot = basalt_wht32_simd(v_rot, lane);
         out[size_t(h) * size_t(D) + size_t(col)] = static_cast<T>(v_unrot);
     }
+    if (lane == 0) {
+        lse[h] = (l_run > 0.0f) ? (m_run + log(l_run)) : -INFINITY;
+    }
     """
 
 private let flashDecodeKernel = MLXFast.metalKernel(
@@ -190,7 +197,7 @@ private let flashDecodeKernel = MLXFast.metalKernel(
         "q_rot", "q_jl", "k_packed", "k_s_tok", "k_s_chan",
         "qjl_bits", "qjl_norm", "v_packed", "v_s_tok", "v_s_chan", "params", "shapes",
     ],
-    outputNames: ["out"],
+    outputNames: ["out", "lse"],
     source: flashDecodeSource,
     header: BasaltMetalSubstrate.combinedHeader
 )

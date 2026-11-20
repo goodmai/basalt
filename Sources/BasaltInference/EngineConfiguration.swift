@@ -9,6 +9,8 @@ public struct EngineConfiguration: Sendable {
     public var kvZones: KVZones? = nil
     public var kvHeadSplit: Double? = nil
     public var questTopK: Int? = nil
+    public var attentionBackend: AttentionBackend = .standard
+    public var mobaTopK = 8
     public var repetitionPenalty: Float? = nil
     public var topK: Int? = nil
     public var minP: Float? = nil

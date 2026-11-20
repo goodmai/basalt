@@ -69,7 +69,9 @@ struct ModelCapabilities: Equatable, Sendable {
 
     func allows(_ feature: Feature) -> Bool { verified.contains(feature) }
 
-    func kvBits(_ precision: KVPrecision?) -> Int? { allows(.kvQuantization) && precision?.turbo != true ? precision?.uniform.keyBits : nil }
+    func kvBits(_ precision: KVPrecision?) -> Int? {
+        allows(.kvQuantization) && precision?.turbo != true && precision?.isKVarN != true ? precision?.uniform.keyBits : nil
+    }
 
     func kvScheme(_ precision: KVPrecision?) -> String? { allows(.kvQuantization) ? precision?.scheme : nil }
 

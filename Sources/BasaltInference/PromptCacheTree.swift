@@ -91,11 +91,11 @@ struct PromptCacheTree {
     private(set) var evictions = 0
     private var reported = (hits: 0, misses: 0, evictions: 0, entries: 0, tokens: 0, bytes: Int64(0))
     private var clock = 0
+    var tieredKV: TieredPromptCacheTracker
 
     init(byteBudget: ByteCount, leafLimit: Int = PromptCacheTree.maxLeaves, anchorLimit: Int = 1) {
-        self.byteBudget = byteBudget
-        self.leafLimit = leafLimit
-        self.anchorLimit = anchorLimit
+        (self.byteBudget, self.leafLimit, self.anchorLimit) = (byteBudget, leafLimit, anchorLimit)
+        self.tieredKV = TieredPromptCacheTracker(ramBudgetBytes: byteBudget.rawValue)
     }
 
     var anchorUsage: (count: Int, bytes: ByteCount) {
@@ -125,7 +125,7 @@ struct PromptCacheTree {
             if countsAccess { misses += 1 }
             return nil
         }
-        if countsAccess { hits += 1 }
+        if countsAccess { hits += 1; tieredKV.recordLookup(namespace: namespace, tokens: Array(prompt.dropLast())) }
         touch(deepest)
         deepest.pins += 1
         let layers = deepest.layers.indices.map { layer -> KVCache in
@@ -168,13 +168,13 @@ struct PromptCacheTree {
 
     mutating func rebudget(_ bytes: ByteCount) {
         byteBudget = max(0, bytes)
+        tieredKV.reconfigure(ramBudgetBytes: byteBudget.rawValue)
         evict()
     }
 
     mutating func removeAll() {
-        roots.removeAll()
-        byteCount = 0
-        leafCount = 0
+        (roots, byteCount, leafCount) = ([:], 0, 0)
+        tieredKV.reset(ramBudgetBytes: byteBudget.rawValue)
     }
 
     static func walk(from root: PromptCacheNode, along tokens: [Int]) -> [Step] {
@@ -314,6 +314,7 @@ extension PromptCacheTree {
             lastUse: 0)
         leaf.snapshot = snapshot
         insert(leaf, under: root, along: path)
+        tieredKV.recordStore(namespace: namespace, tokens: tokens, bytes: cache.byteCount.rawValue, layerCount: cache.layers.count)
     }
 
     private mutating func keepSnapshot(_ snapshot: RecurrentSnapshot?, at last: Step) {
@@ -432,7 +433,8 @@ extension PromptCacheTree {
     var telemetry: CacheTelemetry {
         CacheTelemetry(
             hits: hits, misses: misses, evictions: evictions,
-            cachedEntries: leafCount, cachedTokens: cachedTokenCount, cachedBytes: byteCount.rawValue)
+            cachedEntries: leafCount, cachedTokens: cachedTokenCount, cachedBytes: byteCount.rawValue
+        ).withTiered(tieredKV.metrics)
     }
 
     mutating func revokeHit() {
@@ -450,7 +452,8 @@ extension PromptCacheTree {
             evictions: max(0, evictions - reported.evictions),
             cachedEntries: leafCount,
             cachedTokens: tokens,
-            cachedBytes: bytes)
+            cachedBytes: bytes
+        ).withTiered(tieredKV.metrics)
         let changed = delta.hits > 0 || delta.misses > 0 || delta.evictions > 0
             || reported.entries != leafCount || reported.tokens != tokens || reported.bytes != bytes
         guard changed else { return nil }

@@ -215,6 +215,7 @@ extension MLXInferenceEngine {
         options.lookup = LookupOptions(
             speculative: plan.speculativeLookup, recycling: configuration.speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
+        (options.attentionBackend, options.mobaTopK) = (plan.attentionBackend, plan.mobaTopK)
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         options.pacer = prefillPacer
     }
@@ -227,9 +228,12 @@ extension MLXInferenceEngine {
     }
 
     var planSettings: GenerationPlan.Settings {
-        GenerationPlan.Settings(
-            kvPrecision: effectiveKVPrecision, kvZones: configuration.kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
-            evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil, speculativeLookup: configuration.speculativeLookup,
+        let kvPrec = (effectiveKVPrecision?.isKVarN == true && !questApplies) ? nil : effectiveKVPrecision
+        return GenerationPlan.Settings(
+            kvPrecision: kvPrec, kvZones: configuration.kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
+            evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil,
+            attentionBackend: questApplies ? configuration.attentionBackend : .standard, mobaTopK: configuration.mobaTopK,
+            speculativeLookup: configuration.speculativeLookup,
             capabilities: modelFacts.capabilities, adapter: adapterNamespace, polarRotated: modelFacts.polarRotated)
     }
 

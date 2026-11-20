@@ -29,6 +29,8 @@ struct GenerationPlan: Equatable, Sendable {
         var evictsThroughUpdate = false
         var kvHeadMask: KVHeadMask?
         var questTopK: Int?
+        var attentionBackend: AttentionBackend = .standard
+        var mobaTopK = 8
         var speculativeLookup = false
         var capabilities = ModelCapabilities.unrestricted
         var adapter: String?
@@ -50,6 +52,8 @@ struct GenerationPlan: Equatable, Sendable {
     var kvZones: KVZones?
     var kvHeadMask: KVHeadMask?
     var questTopK: Int?
+    var attentionBackend: AttentionBackend = .standard
+    var mobaTopK = 8
     var kvPrecision: KVPrecision?
     var speculativeLookup = false
     var drafts = false
@@ -106,8 +110,14 @@ struct GenerationPlan: Equatable, Sendable {
         let zones = zones(settings)
         let mask = capabilities.allows(.kvHeadSplit) ? settings.kvHeadMask : nil
         guard zones == nil else { return GenerationPlan(kvZones: zones, kvHeadMask: mask, kvPrecision: precision) }
+        if let precision, precision.isKVarN { return GenerationPlan(kvPrecision: precision) }
         guard precision == nil else { return GenerationPlan() }
-        return mask.map { GenerationPlan(kvHeadMask: $0) } ?? GenerationPlan(questTopK: capabilities.allows(.quest) ? settings.questTopK : nil)
+        if let mask { return GenerationPlan(kvHeadMask: mask) }
+        if capabilities.allows(.quest), let topK = settings.questTopK { return GenerationPlan(questTopK: topK) }
+        if capabilities.allows(.quest), settings.attentionBackend != .standard {
+            return GenerationPlan(attentionBackend: settings.attentionBackend, mobaTopK: settings.mobaTopK)
+        }
+        return GenerationPlan()
     }
 
     private static func zones(_ settings: Settings) -> KVZones? {
