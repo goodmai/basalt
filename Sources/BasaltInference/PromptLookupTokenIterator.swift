@@ -206,13 +206,13 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     }
 
     private func lookupDraft(remaining: Int) -> [Int] {
-        guard speculativeLookup && backoffs.lookup.allowsDraft && state == nil else { return [] }
+        guard speculativeLookup && backoffs.lookup.allowsDraft else { return [] }
         let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.draftLimit
         return Self.draft(after: history, limit: Swift.min(limit, remaining - 1, draftRoom))
     }
 
     private mutating func decode(remaining: Int) {
-        let recycles = recyclesTokens && backoffs.recycling.allowsDraft && state == nil
+        let recycles = recyclesTokens && backoffs.recycling.allowsDraft
         let draft = lookupDraft(remaining: remaining)
         switch (inFlight, draft.isEmpty) {
         case (let step?, true) where recycles && recycling.predicts(after: history[history.count - 1]):
@@ -276,6 +276,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func speculate(_ draft: [Int], recycled: Bool) {
         let fed = [history[history.count - 1]] + draft
+        let savedState = state
         let recurrent = cache.compactMap { $0 as? MambaCache }
         let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
         let storage = stagesRounds ? KVCacheStorage(cache) : nil
@@ -311,6 +312,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let acceptedDrafts = emitted.count - 1
         let matchedDrafts = queuedForced.isEmpty ? acceptedDrafts : acceptedDrafts + 1
         let replays = !recurrent.isEmpty && acceptedDrafts < draft.count
+        if acceptedDrafts < draft.count { state = savedState }
         if let storage, let round {
             storage.commit(round, retaining: acceptedDrafts + 1)
         } else if recurrent.isEmpty {
@@ -318,9 +320,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         } else if replays {
             for layer in cache where layer.isTrimmable { layer.trim(fed.count) }
             for (layer, checkpoint) in zip(recurrent, checkpoints) {
-                layer[0] = checkpoint.conv
-                layer[1] = checkpoint.state
-                layer.offset = checkpoint.offset
+                (layer[0], layer[1], layer.offset) = (checkpoint.conv, checkpoint.state, checkpoint.offset)
             }
             let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
             let fusesNext = !grammarJumpForward && queuedForced.isEmpty && emitted.count < remaining
@@ -331,13 +331,11 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
                 asyncEval([next.token] + (next.successor.map { [$0] } ?? []))
                 inFlight = next
             }
-            replayRounds += 1
-            verifyCalls += 1
+            (replayRounds, verifyCalls) = (replayRounds + 1, verifyCalls + 1)
         }
         recordSpeculatedRound(
             draftCount: draft.count, fedCount: fed.count, emitted: emitted,
-            matchedDrafts: matchedDrafts, recycled: recycled, replayed: replays
-        )
+            matchedDrafts: matchedDrafts, recycled: recycled, replayed: replays)
     }
 
     mutating func next() -> Int? {
