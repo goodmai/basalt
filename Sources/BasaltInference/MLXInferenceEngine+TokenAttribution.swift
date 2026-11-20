@@ -147,11 +147,7 @@ extension MLXInferenceEngine {
         if let templatedIds, !templatedIds.isEmpty {
             promptIds = templatedIds
         } else {
-            var encoded = context.tokenizer.encode(text: resolvedText, addSpecialTokens: true)
-            if let bos = context.tokenizer.bosToken.flatMap(context.tokenizer.convertTokenToId), encoded.first != bos {
-                encoded.insert(bos, at: 0)
-            }
-            promptIds = encoded
+            promptIds = ModelProbe.encoded(resolvedText, context.tokenizer)
         }
         guard !promptIds.isEmpty else {
             throw BasaltError.invalidRequestStructure(details: "xray tokens: prompt encodes to no tokens")

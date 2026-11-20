@@ -28,7 +28,7 @@ extension MLXInferenceEngine {
     }
 
     static func capture(_ request: TraceRequest, context: ModelContext) throws -> TraceReport {
-        let ids = context.tokenizer.encode(text: request.prompt, addSpecialTokens: true)
+        let ids = ModelProbe.encoded(request.prompt, context.tokenizer)
         guard !ids.isEmpty else { throw BasaltError.invalidRequestStructure(details: "the prompt encodes to no tokens") }
         guard ids.count <= traceTokenLimit else {
             throw BasaltError.contextLengthExceeded(maxTokens: traceTokenLimit, requested: ids.count)

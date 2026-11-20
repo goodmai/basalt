@@ -120,7 +120,7 @@ extension MLXInferenceEngine {
     static func encode(_ prompts: [String], tokenizer: any Tokenizer) throws(BasaltError) -> [[Int]] {
         var encoded: [[Int]] = []
         for prompt in prompts {
-            let ids = tokenizer.encode(text: prompt, addSpecialTokens: true)
+            let ids = ModelProbe.encoded(prompt, tokenizer)
             guard !ids.isEmpty else { throw .invalidRequestStructure(details: "a prompt encodes to no tokens") }
             guard ids.count <= traceTokenLimit else { throw .contextLengthExceeded(maxTokens: traceTokenLimit, requested: ids.count) }
             encoded.append(ids)
