@@ -22,7 +22,7 @@ final class PromptCache {
     }
 
     var isSharable: Bool {
-        !layers.isEmpty && layers.allSatisfy { type(of: $0) == KVCacheSimple.self }
+        !layers.isEmpty && layers.allSatisfy(\.holdsWholeContext)
     }
 }
 
@@ -88,6 +88,7 @@ struct PromptCacheTree {
     private(set) var leafCount = 0
     private(set) var hits = 0
     private(set) var misses = 0
+    private(set) var rowTemplates: [Int: KEqVRowKVCache] = [:]
     private(set) var evictions = 0
     private var reported = (hits: 0, misses: 0, evictions: 0, entries: 0, tokens: 0, bytes: Int64(0))
     private var clock = 0
@@ -132,8 +133,8 @@ struct PromptCacheTree {
             if let recurrent = deepest.snapshot?.layers[layer] {
                 return recurrent.copy()
             }
-            let cache = KVCacheSimple()
-            cache.state = [0, 1].map { part in
+            var cache: KVCache = rowTemplates[layer]?.emptied() ?? KVCacheSimple()
+            cache.state = deepest.layers[layer].indices.map { part in
                 concatenated(path.map { $0.node.layers[layer][part][.ellipsis, ..<$0.used, 0...] }, axis: 2)
             }
             return cache
@@ -173,7 +174,7 @@ struct PromptCacheTree {
     }
 
     mutating func removeAll() {
-        (roots, byteCount, leafCount) = ([:], 0, 0)
+        (roots, byteCount, leafCount, rowTemplates) = ([:], 0, 0, [:])
         tieredKV.reset(ramBudgetBytes: byteBudget.rawValue)
     }
 
@@ -299,6 +300,9 @@ extension PromptCacheTree {
               cache.isSharable || cache.isSnapshot(of: tokens.count)
         else { return }
         let snapshot = RecurrentSnapshot(of: cache)
+        for (index, layer) in cache.layers.enumerated() {
+            if let row = layer as? KEqVRowKVCache, rowTemplates[index] == nil { rowTemplates[index] = row.emptied() }
+        }
         let root = roots[namespace] ?? PromptCacheNode(tokens: [], layers: [], lastUse: 0)
         let path = Self.walk(from: root, along: tokens)
         let matched = path.reduce(0) { $0 + $1.used }

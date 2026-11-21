@@ -57,6 +57,10 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
         return .causal
     }
 
+    func emptied() -> KEqVRowKVCache {
+        KEqVRowKVCache(layout: layout, valueUnfold: valueUnfold)
+    }
+
     func copy() -> any KVCache {
         let copied = KEqVRowKVCache(layout: layout, valueUnfold: valueUnfold)
         copied.rows = rows

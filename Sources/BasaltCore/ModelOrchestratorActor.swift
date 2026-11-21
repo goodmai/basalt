@@ -101,9 +101,10 @@ extension ModelOrchestratorActor {
     func performLoad(path: String, modelId: String? = nil) async throws(BasaltError) {
         let sizeMB = Int(UInt64(max(0, Self.resolvedDirectorySize(at: URL(fileURLWithPath: path)))) / 1_048_576)
         try await engine.load(modelPath: path)
-        let geometry = KVCacheGeometry.forModel(
+        let stockGeometry = KVCacheGeometry.forModel(
             path, parameters: ModelDefinition.inferTotalParameters(id: path, name: "", ramMB: Int64(sizeMB))
         )
+        let geometry = await engine.sharedKVRowLayout.map(stockGeometry.sharingKEqVRows) ?? stockGeometry
         let takes = await (
             zones: engine.supportsKVZones, eviction: engine.supportsKVEviction, quantization: engine.supportsKVQuantization,
             fullPrecisionEviction: engine.evictsKVInFullPrecision)

@@ -58,3 +58,22 @@ public struct KEqVRowLayout: Sendable, Equatable {
         (value as? Double) ?? (value as? Int).map(Double.init) ?? (value as? NSNumber)?.doubleValue
     }
 }
+
+extension KVCacheGeometry {
+    init(_ base: KVCacheGeometry, elementsPerToken: Double, keyElementsPerToken: Double) {
+        self.elementsPerToken = elementsPerToken
+        self.keyElementsPerToken = keyElementsPerToken
+        windowedElementsPerToken = base.windowedElementsPerToken
+        window = base.window
+        fixedStateBytes = base.fixedStateBytes
+        quantizedGroupSize = base.quantizedGroupSize
+        isFromConfig = base.isFromConfig
+    }
+
+    public func sharingKEqVRows(_ layout: KEqVRowLayout) -> KVCacheGeometry {
+        let heads = Double(layout.globalLayers * layout.kvHeads)
+        let saved = heads * Double(2 * layout.headDim - layout.rowWidth)
+        guard isFromConfig, elementsPerToken >= saved else { return self }
+        return KVCacheGeometry(self, elementsPerToken: elementsPerToken - saved, keyElementsPerToken: keyElementsPerToken)
+    }
+}

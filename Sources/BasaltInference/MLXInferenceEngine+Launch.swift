@@ -84,7 +84,7 @@ extension MLXInferenceEngine {
         guard options.keepsCache else {
             return try start.fresh(FreshCache.plan(options: options), batch: options.batch, lookup: options.lookup)
         }
-        return try start.cached(prompt, batch: options.batch, lookup: options.lookup)
+        return try start.cached(prompt, batch: options.batch, lookup: options.lookup, rows: options.kEqVRow)
     }
 
     static func carriesMoreThanTokens(_ input: LMInput) -> Bool {

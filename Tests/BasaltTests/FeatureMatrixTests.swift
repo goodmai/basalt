@@ -8,7 +8,7 @@ import MLXLMCommon
 @Suite("Feature matrix: on every tiny family a feature leaves greedy output unchanged, or reports itself off and falls back (#327)", .serialized)
 struct FeatureMatrixTests {
     enum Feature: String, CaseIterable, Sendable {
-        case lookup, mtp, cacheBlend, kvZones, headSplit, headSplitZoned, quest
+        case lookup, mtp, cacheBlend, kvZones, headSplit, headSplitZoned, quest, kvSharedRow
 
         func applies(to family: TinyModel.Family) -> Bool {
             switch self {
@@ -17,6 +17,7 @@ struct FeatureMatrixTests {
             case .cacheBlend: [.qwen3, .qwen3HeadDim32].contains(family)
             case .kvZones, .headSplit, .headSplitZoned: family == .qwen3HeadDim32
             case .quest: ![.gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .flint].contains(family)
+            case .kvSharedRow: family == .gemma4KEqV
             }
         }
 
@@ -30,6 +31,7 @@ struct FeatureMatrixTests {
             case .headSplit: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvHeadSplit: 0.5))
             case .headSplitZoned: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvPrecision: .k8v4, kvZones: .standard, kvHeadSplit: 0.5))
             case .quest: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, questTopK: 2))
+            case .kvSharedRow: MLXInferenceEngine(EngineConfiguration(promptCacheBytes: bytes, kvSharedRow: true))
             }
         }
 
@@ -43,6 +45,7 @@ struct FeatureMatrixTests {
                 await engine.probeKVZones()
                 try await FeatureMatrixTests.probeHeads(engine, storingScores: applies(to: family))
             case .quest: await engine.probeQuest()
+            case .kvSharedRow: await engine.probeKEqVRow(config: try JSONSerialization.jsonObject(with: Data(family.config.utf8)) as? [String: Any])
             case .lookup, .mtp, .cacheBlend: break
             }
         }
@@ -59,6 +62,9 @@ struct FeatureMatrixTests {
                 let (mask, zones) = await (engine.kvHeadMask, engine.supportsKVZones)
                 return mask != nil && zones
             case .quest: return await engine.questApplies
+            case .kvSharedRow:
+                let leasedRows = await engine.readPromptCaches { !$0.rowTemplates.isEmpty }
+                return await engine.kvSharedRowApplies && leasedRows
             }
         }
     }
@@ -106,7 +112,7 @@ struct FeatureMatrixTests {
         } else {
             #expect(reported == applies, "\(feature) on \(family) reported \(reported ? "on" : "off")")
         }
-        if feature == .cacheBlend {
+        if feature == .cacheBlend || feature == .kvSharedRow {
             #expect(replies.map(\.cachedPromptTokens) == plain.map(\.cachedPromptTokens))
         }
     }

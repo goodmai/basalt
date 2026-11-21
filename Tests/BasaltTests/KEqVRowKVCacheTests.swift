@@ -81,3 +81,38 @@ struct KEqVRowKVCacheTests {
         #expect(kEqV.flatMap(KEqVRowLayout.init(config:)) == Self.layout)
     }
 }
+
+@Suite("Gemma 4 K=V shared rows in the prompt cache (#645 P3)", .serialized)
+struct KEqVRowPromptCacheTests {
+    @Test("A row cache stored in the prompt-cache tree is leased back as rows and decodes the same next token as the cache that was stored")
+    func treeRoundTrip() throws {
+        let model = try TinyModel.make(.gemma4KEqV)
+        let prompt: [Int32] = [5, 19, 42, 7, 88, 13]
+        let rows = try KEqVRowKVCacheTests.rowCaches(model)
+        _ = model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: rows, state: nil)
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 26), anchorLimit: 4)
+        tree.store("row", tokens: prompt.map(Int.init), cache: PromptCache(rows))
+        let next: [Int32] = prompt + [64]
+        guard let lease = tree.lease("row", for: next.map(Int.init)) else {
+            Issue.record("the tree did not lease the stored row prefix")
+            return
+        }
+        #expect(lease.reusedTokens == prompt.count)
+        #expect(lease.cache.layers.compactMap { $0 as? KEqVRowKVCache }.count == 2)
+        let fromLease = model(LMInput.Text(tokens: MLXArray([Int32(64)])[.newAxis]), cache: lease.cache.layers, state: nil)
+        let fromStored = model(LMInput.Text(tokens: MLXArray([Int32(64)])[.newAxis]), cache: rows, state: nil)
+        let gap = abs(fromLease.logits[0, -1].asType(.float32) - fromStored.logits[0, -1].asType(.float32)).max().item(Float.self)
+        #expect(gap <= 1e-5)
+    }
+
+    @Test("The disk prompt cache never writes a row cache, whose layout the fork would reload as plain KVCache")
+    func diskSkipsRows() throws {
+        let model = try TinyModel.make(.gemma4KEqV)
+        let rows = try KEqVRowKVCacheTests.rowCaches(model)
+        _ = model(LMInput.Text(tokens: MLXArray([Int32(5), 19, 42])[.newAxis]), cache: rows, state: nil)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "kv-row-disk-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var store = PromptCacheDiskStore(directory: directory, byteQuota: 1 << 30, retentionDays: 1)
+        #expect(store.store(fingerprint: "f", model: "tiny", namespace: "n", tokens: [5, 19, 42], cache: PromptCache(rows)) == nil)
+    }
+}
