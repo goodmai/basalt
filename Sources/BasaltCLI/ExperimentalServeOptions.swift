@@ -26,6 +26,12 @@ struct ExperimentalServeOptions: ParsableArguments {
     var q3Kernel = false
 
     @Flag(
+        name: .customLong("experimental-kv-shared-row"),
+        help: "On Gemma 4 12B, 26B-A4B and 31B (attention_k_eq_v), store each global-layer KV head as one 640-value row [rotated keys | unrotated values | rotated values] instead of 512 keys + 512 values: 0.625x global-layer KV bytes, with the k_norm weight folded into the queries and stock SDPA over two views of the row (#645). Requests without a prompt-cache namespace only. Not with --kv-bits, --kv-zones, --kv-head-split, --quest-top-k or --attention-backend"
+    )
+    var kvSharedRow = false
+
+    @Flag(
         name: [.customLong("speech-analyzer"), .customLong("experimental-speech-analyzer")],
         help: "Serve /v1/audio/transcriptions, the basalt_transcribe MCP tool and audio in /v1/pipeline through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder (and, for /v1/pipeline, no --pipeline-audio-model is set). The first request for a language may install its system speech assets (#222, #226, #230); --experimental-speech-analyzer is kept as an alias"
     )

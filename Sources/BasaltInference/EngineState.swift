@@ -23,6 +23,7 @@ struct ModelFacts: Sendable {
     var valueRotationUnavailable = false
     var kvHeadMask: KVHeadMask?
     var questApplies = false
+    var kEqVRow: KEqVRowLayout?
     var capabilities = ModelCapabilities.unrestricted
     var imageToken: Int?
     var transcribesAudio = false

@@ -172,7 +172,7 @@ extension MLXInferenceEngine {
             await probeKVZones()
             await wireWorkingSet(epoch: epoch)
             await probeKVHeads(directory: directory)
-            await probeQuest()
+            await probeAttentionCaches(directory: directory, epoch: epoch)
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             for line in ModelCache.config(at: directory).map(architectureLines(config:)) ?? [] { logger.info(line) }
             logger.info("Model loaded and initialized successfully.")

@@ -58,6 +58,14 @@ struct CLITests {
         #expect(KVPrecision.k8v4.uniform == .q8)
     }
 
+    @Test("--experimental-kv-shared-row parses and refuses --kv-bits, --quest-top-k, --attention-backend and --kv-head-split (#645)")
+    func kvSharedRowFlag() throws {
+        #expect(try ServeCommand.parse(["--experimental-kv-shared-row"]).experimental.kvSharedRow)
+        for other in [["--kv-bits", "4"], ["--quest-top-k", "8"], ["--attention-backend", "sagemx"], ["--kv-head-split", "0.5"]] {
+            #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--experimental-kv-shared-row"] + other) }
+        }
+    }
+
     @Test("--kv-zones is off by default, parses on serve and models check, and needs --kv-bits; --kv-bits k8v4 needs --kv-zones")
     func kvZonesFlag() throws {
         #expect(try ServeCommand.parse([]).kvZones == false)

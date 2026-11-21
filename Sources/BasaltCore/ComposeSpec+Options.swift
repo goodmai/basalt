@@ -5,6 +5,7 @@ extension ComposeSpec {
         public var zeroCopyBody = false
         public var smallMKernel = false
         public var q3Kernel = false
+        public var kvSharedRow = false
         public var speechAnalyzer = false
         public var imageFallback: String?
         public var aneVisionTower: String?
@@ -97,6 +98,7 @@ extension ComposeSpec {
             (experimental.zeroCopyBody, "--experimental-zero-copy-body"),
             (experimental.smallMKernel, "--experimental-smallm-kernel"),
             (experimental.q3Kernel, "--experimental-q3-kernel"),
+            (experimental.kvSharedRow, "--experimental-kv-shared-row"),
             (experimental.adaptiveThinkingBudget, "--experimental-adaptive-thinking-budget"),
             (experimental.samplers, "--experimental-samplers"),
             (experimental.mtpDraftHead, "--experimental-mtp-draft-head"),
@@ -137,6 +139,7 @@ extension ComposeSpec {
             (experimental.zeroCopyBody != next.experimental.zeroCopyBody, "experimental.zero_copy_body is configured when the HTTP server starts"),
             (experimental.smallMKernel != next.experimental.smallMKernel, "experimental.smallm_kernel is enabled once for the process at start"),
             (experimental.q3Kernel != next.experimental.q3Kernel, "experimental.q3_kernel is enabled once for the process at start"),
+            (experimental.kvSharedRow != next.experimental.kvSharedRow, "experimental.kv_shared_row is bound to the engine configuration at start"),
             (experimental.aneVisionTower != next.experimental.aneVisionTower, "experimental.ane_vision_tower is bound to the engine at start"),
             (experimental.samplers != next.experimental.samplers, "experimental.samplers is bound to the engine configuration at start"),
             (experimental.mtpDraftHead != next.experimental.mtpDraftHead, "experimental.mtp_draft_head is bound to the engine configuration at start"),
