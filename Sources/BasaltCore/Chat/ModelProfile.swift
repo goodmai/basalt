@@ -271,6 +271,7 @@ public enum ModelProfileRegistry {
         if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
         if t.hasPrefix("muse_glimmer") || t == "muse-glimmer" { return MuseGlimmerProfile() }
         if t == "gpt_oss" { return GPTOSSProfile() }
+        if t.hasPrefix("inkling2") { return InklingProfile() }
         if t == "nemotron_h" || t == "nemotron_lightning" || t == "nemotron-lightning" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }
