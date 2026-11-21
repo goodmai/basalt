@@ -13,18 +13,19 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
     private let keyOrder: MLXArray
     private let outputRestore: MLXArray
     private let keyRestore: MLXArray
-    private let queryFold: MLXArray
+    private let valueUnfold: MLXArray
     private var rows: MLXArray?
     private(set) var materializedForCaller = false
     private(set) var offset = 0
 
     convenience init(layout: KEqVRowLayout, keyNormWeight: MLXArray) {
         let unrotated = MLXArray(layout.unrotated.map(Int32.init))
-        let ones = MLXArray.ones([layout.rotated.count], dtype: keyNormWeight.dtype)
-        self.init(layout: layout, queryFold: concatenated([ones, keyNormWeight.take(unrotated, axis: 0)]))
+        let ones = MLXArray.ones([layout.rotated.count], dtype: .float32)
+        let inverse = 1 / keyNormWeight.take(unrotated, axis: 0).asType(.float32)
+        self.init(layout: layout, valueUnfold: concatenated([inverse, ones]))
     }
 
-    init(layout: KEqVRowLayout, queryFold: MLXArray) {
+    init(layout: KEqVRowLayout, valueUnfold: MLXArray) {
         self.layout = layout
         let index = { (dims: [Int]) in MLXArray(dims.map(Int32.init)) }
         rotated = index(layout.rotated)
@@ -34,7 +35,7 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
         var inverseKey = [Int](repeating: 0, count: layout.headDim)
         for (position, dim) in layout.keyOrder.enumerated() { inverseKey[dim] = position }
         keyRestore = index(inverseKey)
-        self.queryFold = queryFold
+        self.valueUnfold = valueUnfold
     }
 
     var requiresAttentionThroughCache: Bool { true }
@@ -57,7 +58,7 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
     }
 
     func copy() -> any KVCache {
-        let copied = KEqVRowKVCache(layout: layout, queryFold: queryFold)
+        let copied = KEqVRowKVCache(layout: layout, valueUnfold: valueUnfold)
         copied.rows = rows
         copied.offset = offset
         copied.materializedForCaller = materializedForCaller
@@ -83,7 +84,7 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
 
     private func append(keys: MLXArray, values: MLXArray) -> MLXArray {
         let incoming = concatenated(
-            [keys.take(rotated, axis: -1), values.take(unrotated, axis: -1), values.take(rotated, axis: -1)], axis: -1)
+            [keys.take(rotated, axis: -1), keys.take(unrotated, axis: -1), values.take(rotated, axis: -1)], axis: -1)
         let (batch, heads, length) = (incoming.dim(0), incoming.dim(1), incoming.dim(2))
         let previous = offset
         if rows == nil || previous + length > rows!.dim(2) {
@@ -105,20 +106,19 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
         mask: MLXFast.ScaledDotProductAttentionMaskMode
     ) -> MLXArray {
         let current = append(keys: keys, values: values)
-        let folded = queries.take(keyOrder, axis: -1) * queryFold.asType(queries.dtype)
         let out = MLXFast.scaledDotProductAttention(
-            queries: folded,
+            queries: queries.take(keyOrder, axis: -1),
             keys: current[.ellipsis, ..<layout.headDim],
             values: current[.ellipsis, (2 * layout.rotatedHalf)...],
             scale: scale, mask: mask)
-        return out.take(outputRestore, axis: -1)
+        return (out.asType(.float32) * valueUnfold).asType(out.dtype).take(outputRestore, axis: -1)
     }
 
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
         materializedForCaller = true
         let current = append(keys: keys, values: values)
-        let keyView = current[.ellipsis, ..<layout.headDim] * queryFold.asType(current.dtype)
-        return (keyView.take(keyRestore, axis: -1), current[.ellipsis, (2 * layout.rotatedHalf)...].take(outputRestore, axis: -1))
+        let valueView = (current[.ellipsis, (2 * layout.rotatedHalf)...].asType(.float32) * valueUnfold).asType(current.dtype)
+        return (current[.ellipsis, ..<layout.headDim].take(keyRestore, axis: -1), valueView.take(outputRestore, axis: -1))
     }
 
     static func replacingFullAttention(_ caches: [any KVCache], model: any LanguageModel, layout: KEqVRowLayout) -> [any KVCache] {

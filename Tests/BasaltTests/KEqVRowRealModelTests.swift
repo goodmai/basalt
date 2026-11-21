@@ -102,7 +102,7 @@ struct KEqVRowRealModelTests {
         try await lengthsRuns(container: container, corpus: corpus, layout: layout, log: log)
         try await promptIdentity(container: container, layout: layout, log: log)
         try await passkeys(container: container, corpus: corpus, layout: layout, log: log)
-        try await perplexities(container: container, corpus: corpus, layout: layout, log: log)
+        if Self.env["BASALT_E2E_KV_ROW_PPL"] != "0" { try await perplexities(container: container, corpus: corpus, layout: layout, log: log) }
     }
 
     func lengthsRuns(container: ModelContainer, corpus: String, layout: KEqVRowLayout, log: ModelRunLog) async throws {
@@ -120,7 +120,7 @@ struct KEqVRowRealModelTests {
             guard let stock = runs[false], let row = runs[true] else { continue }
             let shared = zip(row.tokens, stock.tokens).prefix { $0 == $1 }.count
             log.record("result", String(
-                format: "KV-ROW length=%d kvBytes stock=%d row=%d ratio=%.3fx peak stock=%d row=%d prefill stock=%.2fs row=%.2fs decode stock=%.2f row=%.2f tok/s greedyShared=%d/%d",
+                format: "KV-ROW length=%ld kvBytes stock=%ld row=%ld ratio=%.3fx peak stock=%ld row=%ld prefill stock=%.2fs row=%.2fs decode stock=%.2f row=%.2f tok/s greedyShared=%ld/%ld",
                 length, stock.bytes, row.bytes, Double(stock.bytes) / Double(max(row.bytes, 1)), stock.peak, row.peak,
                 stock.prefillSeconds, row.prefillSeconds, stock.decodeTokensPerSecond, row.decodeTokensPerSecond, shared, stock.tokens.count))
             #expect(row.bytes < stock.bytes)
