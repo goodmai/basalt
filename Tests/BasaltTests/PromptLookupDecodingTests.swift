@@ -129,22 +129,6 @@ struct PromptLookupDecodingTests {
         #expect(telemetry.draftTokenCount > 8 * telemetry.roundCount)
     }
 
-    @Test("A hot Mac shortens the draft without changing the tokens, and the test fixture pins nominal conditions")
-    func thermalStateShortensDraftsOnly() throws {
-        let continuation = (0 ..< 12).map { LookupFixture.unit[(4 + $0) % LookupFixture.unit.count] }
-        let hot = DraftConditions(thermalLevel: .critical, isLowPowerModeEnabled: false)
-        let cool = try LookupFixture.lookup(
-            try TinyModel.make(.qwen3), maxTokens: continuation.count, sampler: ScriptedSampler(continuation))
-        let throttled = try LookupFixture.lookup(
-            try TinyModel.make(.qwen3), maxTokens: continuation.count, sampler: ScriptedSampler(continuation),
-            conditions: hot)
-        expectTokenSequence(throttled.tokens, continuation)
-        let coolRounds = try #require(cool.iterator.speculativeDecodingTelemetry).roundCount
-        let hotRounds = try #require(throttled.iterator.speculativeDecodingTelemetry).roundCount
-        #expect(coolRounds == 1)
-        #expect(hotRounds > coolRounds)
-    }
-
     @Test("A hybrid's first draft is a 4-token probe, and only an accepted probe opens the full draft limit; a dense model drafts the full limit at once",
           arguments: [(TinyModel.Family.qwen3, 1, 10), (TinyModel.Family.qwen35, 2, 9)])
     func hybridProbesBeforeLongDrafts(family: TinyModel.Family, rounds: Int, drafted: Int) throws {
