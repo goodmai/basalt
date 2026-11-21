@@ -43,6 +43,19 @@ struct MACaQInferenceModeTests {
         #expect(abs(fromFloat - fromHalf.asType(.float32)).max().item(Float.self) == 0)
     }
 
+    @Test("Only float32 activations are cast: a float16 input keeps float16 numerics")
+    func float16Untouched() {
+        let layer = Self.layer()
+        let x = MLXRandom.normal([1, 1, 1, 1, 64], key: MLXRandom.key(7105)).asType(.float16)
+        let indices = MLXArray([Int32(0), 1]).reshaped(1, 1, 2)
+        let before = layer(x, indices)
+        MACaQSwitchLinear.runInScaleDType(layer)
+        let after = layer(x, indices)
+        eval(before, after)
+        #expect(after.dtype == before.dtype)
+        #expect(abs(after - before).max().item(Float.self) == 0)
+    }
+
     @Test("Without it (PV-Tuning, conversion) float32 activations stay float32")
     func float32StaysWithoutOptIn() {
         let layer = Self.layer()

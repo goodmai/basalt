@@ -210,7 +210,7 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
         let params = parameters()
         guard case .value(let w)? = params["weight"] else { return x }
         let numExperts = w.dim(0)
-        let input = activationDType.map { x.dtype == $0 ? x : x.asType($0) } ?? x
+        let input = x.dtype == .float32 ? activationDType.map { x.asType($0) } ?? x : x
         let rotated: MLXArray
         if training {
             rotated = MACaQFusedKernels.differentiableSwitchHadamard(
@@ -244,8 +244,8 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
     }
 
     package static func runInScaleDType(_ model: Module) {
-        for case let (_, layer as MACaQSwitchLinear) in model.namedModules() where layer.scales.dtype != .float32 {
-            layer.activationDType = layer.scales.dtype
+        for case let (_, layer as MACaQSwitchLinear) in model.namedModules() where layer.scales.dtype == .bfloat16 {
+            layer.activationDType = .bfloat16
         }
     }
 }
