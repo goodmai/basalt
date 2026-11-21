@@ -58,7 +58,8 @@ package struct UniversalModelConverter: ModelConversionService, Sendable {
         }
         let resources = await SystemProfiler().detectResources()
         let availBytes = resources.availableRAM
-        let peakRAM = max(estBytes, Int64(Double(max(Self.workingCopyBytes(detected), estBytes)) * (pvTune ? 2.1 : 1.35)))
+        let working = Self.needsCanonicalStaging(detected: detected, target: target) ? Self.denseCopyBytes(detected) : detected.totalBytes
+        let peakRAM = max(estBytes, Int64(Double(max(working, estBytes)) * (pvTune ? 2.1 : 1.35)))
         let fitsConv = peakRAM <= Int64(Double(resources.totalRAM) * 0.88)
         let fitsInf = estBytes <= Int64(Double(resources.totalRAM) * 0.80)
         var warnings: [String] = []

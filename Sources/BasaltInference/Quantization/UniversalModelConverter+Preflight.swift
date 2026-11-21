@@ -2,9 +2,8 @@ import BasaltCore
 import Foundation
 
 extension UniversalModelConverter {
-    static func workingCopyBytes(_ detected: DetectedSourceCheckpoint) -> Int64 {
-        guard detected.requiresCanonicalDecode else { return detected.totalBytes }
-        return Int64((Double(detected.totalBytes) * 16 / max(1, detected.effectiveBPW)).rounded())
+    static func denseCopyBytes(_ detected: DetectedSourceCheckpoint) -> Int64 {
+        Int64((Double(detected.totalBytes) * 16 / max(1, detected.effectiveBPW)).rounded())
     }
 
     static func stagingProblem(workingBytes: Int64, freeDiskBytes: Int64, totalRAMBytes: Int64) -> String? {
@@ -25,7 +24,7 @@ extension UniversalModelConverter {
         let free = (try? tmp.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
             .volumeAvailableCapacityForImportantUsage ?? .max
         if let problem = stagingProblem(
-            workingBytes: workingCopyBytes(detected), freeDiskBytes: free,
+            workingBytes: denseCopyBytes(detected), freeDiskBytes: free,
             totalRAMBytes: Int64(ProcessInfo.processInfo.physicalMemory)) {
             throw BasaltError.invalidRequestStructure(details: problem)
         }
