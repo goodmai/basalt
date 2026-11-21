@@ -24,17 +24,25 @@ extension ServeCommand {
             }
         }
         applyComposeExperimental(spec.experimental, usesSpeech: spec.usesSpeechAnalyzer)
+        applyComposeKernels(spec.experimental)
         applyComposeMCP(spec.mcp)
         try experimental.validate()
         try expertStreaming.validate()
         try kvCache.validateCombination()
+        if experimental.kvSharedRow, kvCache.bits != nil || kvCache.zoned || kvCache.headSplit != nil || kvCache.questTopK != nil || kvCache.attentionBackend != .standard {
+            throw ValidationError("--experimental-kv-shared-row does not combine with --kv-bits, --kv-zones, --kv-head-split, --quest-top-k or --attention-backend")
+        }
         try mcpOptions.validate()
     }
 
-    private mutating func applyComposeExperimental(_ exp: ComposeSpec.Experimental, usesSpeech: Bool) {
+    private mutating func applyComposeKernels(_ exp: ComposeSpec.Experimental) {
         if exp.zeroCopyBody { experimental.zeroCopyBody = true }
         if exp.smallMKernel { experimental.smallMKernel = true }
         if exp.q3Kernel { experimental.q3Kernel = true }
+        if exp.kvSharedRow { experimental.kvSharedRow = true }
+    }
+
+    private mutating func applyComposeExperimental(_ exp: ComposeSpec.Experimental, usesSpeech: Bool) {
         if usesSpeech { experimental.speechAnalyzer = true }
         if experimental.imageFallback == nil, exp.imageFallback == "ocr" { experimental.imageFallback = .ocr }
         if experimental.aneVisionTower == nil, let tower = exp.aneVisionTower { experimental.aneVisionTower = tower }

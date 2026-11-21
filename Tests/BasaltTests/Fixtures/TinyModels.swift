@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -16,7 +16,7 @@ enum TinyModel {
             case .qwen3Small, .qwen3, .qwen3HeadDim32: Qwen3Model(try decoder.decode(Qwen3Configuration.self, from: config))
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
-            case .gemma4, .gemma4Moe: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
+            case .gemma4, .gemma4Moe, .gemma4KEqV: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
             case .qwen3Moe: Qwen3MoEModel(try decoder.decode(Qwen3MoEConfiguration.self, from: config))
             case .sigmoidMoe, .nemotronH: NemotronHModel(try decoder.decode(NemotronHConfiguration.self, from: config))
             case .lfm2: LFM2Model(try decoder.decode(LFM2Configuration.self, from: config))
@@ -53,6 +53,7 @@ enum TinyModel {
             case .gemma3: 103
             case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
             case .gemma4Unified: 274
+            case .gemma4KEqV: 645
             case .nemotronH: 30
             case .lfm2: 97
             case .lfm2Moe: 83
@@ -72,7 +73,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
             }
         }
 
@@ -107,6 +108,15 @@ enum TinyModel {
                  "num_kv_shared_layers": 2, "hidden_size_per_layer_input": 16, "vocab_size": 256,
                  "vocab_size_per_layer_input": 256, "sliding_window": \(slidingWindow), "sliding_window_pattern": 2,
                  "use_double_wide_mlp": false, "rms_norm_eps": 1e-6}
+                """
+            case .gemma4KEqV: """
+                {"model_type": "gemma4_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "num_global_key_value_heads": 1, "head_dim": 16,
+                 "global_head_dim": 64, "attention_k_eq_v": true, "num_kv_shared_layers": 0, "vocab_size": 256,
+                 "sliding_window": 8, "layer_types": ["sliding_attention", "full_attention", "sliding_attention", "full_attention"],
+                 "rope_parameters": {"full_attention": {"rope_type": "proportional", "partial_rotary_factor": 0.25, "rope_theta": 1000000.0},
+                  "sliding_attention": {"rope_type": "default", "rope_theta": 10000.0}},
+                 "use_double_wide_mlp": false, "rms_norm_eps": 1e-6, "tie_word_embeddings": true}
                 """
             case .gemma4Unified: """
                 {"model_type": "gemma4_unified", "vocab_size": 256, "image_token_id": 255, "audio_token_id": 254, "video_token_id": 253,

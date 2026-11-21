@@ -35,6 +35,7 @@ struct GenerationPlan: Equatable, Sendable {
         var capabilities = ModelCapabilities.unrestricted
         var adapter: String?
         var polarRotated: Int?
+        var kEqVRow: KEqVRowLayout?
     }
 
     struct Facts: Sendable {
@@ -60,6 +61,7 @@ struct GenerationPlan: Equatable, Sendable {
     var findsAnchors = false
     var blends = false
     var batchable = false
+    var kEqVRow: KEqVRowLayout?
 
     static func cacheNamespace(
         _ request: GenerationRequest, _ settings: Settings, cacheEnabled: Bool, media: PromptMedia, sameEpoch: Bool
@@ -117,7 +119,7 @@ struct GenerationPlan: Equatable, Sendable {
         if capabilities.allows(.quest), settings.attentionBackend != .standard {
             return GenerationPlan(attentionBackend: settings.attentionBackend, mobaTopK: settings.mobaTopK)
         }
-        return GenerationPlan()
+        return GenerationPlan(kEqVRow: settings.kEqVRow)
     }
 
     private static func zones(_ settings: Settings) -> KVZones? {

@@ -185,6 +185,7 @@ extension ServeConfigFile {
         "serve.experimental_zero_copy_body": .flag(on: "--experimental-zero-copy-body", off: nil),
         "serve.experimental_smallm_kernel": .flag(on: "--experimental-smallm-kernel", off: nil),
         "serve.experimental_q3_kernel": .flag(on: "--experimental-q3-kernel", off: nil),
+        "serve.experimental_kv_shared_row": .flag(on: "--experimental-kv-shared-row", off: nil),
         "serve.speculative.experimental_mtp_draft_head": .flag(on: "--experimental-mtp-draft-head", off: nil),
         "serve.experimental_adaptive_thinking_budget": .flag(on: "--experimental-adaptive-thinking-budget", off: nil),
         "serve.image_fallback": .text("--image-fallback"),

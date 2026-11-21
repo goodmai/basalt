@@ -10,6 +10,7 @@ enum FreshCache: Equatable {
     case kvarn(useQJL: Bool)
     case zoned(KVZones, KVPrecision)
     case evicting(KVZones)
+    case kEqVRow(KEqVRowLayout)
     case stock
 
     static func plan(
@@ -32,6 +33,7 @@ enum FreshCache: Equatable {
             return .sageMX(mode)
         }
         if let zones = options.kvZones, let precision = options.kvPrecision { return .zoned(zones, precision) }
+        if let layout = options.kEqVRow { return .kEqVRow(layout) }
         return .stock
     }
 }
@@ -84,6 +86,7 @@ struct LaunchOptions {
     var mtpBlockSize = 4
     var mtpPrefix: MTPPrefix?
     var pacer: PrefillPacer?
+    var kEqVRow: KEqVRowLayout?
 }
 
 struct MTPRequest {
@@ -160,6 +163,9 @@ struct GenerationLauncher {
             (exact.kvBits, exact.kvScheme) = (nil, nil)
             let cache = EvictingKVCache.replacingFullAttention(try model.newCache(parameters: exact), zones: zones)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
+        case .kEqVRow(let layout):
+            let cache = KEqVRowKVCache.replacingFullAttention(try model.newCache(parameters: params), model: model, layout: layout)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: params, components: components))
         case .stock:
             return try stock(batch: batch, lookup: lookup)
         }

@@ -10,6 +10,7 @@ extension ComposeFile.Walk {
         out.zeroCopyBody = flag(field["zero_copy_body"], "\(path).zero_copy_body") ?? false
         out.smallMKernel = flag(field["smallm_kernel"], "\(path).smallm_kernel") ?? false
         out.q3Kernel = flag(field["q3_kernel"], "\(path).q3_kernel") ?? false
+        out.kvSharedRow = flag(field["kv_shared_row"], "\(path).kv_shared_row") ?? false
         out.speechAnalyzer = flag(field["speech_analyzer"], "\(path).speech_analyzer") ?? false
         out.imageFallback = text(field["image_fallback"], "\(path).image_fallback")
         out.aneVisionTower = text(field["ane_vision_tower"], "\(path).ane_vision_tower")

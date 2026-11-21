@@ -92,6 +92,7 @@ extension ServeCommand {
         configuration.visionTowerBundle = experimental.aneVisionTower
         configuration.smallMKernel = experimental.smallMKernel
         configuration.q3Kernel = experimental.q3Kernel
+        configuration.kvSharedRow = experimental.kvSharedRow
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 

@@ -216,6 +216,7 @@ extension MLXInferenceEngine {
             speculative: plan.speculativeLookup, recycling: configuration.speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
         (options.attentionBackend, options.mobaTopK) = (plan.attentionBackend, plan.mobaTopK)
+        options.kEqVRow = plan.kEqVRow
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         options.pacer = prefillPacer
     }
@@ -234,7 +235,8 @@ extension MLXInferenceEngine {
             evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil,
             attentionBackend: questApplies ? configuration.attentionBackend : .standard, mobaTopK: configuration.mobaTopK,
             speculativeLookup: configuration.speculativeLookup,
-            capabilities: modelFacts.capabilities, adapter: adapterNamespace, polarRotated: modelFacts.polarRotated)
+            capabilities: modelFacts.capabilities, adapter: adapterNamespace, polarRotated: modelFacts.polarRotated,
+            kEqVRow: configuration.kvSharedRow ? modelFacts.kEqVRow : nil)
     }
 
     func checkedSampling(_ request: GenerationRequest) async throws(BasaltError) -> (
