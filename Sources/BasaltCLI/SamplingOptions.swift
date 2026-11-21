@@ -4,7 +4,7 @@ import BasaltInference
 struct SamplingOptions: ParsableArguments {
     @Option(
         name: .customLong("reasoning-effort"),
-        help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low), or `none` to disable thinking entirely"
+        help: "Chat-template reasoning budget (Qwen3.8: xhigh | medium | low; gpt-oss: high | medium | low), or `none` to disable thinking entirely (gpt-oss cannot, so it gets low)"
     )
     var reasoningEffort: String?
 

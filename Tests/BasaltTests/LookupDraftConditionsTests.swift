@@ -1,7 +1,7 @@
 import Testing
 @testable import BasaltInference
 
-@Suite("Prompt lookup draft limits follow the thermal state the iterator is given", .serialized)
+@Suite("Prompt lookup draft limits follow the thermal state the iterator is given")
 struct LookupDraftConditionsTests {
     @Test("A hot Mac shortens the draft without changing the tokens, and the test fixture pins nominal conditions")
     func thermalStateShortensDraftsOnly() throws {
