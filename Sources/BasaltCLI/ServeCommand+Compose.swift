@@ -29,10 +29,15 @@ extension ServeCommand {
         try experimental.validate()
         try expertStreaming.validate()
         try kvCache.validateCombination()
-        if experimental.kvSharedRow, kvCache.bits != nil || kvCache.zoned || kvCache.headSplit != nil || kvCache.questTopK != nil || kvCache.attentionBackend != .standard {
+        try validateKVSharedRow()
+        try mcpOptions.validate()
+    }
+
+    func validateKVSharedRow() throws {
+        guard experimental.kvSharedRow else { return }
+        if kvCache.bits != nil || kvCache.zoned || kvCache.headSplit != nil || kvCache.questTopK != nil || kvCache.attentionBackend != .standard {
             throw ValidationError("--experimental-kv-shared-row does not combine with --kv-bits, --kv-zones, --kv-head-split, --quest-top-k or --attention-backend")
         }
-        try mcpOptions.validate()
     }
 
     private mutating func applyComposeKernels(_ exp: ComposeSpec.Experimental) {

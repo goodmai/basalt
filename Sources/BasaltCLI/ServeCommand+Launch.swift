@@ -58,6 +58,7 @@ extension ServeCommand {
             throw ValidationError("--cache-blend-ratio must be between 0 and 1, got \(promptCache.cacheBlendRatio)")
         }
         try kvCache.validateCombination()
+        try validateKVSharedRow()
         try promptCacheDisk.validate(sessionLog: sessionLog.mode)
         guard promptCacheDisk.megabytes == 0 || promptCache.promptCacheMB != 0 else {
             throw ValidationError("--prompt-cache-disk-mb persists the in-memory prompt cache, which --prompt-cache-mb 0 turns off")
