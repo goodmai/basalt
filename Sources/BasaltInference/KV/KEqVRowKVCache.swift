@@ -132,9 +132,9 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
     static func keyNorms(_ model: any LanguageModel, headDim: Int) -> [Int: MLXArray] {
         var found: [Int: MLXArray] = [:]
         for (path, module) in model.leafModules().flattened() where path.hasSuffix(".self_attn.k_norm") {
-            guard let norm = module as? RMSNorm, norm.weight.dim(0) == headDim,
+            guard case .value(let weight)? = module.parameters()["weight"], weight.ndim == 1, weight.dim(0) == headDim,
                   let layer = path.split(separator: ".").reversed().dropFirst(2).first.flatMap({ Int($0) }) else { continue }
-            found[layer] = norm.weight
+            found[layer] = weight
         }
         return found
     }

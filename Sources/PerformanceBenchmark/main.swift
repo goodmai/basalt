@@ -64,6 +64,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("quest-top-k"), help: "Experimental: decode attends to sinks, a recent window and this many 64-token blocks between them (Quest)")
     var questTopK: Int?
 
+    @Flag(name: .customLong("experimental-kv-shared-row"), help: "Experimental: on Gemma 4 K=V global layers, store one 640-value row per KV head instead of 512 keys + 512 values (#645)")
+    var kvSharedRow = false
+
     @Option(name: .customLong("repetition-penalty"), help: "Penalty on recently emitted tokens, e.g. 1.1 (default: off)")
     var repetitionPenalty: Float?
 
@@ -267,6 +270,7 @@ extension Benchmark {
         configuration.kvZones = kvZones ? .standard : nil
         configuration.kvHeadSplit = kvHeadSplit
         configuration.questTopK = questTopK
+        configuration.kvSharedRow = kvSharedRow
         configuration.repetitionPenalty = repetitionPenalty
         (configuration.topK, configuration.minP, configuration.seed) = (topK, minP, seed)
         (configuration.speculativeLookup, configuration.speculativeRecycling) = (speculativeLookup, speculativeRecycling)
