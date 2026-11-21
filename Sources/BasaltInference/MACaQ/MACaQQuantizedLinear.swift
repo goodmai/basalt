@@ -161,6 +161,7 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
     @ParameterInfo(key: "scales") package var scales: MLXArray
     @ParameterInfo(key: "biases") package var biases: MLXArray?
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
+    package var activationDType: DType?
 
     package init(
         geometry: MACaQSwitchGeometry,
@@ -209,13 +210,14 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
         let params = parameters()
         guard case .value(let w)? = params["weight"] else { return x }
         let numExperts = w.dim(0)
+        let input = x.dtype == .float32 ? activationDType.map { x.asType($0) } ?? x : x
         let rotated: MLXArray
         if training {
             rotated = MACaQFusedKernels.differentiableSwitchHadamard(
-                x, indices: indices, preScale: preScale, blockSize: hadamardBlock)
+                input, indices: indices, preScale: preScale, blockSize: hadamardBlock)
         } else {
             rotated = MACaQFusedKernels.switchBlockHadamard(
-                x, indices: indices, preScale: preScale, blockSize: hadamardBlock, numExperts: numExperts)
+                input, indices: indices, preScale: preScale, blockSize: hadamardBlock, numExperts: numExperts)
         }
         let safeIndices = training ? indices : clip(indices, min: 0, max: max(0, numExperts - 1))
         var out = MLX.gatherQuantizedMM(
@@ -238,7 +240,13 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
                 out = out + expandedDimensions(maskedBias, axis: -2)
             }
         }
-        return out
+        return out.dtype == x.dtype ? out : out.asType(x.dtype)
+    }
+
+    package static func runInScaleDType(_ model: Module) {
+        for case let (_, layer as MACaQSwitchLinear) in model.namedModules() where layer.scales.dtype == .bfloat16 {
+            layer.activationDType = .bfloat16
+        }
     }
 }
 
