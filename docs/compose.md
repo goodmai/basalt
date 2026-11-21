@@ -232,6 +232,7 @@ A compose file may declare top-level `experimental` and `mcp` sections (both sup
 experimental:
   zero_copy_body: true
   smallm_kernel: true
+  q3_kernel: true
   speech_analyzer: true
   image_fallback: ocr
   ane_vision_tower: ./tower-bundle
@@ -252,9 +253,9 @@ mcp:
   image_dirs: [./images]
 ```
 
-- **`experimental`:** lowers to the matching `serve` flags (`zero_copy_body`, `smallm_kernel`, `speech_analyzer`, `image_fallback`, `ane_vision_tower`, `telemetry_confidence_every`, `adaptive_thinking_budget`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k`), validated with exact YAML line numbers (`telemetry_confidence_every` >= 0, `image_fallback` `ocr`, `ane_vision_tower` containing `metadata.json` and `tower.aimodel`, `expert_cache_gb` > 0 with `expert_streaming: true`, `kv_head_split` in `0.05...1`, `quest_top_k` in `1...4096`). Relative paths (`./`, `../`, `~`) resolve against the compose file's folder.
+- **`experimental`:** lowers to the matching `serve` flags (`zero_copy_body`, `smallm_kernel`, `q3_kernel`, `speech_analyzer`, `image_fallback`, `ane_vision_tower`, `telemetry_confidence_every`, `adaptive_thinking_budget`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k`), validated with exact YAML line numbers (`telemetry_confidence_every` >= 0, `image_fallback` `ocr`, `ane_vision_tower` containing `metadata.json` and `tower.aimodel`, `expert_cache_gb` > 0 with `expert_streaming: true`, `kv_head_split` in `0.05...1`, `quest_top_k` in `1...4096`). Relative paths (`./`, `../`, `~`) resolve against the compose file's folder.
 - **`mcp`:** configures the MCP stdio transport (`enabled`, `rest`, `research_tools`, `enable`, `disable`, `image_dirs`) using the same group and tool selectors as `--mcp-enable` / `--mcp-disable` (`serving`, `gemma`, `media`, `harness`, `xray`, `surgery`, `research`, `all`, or individual tool names; `disable` always wins).
-- **Hot reload vs restart:** `speech_analyzer`, `image_fallback`, `telemetry_confidence_every` and `adaptive_thinking_budget` update live on `compose up` (`POST /v1/compose/apply`, printed under `experimental:`). Engine- and transport-bound flags (`zero_copy_body`, `smallm_kernel`, `ane_vision_tower`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k` and `mcp`) report `needs a restart` in `compose diff` and are refused on live `apply`.
+- **Hot reload vs restart:** `speech_analyzer`, `image_fallback`, `telemetry_confidence_every` and `adaptive_thinking_budget` update live on `compose up` (`POST /v1/compose/apply`, printed under `experimental:`). Engine- and transport-bound flags (`zero_copy_body`, `smallm_kernel`, `q3_kernel`, `ane_vision_tower`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k` and `mcp`) report `needs a restart` in `compose diff` and are refused on live `apply`.
 
 ### Benchmarks and Leaderboard Submissions (version 2, `#492`)
 A `version: 2` compose file may declare a top-level `benchmarks` block with shared `defaults` and named `suites` (either under `suites:` or as shorthand suite keys directly under `benchmarks:`):

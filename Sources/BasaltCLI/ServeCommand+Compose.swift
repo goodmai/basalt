@@ -34,6 +34,7 @@ extension ServeCommand {
     private mutating func applyComposeExperimental(_ exp: ComposeSpec.Experimental, usesSpeech: Bool) {
         if exp.zeroCopyBody { experimental.zeroCopyBody = true }
         if exp.smallMKernel { experimental.smallMKernel = true }
+        if exp.q3Kernel { experimental.q3Kernel = true }
         if usesSpeech { experimental.speechAnalyzer = true }
         if experimental.imageFallback == nil, exp.imageFallback == "ocr" { experimental.imageFallback = .ocr }
         if experimental.aneVisionTower == nil, let tower = exp.aneVisionTower { experimental.aneVisionTower = tower }

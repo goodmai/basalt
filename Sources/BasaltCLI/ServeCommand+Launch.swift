@@ -91,6 +91,7 @@ extension ServeCommand {
         configuration.probesModel = modelProbe
         configuration.visionTowerBundle = experimental.aneVisionTower
         configuration.smallMKernel = experimental.smallMKernel
+        configuration.q3Kernel = experimental.q3Kernel
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 
