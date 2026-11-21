@@ -112,7 +112,7 @@ struct MetalSubstrateAndBasisTransformTests {
         }
     }
 
-    @Test("MACaQFusedMatmul gather MoE matches unfused reference with 1D/2D preScale, broadcast x, and negative expert indices (#228)")
+    @Test("MACaQFusedMatmul gather MoE matches unfused reference with 1D/2D preScale, and broadcast x (#228)")
     func macaqFusedGatherMoEParity() {
         MLXRandom.seed(5471)
         let (experts, nOut, k) = (4, 16, 64)
@@ -155,14 +155,6 @@ struct MetalSubstrateAndBasisTransformTests {
                 layer.train(false)
                 eval(got, ref)
                 #expect(abs(got - ref).max().item(Float.self) < 4e-3)
-
-                let negIdx = MLXArray([Int32(-1), 1], [1, 1, 2])
-                let xSingle = MLXRandom.normal([1, 1, 1, 1, k], dtype: .float16)
-                let negOut = layer(xSingle, negIdx).asType(.float32)
-                eval(negOut)
-                let zeroSlice = negOut[0, 0, 0, 0].asArray(Float.self)
-                let allZero = zeroSlice.allSatisfy { $0 == 0 }
-                #expect(allZero)
 
                 let wParam = layer.parameters()["weight"]
                 if case .value(let wArr)? = wParam {

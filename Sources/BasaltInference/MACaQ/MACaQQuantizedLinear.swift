@@ -219,26 +219,19 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
             rotated = MACaQFusedKernels.switchBlockHadamard(
                 input, indices: indices, preScale: preScale, blockSize: hadamardBlock, numExperts: numExperts)
         }
-        let safeIndices = training ? indices : clip(indices, min: 0, max: max(0, numExperts - 1))
         var out = MLX.gatherQuantizedMM(
             rotated,
             w,
             scales: scales,
             biases: biases,
-            rhsIndices: safeIndices,
+            rhsIndices: indices,
             transpose: true,
             groupSize: groupSize,
             bits: bits,
             mode: mode,
             sortedIndices: sortedIndices)
         if case .value(let b)? = params["bias"] {
-            if training {
-                out = out + expandedDimensions(b[indices], axis: -2)
-            } else {
-                let valid = expandedDimensions((indices .>= 0) .&& (indices .< numExperts), axis: -1)
-                let maskedBias = MLX.where(valid, b[safeIndices], MLXArray(0, dtype: b.dtype))
-                out = out + expandedDimensions(maskedBias, axis: -2)
-            }
+            out = out + expandedDimensions(b[indices], axis: -2)
         }
         return out.dtype == x.dtype ? out : out.asType(x.dtype)
     }
