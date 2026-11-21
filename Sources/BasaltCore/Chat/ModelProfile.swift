@@ -197,6 +197,31 @@ public struct MuseGlimmerProfile: ModelProfile {
     public var writesToolCallsAsText: Bool { false }
 }
 
+public struct GPTOSSProfile: ModelProfile {
+    public let name = "gpt_oss"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] {
+        switch reasoning {
+        case .modelDefault:
+            return [:]
+        case .disabled:
+            return ["reasoning_effort": "low"]
+        case .effort(let level):
+            let mapped = ["minimal": "low", "xhigh": "high"][level] ?? level
+            guard ["low", "medium", "high"].contains(mapped) else { return [:] }
+            return ["reasoning_effort": mapped]
+        }
+    }
+
+    public var thinkingMarkers: ThinkingMarkers { .none }
+
+    public var defaultMaxTokens: Int { 16_384 }
+
+    public var defaultMinP: Float? { nil }
+}
+
 public struct GenericProfile: ModelProfile {
     public let name = "generic"
 
@@ -245,6 +270,7 @@ public enum ModelProfileRegistry {
         if t == "flint" { return FlintProfile() }
         if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
         if t.hasPrefix("muse_glimmer") || t == "muse-glimmer" { return MuseGlimmerProfile() }
+        if t == "gpt_oss" { return GPTOSSProfile() }
         if t == "nemotron_h" || t == "nemotron_lightning" || t == "nemotron-lightning" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }
