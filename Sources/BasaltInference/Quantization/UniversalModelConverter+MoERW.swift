@@ -260,7 +260,7 @@ extension UniversalModelConverter {
         if let blk = request.hadamardBlock { cfg.hadamardBlock = blk }
         if let alpha = request.alpha { cfg.alpha = alpha }
         let finalCfg = cfg
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: workingSource.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }
@@ -308,7 +308,7 @@ extension UniversalModelConverter {
         config: MACaQConfig = MACaQConfig()
     ) async throws -> MACaQSummary {
         try await MACaQRefiner.validateSourceDirectory(output)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: output.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }

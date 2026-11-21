@@ -55,6 +55,10 @@ struct GraduationFlagAndCacheTests {
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: roomyBudget, environment: [:]) == nil)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: denseDir, workingSetBudget: tightBudget, environment: [:]) == nil)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: tightBudget, disabled: true, environment: [:]) == nil)
+        let conversion = EngineConfiguration.conversion
+        #expect(ModelFitAnalyzer.autoExpertStreaming(
+            directory: moeDir, workingSetBudget: tightBudget, explicit: conversion.expertStreaming,
+            disabled: conversion.disableExpertStreaming, environment: [:]) == nil)
         #expect(ModelFitAnalyzer.autoExpertStreaming(
             directory: moeDir, workingSetBudget: tightBudget, environment: ["BASALT_NO_EXPERT_STREAMING": "1"]) == nil)
         #expect(ModelFitAnalyzer.autoExpertStreaming(

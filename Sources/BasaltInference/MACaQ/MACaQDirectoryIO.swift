@@ -137,7 +137,7 @@ extension MACaQRefiner {
         onStep: (@Sendable (String) -> Void)? = nil
     ) async throws -> MACaQSummary {
         try await validateSourceDirectory(output)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: output.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }
@@ -167,7 +167,7 @@ extension MACaQRefiner {
     ) async throws -> (summary: MACaQSummary, shards: Int, bytesAfter: Int) {
         try QTIPNativeLoader.validateOutput(source: source, output: output)
         try await validateSourceDirectory(source)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: source.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }
