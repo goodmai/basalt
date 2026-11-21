@@ -44,6 +44,7 @@ The flags worth knowing on `serve`:
 |---|---|
 | `--reasoning-effort none` | stop a reasoning model from spending the whole budget inside `<think>` |
 | `--reasoning-effort xhigh\|medium\|low` | Qwen-family thinking budget |
+| `--reasoning-effort high\|medium\|low` | gpt-oss reasoning level (it has no off switch: `none` gets `low`) |
 | `--quant 4bit` | pick a quantization subfolder in repos that ship several |
 | `--kv-bits 4\|8\|auto` | quantize the KV cache — buys generation room on a memory-tight machine; turns off prompt-cache reuse. MLX prefills the prompt in fp16 and quantizes it afterwards, so the prompt itself is no longer than in fp16 (shorter: the conversion briefly holds both copies). `auto` stays fp16, with prompt-cache reuse, until a request's prompt plus `max_tokens` does not fit, then runs that request at 8, else 4 bits |
 | `--kv-bits turbo3\|turbo4\|turbo8v4` | **Experimental** (#471): the fork's TurboQuant cache on full-attention layers (rotation, Lloyd–Max codebook, a norm per vector; the first and last two eligible layers stay 8-bit affine). Not with `--kv-zones`. Measured on M4 Pro at 8k context against affine 4-bit: decode 8–13% slower (Qwen3.8-27B 13.8 vs 15.0 tok/s, LFM2.5-24B 82 vs 94); decode perplexity over 384 tokens +0.3% / +1.3% against +1.5% for 4-bit on Qwen3.8, +10.1% / +3.6% against +5.0% on LFM2.5; KV at 16k no smaller (Qwen3.8 460 / 511 MB against 461, LFM2.5 118 / 131 against 97, Gemma 4 26B-A4B 423 against 306). Compression applies in decode: a multi-token chunk reads the raw keys |

@@ -37,6 +37,8 @@ public struct EngineConfiguration: Sendable {
 extension EngineConfiguration {
     public static let standard = EngineConfiguration()
 
+    static let conversion = EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true)
+
     var normalized: EngineConfiguration {
         var configuration = self
         configuration.batchSlots = max(1, batchSlots)

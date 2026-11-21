@@ -58,8 +58,8 @@ package struct UniversalModelConverter: ModelConversionService, Sendable {
         }
         let resources = await SystemProfiler().detectResources()
         let availBytes = resources.availableRAM
-        let peakFactor: Double = pvTune ? 2.1 : (detected.requiresCanonicalDecode ? 1.7 : 1.35)
-        let peakRAM = max(estBytes, Int64(Double(max(detected.totalBytes, estBytes)) * peakFactor))
+        let working = Self.needsCanonicalStaging(detected: detected, target: target) ? Self.denseCopyBytes(detected) : detected.totalBytes
+        let peakRAM = max(estBytes, Int64(Double(max(working, estBytes)) * (pvTune ? 2.1 : 1.35)))
         let fitsConv = peakRAM <= Int64(Double(resources.totalRAM) * 0.88)
         let fitsInf = estBytes <= Int64(Double(resources.totalRAM) * 0.80)
         var warnings: [String] = []
@@ -174,6 +174,7 @@ extension UniversalModelConverter {
     ) async throws -> ModelConversionResult {
         let workingSource: URL
         if needsCanonicalStaging(detected: detected, target: request.target) {
+            try checkStaging(detected)
             onProgress(.init(phase: "decoding", completed: 1, total: 4, message: "Unrotating & decoding \(detected.format) source"))
             let tmp = FileManager.default.temporaryDirectory.appending(path: "basalt-canon-\(UUID().uuidString)")
             stagingURL = tmp

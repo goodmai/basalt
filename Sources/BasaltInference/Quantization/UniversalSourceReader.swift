@@ -236,7 +236,7 @@ extension UniversalSourceReader {
         dtype: DType,
         onStep: (@Sendable (String) -> Void)?
     ) async throws -> WeightConverter.Summary {
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0, disableExpertStreaming: true))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: source.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }

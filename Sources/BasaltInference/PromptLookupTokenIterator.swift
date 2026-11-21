@@ -20,7 +20,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
     let grammarJumpForward: Bool
     let replaysRejections: Bool
     let stagesRounds: Bool
-    private let kvQuantization: GenerateParameters?
+    private let lookupOptions: LookupOptions
     var tokenCount = 0
     var promptPrefillTime: TimeInterval = 0
     var evaluatedModel: (any LanguageModel)? { model }
@@ -56,7 +56,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         self.recyclesTokens = lookup.recycling
         self.speculativeLookup = lookup.speculative
         self.grammarJumpForward = lookup.jumpForward
-        self.kvQuantization = lookup.kvQuantization
+        self.lookupOptions = lookup
         self.replaysRejections = Self.isReplayableHybrid(cache)
         self.stagesRounds = !PromptCache(cache).isSharable && !replaysRejections && Self.stagesRounds(cache)
         self.model = model
@@ -208,7 +208,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private func lookupDraft(remaining: Int) -> [Int] {
         guard speculativeLookup && backoffs.lookup.allowsDraft else { return [] }
-        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.effectiveLimit()
+        let limit = replaysRejections && backoffs.lookup.probing ? Self.replayedProbeLimit : backoffs.lookup.effectiveLimit(lookupOptions.draftConditions ?? .live)
         return Self.draft(after: history, limit: Swift.min(limit, remaining - 1, draftRoom))
     }
 
@@ -427,13 +427,13 @@ extension PromptLookupTokenIterator {
     }
 
     fileprivate mutating func quantizeCache() {
-        guard let kv = kvQuantization else { return }
+        guard let kv = lookupOptions.kvQuantization else { return }
         maybeQuantizeKVCache(
             cache: &cache, kvBits: kv.kvBits, kvGroupSize: kv.kvGroupSize, quantizedKVStart: kv.quantizedKVStart, kvScheme: kv.kvScheme)
     }
 
     fileprivate var draftRoom: Int {
-        guard let start = kvQuantization?.quantizedKVStart, history.count <= start + 1 else { return .max }
+        guard let start = lookupOptions.kvQuantization?.quantizedKVStart, history.count <= start + 1 else { return .max }
         return Swift.max(0, start - history.count)
     }
 }
@@ -533,6 +533,10 @@ struct DraftBackoff {
             return draftLimit
         }
         return Swift.min(draftLimit, Swift.max(Self.minDraftLimit, budget.verifyBudget))
+    }
+
+    func effectiveLimit(_ conditions: DraftConditions) -> Int {
+        effectiveLimit(thermalLevel: conditions.thermalLevel, isLowPowerModeEnabled: conditions.isLowPowerModeEnabled)
     }
 
     mutating func tick() {

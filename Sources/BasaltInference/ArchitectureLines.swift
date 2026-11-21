@@ -6,6 +6,8 @@ func architectureLines(config json: [String: Any]) -> [String] {
         ?? text?["num_experts"] as? Int
         ?? json["n_routed_experts"] as? Int
         ?? text?["n_routed_experts"] as? Int
+        ?? json["num_local_experts"] as? Int
+        ?? text?["num_local_experts"] as? Int
         ?? 0)
     let activeExperts = (json["num_experts_per_tok"] as? Int ?? text?["num_experts_per_tok"] as? Int)
     let layerTypes = (json["layer_types"] as? [String] ?? text?["layer_types"] as? [String])

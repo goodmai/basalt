@@ -250,7 +250,7 @@ extension GSQRCOConverter {
         onStep: (@Sendable (String) -> Void)? = nil
     ) async throws -> (summary: GSQRCOSummary, shards: Int, bytesAfter: Int) {
         try QTIPNativeLoader.validateOutput(source: source, output: output)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: source.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }
@@ -465,7 +465,7 @@ extension GSQRCOConverter {
         onStep: (@Sendable (String) -> Void)? = nil
     ) async throws -> (summary: QTIPBudgetSummary, shards: Int, bytesAfter: Int) {
         try QTIPNativeLoader.validateOutput(source: source, output: output)
-        let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 0))
+        let engine = MLXInferenceEngine(.conversion)
         defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
         try await engine.load(modelPath: source.path)
         guard let container = await engine.container else { throw BasaltError.modelNotLoaded }

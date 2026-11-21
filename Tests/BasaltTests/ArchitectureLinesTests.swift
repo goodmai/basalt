@@ -15,6 +15,12 @@ struct ArchitectureLinesTests {
         ])
     }
 
+    @Test("gpt-oss counts its experts under num_local_experts, so it reports a sparse MoE with its top-k")
+    func localExpertsAreCounted() {
+        let lines = architectureLines(config: ["model_type": "gpt_oss", "num_local_experts": 32, "num_experts_per_tok": 4])
+        #expect(lines[2] == "Topology: Sparse MoE (Experts: 32, top-4)")
+    }
+
     @Test("A dense model with per-layer quantization and no bits reports dynamic quantization; no quantization reports the base precision")
     func denseVariants() {
         let dynamic = architectureLines(config: ["model_type": "qwen3_5", "num_experts": 0, "quantization": ["layers.0": ["bits": 3], "layers.1": ["bits": 6]]])

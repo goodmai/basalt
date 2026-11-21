@@ -30,7 +30,7 @@ struct PromptLookupQuantizedKVTests {
         var iterator = try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: input, history: prompt), model: model,
             cache: try model.newCache(parameters: parameters), decoding: DecodingSettings(processor: nil, parameters: parameters),
-            lookup: LookupOptions(speculative: true, kvQuantization: parameters))
+            lookup: LookupOptions(speculative: true, kvQuantization: parameters, draftConditions: .nominal))
         var tokens: [Int] = []
         while let token = iterator.next() { tokens.append(token) }
         expectTokenSequence(tokens, expected)
