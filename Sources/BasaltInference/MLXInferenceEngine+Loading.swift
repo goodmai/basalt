@@ -148,6 +148,7 @@ extension MLXInferenceEngine {
             let smallM = configuration.smallMKernel
             try await loaded.perform {
                 try PrismHadamard.prepareLoaded($0.model)
+                MACaQSwitchLinear.runInScaleDType($0.model)
                 SmallMQuantizedLinear.installIfEnabled(in: $0.model, enabled: smallM)
             }
             try await probe(loaded, directory: directory, modelPath: modelPath)
