@@ -146,10 +146,12 @@ extension MLXInferenceEngine {
             if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
             let loaded = try await loadContainer(from: directory)
             let smallM = configuration.smallMKernel
+            let q3 = configuration.q3Kernel
             try await loaded.perform {
                 try PrismHadamard.prepareLoaded($0.model)
                 MACaQSwitchLinear.runInScaleDType($0.model)
                 SmallMQuantizedLinear.installIfEnabled(in: $0.model, enabled: smallM)
+                ThreeBitQMV.installIfEnabled(in: $0.model, enabled: q3)
             }
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false

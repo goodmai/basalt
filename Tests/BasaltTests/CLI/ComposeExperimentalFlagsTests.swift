@@ -44,6 +44,7 @@ struct ComposeExperimentalParsingTests {
             experimental:
               zero_copy_body: true
               smallm_kernel: true
+              q3_kernel: true
               speech_analyzer: true
               image_fallback: ocr
               ane_vision_tower: ./tower
@@ -75,7 +76,7 @@ struct ComposeExperimentalParsingTests {
 
         for cmd in [fromUp, fromDirect] {
             #expect(cmd.model == "mlx-community/Qwen3-4B-4bit")
-            #expect(cmd.experimental.zeroCopyBody && cmd.experimental.smallMKernel && cmd.experimental.speechAnalyzer)
+            #expect(cmd.experimental.zeroCopyBody && cmd.experimental.smallMKernel && cmd.experimental.q3Kernel && cmd.experimental.speechAnalyzer)
             #expect(cmd.experimental.imageFallback == .ocr)
             #expect(cmd.experimental.aneVisionTower == tower.standardizedFileURL.path)
             #expect(cmd.experimental.telemetryConfidenceEvery == 4)
@@ -187,6 +188,7 @@ struct ComposeExperimentalLiveReloadTests {
     @Test("POST /v1/compose/diff reports restart reasons and POST /v1/compose/apply refuses startup-only experimental and mcp changes", arguments: [
         ("experimental:\n  zero_copy_body: true\n", "experimental.zero_copy_body"),
         ("experimental:\n  smallm_kernel: true\n", "experimental.smallm_kernel"),
+        ("experimental:\n  q3_kernel: true\n", "experimental.q3_kernel"),
         ("experimental:\n  samplers: true\n", "experimental.samplers"),
         ("experimental:\n  mtp_draft_head: true\n", "experimental.mtp_draft_head"),
         ("experimental:\n  expert_streaming: true\n", "experimental.expert_streaming"),

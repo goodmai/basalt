@@ -64,6 +64,7 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
     package let hadamardBlock: Int
     package var activationMode: MACaQActivationMode
     package var useSmallMKernel: Bool = false
+    package var useQ3Kernel: Bool = false
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
     @ParameterInfo(key: "row_scale") package var rowScale: MLXArray?
 
@@ -125,8 +126,7 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
         let rotated = training
             ? MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock)
             : MACaQFusedKernels.blockHadamard(x, scaleVector: preScale, blockSize: hadamardBlock, isInverse: false)
-        if !training, useSmallMKernel, let biases, SmallMQuantizedMatmul.handles(rotated, layer: self) {
-            let raw = SmallMQuantizedMatmul.matmul(rotated, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
+        if !training, let raw = customKernelMatmul(rotated) {
             if let rowScale {
                 let scaled = (raw.asType(.float32) * rowScale.asType(.float32)).asType(x.dtype)
                 return bias.map { scaled + $0 } ?? scaled
@@ -141,6 +141,17 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
             return bias.map { scaled + $0 } ?? scaled
         }
         return super.callAsFunction(rotated)
+    }
+
+    private func customKernelMatmul(_ rotated: MLXArray) -> MLXArray? {
+        guard let biases else { return nil }
+        if useQ3Kernel, ThreeBitQMV.handlesSingleRow(rotated, scales: scales, biases: biases) {
+            return ThreeBitQMV.matmul(rotated, indices: nil, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
+        }
+        if useSmallMKernel, SmallMQuantizedMatmul.handles(rotated, layer: self) {
+            return SmallMQuantizedMatmul.matmul(rotated, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
+        }
+        return nil
     }
 
     package func unrotatedDenseWeight() -> MLXArray {
@@ -162,6 +173,7 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
     @ParameterInfo(key: "biases") package var biases: MLXArray?
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
     package var activationDType: DType?
+    package var useQ3Kernel = false
 
     package init(
         geometry: MACaQSwitchGeometry,
@@ -219,7 +231,8 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
             rotated = MACaQFusedKernels.switchBlockHadamard(
                 input, indices: indices, preScale: preScale, blockSize: hadamardBlock, numExperts: numExperts)
         }
-        var out = MLX.gatherQuantizedMM(
+        let custom = !training && useQ3Kernel && !sortedIndices ? q3Gather(rotated, indices: indices, weight: w) : nil
+        var out = custom ?? MLX.gatherQuantizedMM(
             rotated,
             w,
             scales: scales,
@@ -234,6 +247,11 @@ package final class MACaQSwitchLinear: SwitchLinear, Quantized {
             out = out + expandedDimensions(b[indices], axis: -2)
         }
         return out.dtype == x.dtype ? out : out.asType(x.dtype)
+    }
+
+    private func q3Gather(_ rotated: MLXArray, indices: MLXArray, weight: MLXArray) -> MLXArray? {
+        guard let biases, ThreeBitQMV.handlesGather(rotated, indices: indices, scales: scales, biases: biases) else { return nil }
+        return ThreeBitQMV.matmul(rotated, indices: indices, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
     }
 
     package static func runInScaleDType(_ model: Module) {

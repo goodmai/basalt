@@ -20,6 +20,12 @@ struct ExperimentalServeOptions: ParsableArguments {
     var smallMKernel = false
 
     @Flag(
+        name: .customLong("experimental-q3-kernel"),
+        help: "Run one-row (decode) forwards of MACaQ 3-bit affine layers, dense and MoE experts, through basalt's 3-bit kernel, which reads packed weights as 16-bit words and drops MLX's K % 512 gate for its fast path. On M4 Pro: 17408x5120 dense 173-177 us vs 181-184 for MLX, gpt-oss expert projections 77-82 vs 81-92 us (within run-to-run noise); results match MLX within bf16 rounding (#653). Same as BASALT_Q3_KERNEL=1"
+    )
+    var q3Kernel = false
+
+    @Flag(
         name: [.customLong("speech-analyzer"), .customLong("experimental-speech-analyzer")],
         help: "Serve /v1/audio/transcriptions, the basalt_transcribe MCP tool and audio in /v1/pipeline through macOS SpeechAnalyzer on the Neural Engine when the loaded model has no audio encoder (and, for /v1/pipeline, no --pipeline-audio-model is set). The first request for a language may install its system speech assets (#222, #226, #230); --experimental-speech-analyzer is kept as an alias"
     )

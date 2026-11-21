@@ -40,7 +40,7 @@ public enum ComposeSchema {
             Field("cluster", .section("cluster_v22"), since: 2),
         ],
         "experimental": [
-            Field("zero_copy_body", .boolean), Field("smallm_kernel", .boolean), Field("speech_analyzer", .boolean),
+            Field("zero_copy_body", .boolean), Field("smallm_kernel", .boolean), Field("q3_kernel", .boolean), Field("speech_analyzer", .boolean),
             Field("image_fallback", .choice(["ocr"])), Field("ane_vision_tower", .string),
             Field("telemetry_confidence_every", .integer), Field("adaptive_thinking_budget", .boolean),
             Field("samplers", .boolean), Field("mtp_draft_head", .boolean),
