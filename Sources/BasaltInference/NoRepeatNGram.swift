@@ -20,6 +20,13 @@ struct NoRepeatNGram: LogitProcessor {
         (self.size, self.window, self.whitelist) = (size, window, whitelist)
     }
 
+    func copy() -> NoRepeatNGram {
+        var cloned = NoRepeatNGram(size: size, window: window, whitelist: whitelist)
+        cloned.history.tokens = history.tokens
+        cloned.history.unread = history.unread
+        return cloned
+    }
+
     static func banned(_ tokens: [Int], size: Int, window: Int) -> Set<Int> {
         guard size > 1, tokens.count >= size else { return [] }
         let prefix = tokens.suffix(size - 1)
@@ -50,6 +57,9 @@ struct NoRepeatNGram: LogitProcessor {
     }
 
     mutating func didSample(token: MLXArray) {
+        if let prev = history.unread {
+            history.tokens.append(prev.item(Int.self))
+        }
         history.unread = token
     }
 }

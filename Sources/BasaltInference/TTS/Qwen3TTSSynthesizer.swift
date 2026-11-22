@@ -248,8 +248,8 @@ public actor Qwen3TTSSynthesizer: SpeechSynthesizer {
         owner: Qwen3TTSSynthesizer,
         plan: PacketPlan
     ) -> AsyncThrowingStream<AudioChunk, any Error> {
-        let rate = owner.config.sampleRate
         let vocoder = owner.aneVocoder
+        let rate = vocoder?.sampleRate ?? owner.config.sampleRate
         let packetSamples = owner.config.samplesPerPacket
         return AsyncThrowingStream { continuation in
             let task = Task {

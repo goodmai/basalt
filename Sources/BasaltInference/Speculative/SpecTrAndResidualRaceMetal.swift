@@ -131,7 +131,9 @@ extension SpecTrAndResidualRaceMetal {
                     sumPos += diff
                 }
                 if sumPos <= 1e-12 {
-                    stepAccepted = Int32(tok)
+                    if pRes[tok] > 0 {
+                        stepAccepted = Int32(tok)
+                    }
                     break
                 }
                 let inv = 1.0 / sumPos
@@ -301,10 +303,13 @@ private let verifySource = """
 
             int tok = d_tokens[s * K_CAND + m];
             bool valid_tok = (tok >= 0 && tok < V);
+            if (!valid_tok) {
+                continue;
+            }
             float u_acc = basalt_spec_u01(seed, uint(s * 31 + m), 0xACCE55EDu);
-            float q_tok = valid_tok ? q_buf[tok] : 1.0f;
-            float p_tok = valid_tok ? p_res[tok] : 0.0f;
-            bool ok = valid_tok && ((q_tok <= 0.0f) ? (p_tok > 0.0f) : (u_acc * q_tok <= p_tok));
+            float q_tok = q_buf[tok];
+            float p_tok = p_res[tok];
+            bool ok = (q_tok <= 0.0f) ? (p_tok > 0.0f) : (u_acc * q_tok <= p_tok);
             if (ok) {
                 accepted_tok = tok;
                 break;
@@ -317,7 +322,9 @@ private let verifySource = """
             }
             pos_sum = simd_sum(pos_sum);
             if (pos_sum <= 1e-12f) {
-                accepted_tok = tok;
+                if (p_tok > 0.0f) {
+                    accepted_tok = tok;
+                }
                 break;
             }
             float inv_pos = 1.0f / pos_sum;

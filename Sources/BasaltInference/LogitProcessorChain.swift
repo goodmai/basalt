@@ -100,8 +100,9 @@ enum LogitStage {
     func copied() -> LogitStage {
         switch self {
         case .dry(let value): .dry(value.copy())
+        case .noRepeatNGram(let value): .noRepeatNGram(value.copy())
         case .other(let value): .other(value.copy())
-        case .penalty, .repetition, .presence, .logitProbe, .noRepeatNGram, .confidence, .jsonConstraint, .excludeTopChoices, .dynamicTemperature, .nonFiniteGuard:
+        case .penalty, .repetition, .presence, .logitProbe, .confidence, .jsonConstraint, .excludeTopChoices, .dynamicTemperature, .nonFiniteGuard:
             self
         }
     }

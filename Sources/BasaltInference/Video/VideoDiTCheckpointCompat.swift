@@ -38,7 +38,7 @@ package enum VideoDiTCheckpointCompat {
         } else if let qtip = QTIPNativeLoader.manifest(in: weightDir) ?? QTIPNativeLoader.manifest(in: directory) {
             try QTIPNativeLoader.install(qtip, in: module)
         } else {
-            installStandardQuantizedIfPresent(in: directory, module: module)
+            installStandardQuantizedIfPresent(in: [weightDir, directory], module: module)
         }
         let existing = Dictionary(uniqueKeysWithValues: module.parameters().flattened())
         var matched: [(String, MLXArray)] = []
@@ -60,12 +60,15 @@ package enum VideoDiTCheckpointCompat {
         }
     }
 
-    private static func installStandardQuantizedIfPresent(in directory: URL, module: Module) {
-        guard let data = try? Data(contentsOf: directory.appending(component: "config.json")),
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let quant = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any]) else {
-            return
-        }
+    private static func installStandardQuantizedIfPresent(in directories: [URL], module: Module) {
+        let quant: [String: Any]? = directories.lazy.compactMap { dir in
+            guard let data = try? Data(contentsOf: dir.appending(component: "config.json")),
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                return nil
+            }
+            return (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any])
+        }.first
+        guard let quant else { return }
         let bits = (quant["bits"] as? Int) ?? 4
         let groupSize = (quant["group_size"] as? Int) ?? 64
         let mode: QuantizationMode = ((quant["mode"] as? String)?.lowercased() == "mxfp4") ? .mxfp4 : .affine

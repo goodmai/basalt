@@ -80,10 +80,11 @@ public struct Causal3DVAEConfig: Sendable, Codable, Equatable {
         self.latentChannels = Swift.max(1, latentChannels ?? variant.defaultLatentChannels)
         self.outputChannels = 3
         self.baseChannels = Swift.max(4, baseChannels ?? variant.defaultBaseChannels)
-        self.channelMultipliers = [4, 2, 2, 1]
-        self.resBlocksPerStage = 2
         self.temporalScale = Swift.max(1, temporalScale)
         self.spatialScale = Swift.max(1, spatialScale)
+        let neededStages = Swift.max(4, Int(log2(Double(self.spatialScale)).rounded()) + 1)
+        self.channelMultipliers = [4, 2, 2, 1] + Array(repeating: 1, count: Swift.max(0, neededStages - 4))
+        self.resBlocksPerStage = 2
         self.causalPadding = causalPadding
         self.normEps = 1e-6
         self.defaultDecodeTimestep = variant.usesTimestepConditioning ? 0.05 : 0.0
@@ -395,7 +396,9 @@ public final class Causal3DVAE: Module {
 
     public init(_ config: Causal3DVAEConfig = .preset(.wan22VAE)) {
         self.config = config
-        let widths = config.channelMultipliers.map { Swift.max(4, config.baseChannels * $0) }
+        let rawWidths = config.channelMultipliers.map { Swift.max(4, config.baseChannels * $0) }
+        let widths = rawWidths.isEmpty ? [Swift.max(4, config.baseChannels)] : rawWidths
+        func widthAt(_ index: Int) -> Int { widths[Swift.min(Swift.max(0, index), widths.count - 1)] }
         let tEmbedDim: Int? = config.variant.usesTimestepConditioning ? widths[0] : nil
 
         self._convIn.wrappedValue = CausalConv3d(
@@ -415,8 +418,8 @@ public final class Causal3DVAE: Module {
         let numTemporal = config.temporalUpsampleStages
         self._upStages.wrappedValue = (0 ... numSpatial).map { idx in
             CausalUpStage3d(
-                inChannels: idx == 0 ? widths[0] : widths[idx - 1],
-                outChannels: widths[idx],
+                inChannels: idx == 0 ? widthAt(0) : widthAt(idx - 1),
+                outChannels: widthAt(idx),
                 upsampleTemporal: idx < numTemporal,
                 upsampleSpatial: idx < numSpatial,
                 timeEmbedDim: tEmbedDim,
@@ -424,7 +427,7 @@ public final class Causal3DVAE: Module {
             )
         }
 
-        let finalCh = widths[numSpatial]
+        let finalCh = widthAt(numSpatial)
         self._normOut.wrappedValue = RMSNorm(dimensions: finalCh, eps: config.normEps)
         let finalConv = CausalConv3d(inputChannels: finalCh, outputChannels: config.outputChannels, kernelSize: 3, paddingMode: config.causalPadding)
         finalConv.update(parameters: finalConv.parameters().mapValues { $0 * Float(0.25) })

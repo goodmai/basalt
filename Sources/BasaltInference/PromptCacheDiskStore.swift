@@ -324,10 +324,11 @@ extension PromptCacheDiskStore {
 
     private func makeRoom(for bytes: Int64, keeping kept: Set<String>) -> Bool {
         let room = PromptCacheDiskSelection.room(for: bytes, in: storedFiles(), quota: byteQuota, keeping: kept)
+        guard room.fits else { return false }
         for victim in room.evict {
             try? FileManager.default.removeItem(at: url(victim.name))
         }
-        return room.fits
+        return true
     }
 
     @discardableResult

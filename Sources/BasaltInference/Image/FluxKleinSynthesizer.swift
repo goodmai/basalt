@@ -298,8 +298,9 @@ extension FluxKleinSynthesizer {
         expectedEpoch: Int
     ) async throws(BasaltError) -> Int {
         guard let module, epoch == expectedEpoch else { throw .modelNotLoaded }
-        let hLat = max(config.patchSize, request.height / 8)
-        let wLat = max(config.patchSize, request.width / 8)
+        let p = max(1, config.patchSize)
+        let hLat = max(p, ((request.height / 8 + p - 1) / p) * p)
+        let wLat = max(p, ((request.width / 8 + p - 1) / p) * p)
         let noise = MLXRandom.normal([1, hLat, wLat, config.latentChannels], dtype: .float32, key: MLXRandom.key(seed))
         let (refState, pixelMask) = try resolveReferenceState(module: module, request: request)
         let startState = refState.primaryLatent.map { 0.55 * $0 + 0.45 * noise } ?? noise
