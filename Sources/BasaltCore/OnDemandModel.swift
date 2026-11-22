@@ -83,7 +83,10 @@ public actor OnDemandModel {
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
-    deinit { announce.finish() }
+    deinit {
+        timer?.cancel()
+        announce.finish()
+    }
 
     public var phase: OnDemandCore.Phase { core.phase }
 
@@ -197,10 +200,6 @@ public actor OnDemandModel {
             guard (try? await sleep(idle)) != nil else { return }
             await self?.expire(generation)
         }
-    }
-
-    deinit {
-        timer?.cancel()
     }
 
     func expire(_ generation: Int) async {

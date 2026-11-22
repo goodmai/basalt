@@ -248,6 +248,11 @@ public actor SessionLogWriter {
     public var isEnabled: Bool { mode != .off && !state.disabled }
 
     nonisolated var format: SessionLogFormat { .init(mode: mode, redacts: redacts) }
+
+    deinit {
+        flushTask?.cancel()
+        for fd in state.handles.values { Darwin.close(fd) }
+    }
 }
 
 extension SessionLogWriter {
@@ -386,11 +391,6 @@ extension SessionLogWriter {
         var event = SessionLogRecord.Event(type, at: stamp(session))
         fill(&event)
         append(event, session: session)
-    }
-
-    deinit {
-        flushTask?.cancel()
-        for fd in state.handles.values { Darwin.close(fd) }
     }
 }
 
