@@ -68,7 +68,8 @@ struct PipelineController: Sendable {
             }
             let response = try await runner.run(
                 parsed, origin: RequestOrigin(source: "pipeline", endpoint: Self.path, stream: false),
-                sessionId: GenerationRequest.sessionId(in: request.headers))
+                sessionId: GenerationRequest.sessionId(in: request.headers),
+                budgetKey: request.headers[APIKeyAuthenticator<BasicRequestContext>.budgetKeyHeader])
             var buffer = ByteBuffer()
             buffer.writeBytes(try JSONEncoder().encode(response))
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: buffer))

@@ -177,7 +177,7 @@ struct ModelsHubController: Sendable {
             return ProviderErrorResponse.response(status: .badRequest, message: ModelsController.repoIdRequired, shape: .openAI)
         }
         let loaded = ModelsController.hfRepoId(from: await orchestrator.currentModelId)
-        if await orchestrator.isLoaded, loaded == hfId {
+        if await orchestrator.isLoaded, loaded.caseInsensitiveCompare(hfId) == .orderedSame {
             return ProviderErrorResponse.response(status: .conflict, message: "\(hfId) is currently loaded and cannot be deleted.", shape: .openAI)
         }
         let folder = operations.cacheRoot.appending(path: "models--" + hfId.replacingOccurrences(of: "/", with: "--"))

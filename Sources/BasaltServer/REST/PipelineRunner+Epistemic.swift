@@ -53,7 +53,7 @@ extension PipelineRunner {
         typed: Bool,
         decided: DecidedStage,
         origin: RequestOrigin,
-        sessionId: String?
+        routing: RoutingIdentity
     ) async throws(BasaltError) -> ExecutedRoute {
         if let gate = decided.epistemic, gate.shortCircuitsAnswer {
             return shortCircuitedRoute(request, decided: decided, gate: gate)
@@ -63,7 +63,7 @@ extension PipelineRunner {
         let answering = typed ? origin : RequestOrigin(source: PipelineCore.perceivedSource, endpoint: origin.endpoint, stream: false)
         let routeSituation = await situation(request, decision: decided.decision, route: route, epistemic: decided.epistemic)
         for call in route.calls {
-            replies.append(try await answer(call, origin: answering, sessionId: sessionId, situation: routeSituation))
+            replies.append(try await answer(call, origin: answering, routing: routing, situation: routeSituation))
         }
         let (answers, system2) = PipelineCore.answers(route, replies: replies, questions: request.questions, decision: decided.decision)
         return ExecutedRoute(answers: answers, system2: system2, replies: replies)

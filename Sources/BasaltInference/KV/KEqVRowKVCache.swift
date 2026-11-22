@@ -21,7 +21,9 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
     convenience init(layout: KEqVRowLayout, keyNormWeight: MLXArray) {
         let unrotated = MLXArray(layout.unrotated.map(Int32.init))
         let ones = MLXArray.ones([layout.rotated.count], dtype: .float32)
-        let inverse = 1 / keyNormWeight.take(unrotated, axis: 0).asType(.float32)
+        let normW = keyNormWeight.take(unrotated, axis: 0).asType(.float32)
+        let safeW = MLX.where(abs(normW) .> Float(1e-12), normW, MLXArray(Float(1.0)))
+        let inverse = MLX.where(abs(normW) .> Float(1e-12), 1 / safeW, MLXArray(Float(0.0)))
         self.init(layout: layout, valueUnfold: concatenated([inverse, ones]))
     }
 
@@ -71,7 +73,7 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
 
     @discardableResult
     func trim(_ n: Int) -> Int {
-        let trimmed = min(offset, n)
+        let trimmed = min(offset, max(0, n))
         offset -= trimmed
         return trimmed
     }

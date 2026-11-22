@@ -23,7 +23,12 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
             return try await next(request, context)
         }
         var request = request
-        let buffer = try await request.collectBody(upTo: Self.bodyLimit(for: request.uri.path))
+        let buffer: ByteBuffer
+        do {
+            buffer = try await request.collectBody(upTo: Self.bodyLimit(for: request.uri.path))
+        } catch let error as HTTPError where error.status == .contentTooLarge {
+            return ProviderErrorResponse.response(status: .contentTooLarge, message: "Request body too large.", path: request.uri.path)
+        }
         let bytes = buffer.readableBytesSpan
         guard !JSONNesting.containsZero(bytes) else { return Self.badRequest("the request body is not UTF-8 JSON", path: request.uri.path) }
         guard JSONNesting.depth(of: bytes) <= Self.depthLimit else {
@@ -32,10 +37,15 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         return try await next(request, context)
     }
 
+    private static let mediaBodyPaths: Set<String> = [
+        "/v1/chat/completions", "/api/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/ocr"
+    ]
+
     static func bodyLimit(for path: String) -> Int {
         if path.hasPrefix("/v1/images/") { return ImagesController.bodyLimit }
         if path.hasPrefix("/v1/pipeline") || path == "/v1/systemone" { return PipelineController.bodyLimit }
-        return Self.bodyLimit
+        if mediaBodyPaths.contains(path) { return Self.bodyLimit }
+        return 4 * 1024 * 1024
     }
 
     static func badRequest(_ message: String, path: String = "/v1/chat/completions") -> Response {

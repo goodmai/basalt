@@ -79,9 +79,7 @@ public actor CloudAPIClient: Sendable {
                 errorCount += 1
                 throw error
             } catch {
-                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
-                    throw error
-                }
+                if Self.isCancellation(error) { throw error }
                 lastError = error
                 if attemptsLeft { try await backoff(attempt) }
             }
@@ -106,6 +104,10 @@ public actor CloudAPIClient: Sendable {
         default:
             return .invalidRequestStructure(details: "HTTP \(status): \(errorBody)")
         }
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     private func backoff(_ attempt: Int) async throws {

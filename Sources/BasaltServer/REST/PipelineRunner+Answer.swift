@@ -22,9 +22,11 @@ extension PipelineRunner {
         return AnswerSituation(modalities: modalities, labels: labels, promptTokens: 0, escalated: escalated, costLeft: await router.costLeft())
     }
 
-    func answer(_ call: PipelineCore.System2Call, origin: RequestOrigin, sessionId: String?, situation: AnswerSituation?) async throws(BasaltError) -> PipelineCore.System2Reply {
+    func answer(
+        _ call: PipelineCore.System2Call, origin: RequestOrigin, routing: RoutingIdentity, situation: AnswerSituation?
+    ) async throws(BasaltError) -> PipelineCore.System2Reply {
         let started = ContinuousClock.now
-        let request = PipelineCore.request(for: call, origin: origin).withRouting(sessionId: sessionId, budgetKey: nil)
+        let request = PipelineCore.request(for: call, origin: origin).withRouting(sessionId: routing.sessionId, budgetKey: routing.budgetKey)
         guard let router = stages.answers, var situation else {
             let response = try await chat.generate(request: request)
             return PipelineCore.System2Reply(

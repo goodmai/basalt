@@ -1,5 +1,6 @@
 import Foundation
 import Hummingbird
+import ServiceLifecycle
 import BasaltCore
 
 package struct ComposeModelStatus: Codable, Sendable, Equatable {
@@ -92,7 +93,7 @@ struct ComposeController: Sendable {
         (encoder.dateEncodingStrategy, encoder.outputFormatting) = (.iso8601, [.sortedKeys])
         let body = AsyncStream<ByteBuffer>(bufferingPolicy: .bufferingNewest(ComposeEvents.kept)) { continuation in
             let task = Task {
-                for await event in await events.stream() {
+                for await event in await events.stream().cancelOnGracefulShutdown() {
                     guard let data = try? encoder.encode(event) else { continue }
                     continuation.yield(ByteBuffer(string: "event: \(event.kind)\ndata: \(String(decoding: data, as: UTF8.self))\n\n"))
                 }

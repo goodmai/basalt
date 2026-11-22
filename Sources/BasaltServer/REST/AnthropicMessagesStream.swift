@@ -48,7 +48,13 @@ struct AnthropicMessagesStream: EventStreamEncoder {
             send("error", ["type": "error", "error": ["type": "api_error", "message": ModelsController.generationFailed]])
             return out
         }
-        if openBlock != nil || !calledTools { stop(open("text")) }
+        if let current = openBlock {
+            stop(current.index)
+            openBlock = nil
+        } else if nextIndex == 0 && !calledTools {
+            stop(open("text"))
+            openBlock = nil
+        }
         send("message_delta", [
             "type": "message_delta",
             "delta": ["stop_reason": AnthropicController.stopReason(final?.finishReason ?? .stop, calledTools: calledTools),
