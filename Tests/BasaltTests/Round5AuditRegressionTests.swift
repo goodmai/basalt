@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Hummingbird
 import MLX
 @testable import BasaltCore
 @testable import BasaltCloud
@@ -71,8 +72,8 @@ struct Round5KVServerRegressionTests {
     }
 
     @Test("KEqVRowKVCache handles zero keyNormWeight without NaN and clamps negative trim (#693)")
-    func kEqVRowCacheZeroNormAndNegativeTrim() {
-        let layout = KEqVRowLayout(headDim: 4, rotated: [2, 3], unrotated: [0, 1])
+    func kEqVRowCacheZeroNormAndNegativeTrim() throws {
+        let layout = try #require(KEqVRowLayout(headDim: 4, partialRotaryFactor: 0.5, kvHeads: 1, globalLayers: [0]))
         let normW = MLXArray([Float(0.0), 2.0, 1.0, 1.0])
         let cache = KEqVRowKVCache(layout: layout, keyNormWeight: normW)
         #expect(cache.trim(-5) == 0)
