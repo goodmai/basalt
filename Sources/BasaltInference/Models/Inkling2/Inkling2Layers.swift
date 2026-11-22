@@ -55,6 +55,10 @@ final class Inkling2Experts: Module {
     }
 }
 
+private let compiledCombine = compile(shapeless: true) { (experts: MLXArray, weights: MLXArray, like: MLXArray) -> MLXArray in
+    (experts.asType(.float32) * weights.expandedDimensions(axis: -1)).sum(axis: -2).asType(like.dtype)
+}
+
 final class Inkling2SparseMoE: Module {
     @ModuleInfo(key: "gate") var router: Inkling2Router
     @ModuleInfo(key: "experts") var experts: Inkling2Experts
@@ -66,8 +70,7 @@ final class Inkling2SparseMoE: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (indices, weights) = router(x)
-        let out = experts(x, indices: indices).asType(.float32) * weights.expandedDimensions(axis: -1)
-        return out.sum(axis: -2).asType(x.dtype)
+        return compiledCombine(experts(x, indices: indices), weights, x)
     }
 }
 

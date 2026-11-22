@@ -3,6 +3,10 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+private let compiledResidual = compile(shapeless: true) { (residual: MLXArray, update: MLXArray) -> MLXArray in
+    (residual + update.asType(.float32)).asType(update.dtype)
+}
+
 final class Inkling2DecoderLayer: Module {
     let index: Int
     let global: Bool
@@ -80,7 +84,7 @@ final class Inkling2DecoderLayer: Module {
                 if let window { conv[slot] = Inkling2Ops.convState(window, kernel: kernel) }
             }
         }
-        return ((residual + afterMLP.asType(.float32)).asType(dtype), blocks)
+        return (compiledResidual(residual, afterMLP), blocks)
     }
 
     private func attentionInputs(_ hidden: MLXArray, mixed: MLXArray?, messages: MLXArray?, dtype: DType) -> Inkling2AttentionInputs {
