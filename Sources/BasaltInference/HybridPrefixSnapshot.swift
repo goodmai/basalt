@@ -5,7 +5,7 @@ import BasaltCore
 
 extension KVCache {
     var isSnapshotOnly: Bool {
-        self is ArraysCache || type(of: self) == RotatingKVCache.self
+        self is ArraysCache || type(of: self) == RotatingKVCache.self || self is Inkling2WindowKVCache
     }
 
     var holdsWholeContext: Bool {

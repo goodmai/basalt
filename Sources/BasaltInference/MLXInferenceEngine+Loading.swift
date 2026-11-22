@@ -58,6 +58,10 @@ extension MLXInferenceEngine {
             }
         }
         await ModelFamilyAliases.registerAll()
+        for type in Inkling2Model.modelTypes {
+            await registry.registerModelType(type) { data in try Inkling2Model(configurationData: data) }
+            await VLMTypeRegistry.shared.registerModelType(type) { data in try Inkling2Model(configurationData: data) }
+        }
         await registry.registerModelType(FlintModel.modelType) { data in
             FlintModel(try JSONDecoder.json5().decode(FlintConfiguration.self, from: data).validated())
         }
