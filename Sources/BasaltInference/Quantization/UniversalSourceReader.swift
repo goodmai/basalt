@@ -191,13 +191,15 @@ extension UniversalSourceReader {
         var writer = ShardWriter(directory: output, maxBytes: 5 << 30, metadata: ["format": "mlx"])
         var summary = WeightConverter.Summary()
         summary.bytesBefore = Int(directoryWeightBytes(source))
+        var companions = ShardCompanions(shards: shardNames.map { source.appending(component: $0) })
         for name in shardNames {
-            let arrays = try loadArrays(url: source.appending(component: name))
+            let shard = source.appending(component: name)
+            let arrays = try loadArrays(url: shard)
             for key in arrays.keys.sorted() where !key.hasSuffix(".scales") {
                 guard let tensor = arrays[key] else { continue }
                 let outTensor: MLXArray
                 if key.hasSuffix(".weight"),
-                   let scales = arrays[String(key.dropLast(".weight".count)) + ".scales"] {
+                   let scales = try companions.tensor(String(key.dropLast(".weight".count)) + ".scales", in: arrays, shard: shard) {
                     outTensor = NF4Metal.dequantized(tensor, scales: scales, groupSize: groupSize, dtype: dtype)
                     summary.tensors += 2
                 } else {

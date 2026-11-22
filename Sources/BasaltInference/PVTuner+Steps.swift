@@ -223,7 +223,8 @@ extension PVTuner {
         mod: Module,
         maxSwitchExperts: Int,
         nf4Swaps: inout [(String, PVScaleLinear)],
-        qtipSwaps: inout [(String, PVQTIPLinear)]
+        qtipSwaps: inout [(String, PVQTIPLinear)],
+        affineSwaps: inout [(String, PVAffineLinear)]
     ) throws {
         if try unfreezeMACaQContinuous(mod: mod, maxSwitchExperts: maxSwitchExperts) {
             return
@@ -231,8 +232,10 @@ extension PVTuner {
             qtipSwaps.append((path, PVQTIPLinear(from: qt)))
         } else if let nf4 = mod as? NF4Linear {
             nf4Swaps.append((path, PVScaleLinear(from: nf4)))
-        } else if let ql = mod as? QuantizedLinear, ql.globalScale == nil, ql.mode == .affine {
-            try ql.unfreeze(keys: ["scales", "biases"], strict: false)
+        } else if let ql = mod as? QuantizedLinear, type(of: ql) == QuantizedLinear.self, ql.globalScale == nil, ql.mode == .affine {
+            let wrapper = PVAffineLinear(from: ql)
+            wrapper.allowTraining(["scales", "biases"])
+            affineSwaps.append((path, wrapper))
         } else if let qs = mod as? QuantizedSwitchLinear, qs.mode == .affine {
             let nExp = qs.parameters().flattened().first(where: { $0.0 == "weight" })?.1.dim(0) ?? 0
             if nExp > 0 && nExp <= maxSwitchExperts { try qs.unfreeze(keys: ["scales", "biases"], strict: false) }
@@ -243,19 +246,21 @@ extension PVTuner {
 
     static func prepareContinuousUnfreeze(
         _ root: Module, blocks: Set<Int>, maxSwitchExperts: Int
-    ) throws -> (nf4: [(String, PVScaleLinear)], qtip: [(String, PVQTIPLinear)]) {
+    ) throws -> (nf4: [(String, PVScaleLinear)], qtip: [(String, PVQTIPLinear)], affine: [(String, PVAffineLinear)]) {
         root.freeze()
         var nf4Swaps: [(String, PVScaleLinear)] = []
         var qtipSwaps: [(String, PVQTIPLinear)] = []
+        var affineSwaps: [(String, PVAffineLinear)] = []
         for (path, mod) in root.namedModules() {
             guard let idx = textBlockIndex(path), blocks.contains(idx), !path.contains("router") else { continue }
             try unfreezeContinuousTarget(
                 path: path, mod: mod, maxSwitchExperts: maxSwitchExperts,
-                nf4Swaps: &nf4Swaps, qtipSwaps: &qtipSwaps)
+                nf4Swaps: &nf4Swaps, qtipSwaps: &qtipSwaps, affineSwaps: &affineSwaps)
         }
         for (path, wrapper) in nf4Swaps { try swapModule(path, with: wrapper, in: root) }
         for (path, wrapper) in qtipSwaps { try swapModule(path, with: wrapper, in: root) }
-        return (nf4Swaps, qtipSwaps)
+        for (path, wrapper) in affineSwaps { try swapModule(path, with: wrapper, in: root) }
+        return (nf4Swaps, qtipSwaps, affineSwaps)
     }
 
     static func runContinuousGroup(
@@ -267,6 +272,7 @@ extension PVTuner {
         defer {
             for (path, wrapper) in swaps.nf4 { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
             for (path, wrapper) in swaps.qtip { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
+            for (path, wrapper) in swaps.affine { try? swapModule(path, with: wrapper.packedLayer(), in: root) }
             root.freeze()
             root.train(false)
         }

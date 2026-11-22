@@ -221,7 +221,7 @@ extension PVTuner {
     static func unfreezeMACaQContinuous(mod: Module, maxSwitchExperts: Int) throws -> Bool {
         if let mac = mod as? MACaQQuantizedLinear {
             let keys = mac.mode == .affine ? ["pre_scale", "scales", "biases"] : ["pre_scale"]
-            try mac.unfreeze(keys: keys, strict: false)
+            mac.allowTraining(keys)
             return true
         }
         if let macs = mod as? MACaQSwitchLinear {
