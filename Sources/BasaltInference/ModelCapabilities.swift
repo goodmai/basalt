@@ -110,7 +110,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_text"], gemma4),
             ([FlintModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
-            (Inkling2Model.modelTypes, ModelCapabilities(verified: [])),
+            (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .promptCacheReuse, .grammarJumpForward])),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
             ([DeepSeekOCR.modelType, DeepSeekOCR2.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
         ]
