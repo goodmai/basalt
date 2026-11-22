@@ -11,7 +11,7 @@ extension SubmissionFormatter {
             "pass@1": artifact.scorecard.metrics["accuracy"] ?? passAt1,
             "total": artifact.samples.count,
             "compose_sha256": artifact.provenance.composeSHA256,
-            "scored_results": Dictionary(uniqueKeysWithValues: artifact.samples.map { ($0.id, [$0.passed]) }),
+            "scored_results": Dictionary(artifact.samples.map { ($0.id, [$0.passed]) }, uniquingKeysWith: { _, latest in latest }),
         ]
         return SubmissionPlan(
             target: .liveCodeBench,

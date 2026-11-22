@@ -66,9 +66,9 @@ extension ModelInspector {
             }
             cursor = span.end
         }
-        let expected = 8 + Int64(headerData.count) + Int64(cursor)
-        guard expected == fileSize else {
-            return .failure(.init(message: "Truncated or oversized shard (\(fileSize) bytes, header expects \(expected))"))
+        let payloadBytes = fileSize - 8 - Int64(headerData.count)
+        guard Int64(cursor) == payloadBytes else {
+            return .failure(.init(message: "Truncated or oversized shard (\(fileSize) bytes, header expects payload \(cursor))"))
         }
         return .success(SafetensorsHeader(tensors: tensors, metadata: json["__metadata__"] as? [String: String] ?? [:]))
     }

@@ -223,6 +223,11 @@ public enum PowerSGDCompressor {
 
     private static func orthonormalizeColumns(_ mat: inout [Float], rows: Int, cols: Int) {
         for k in 0 ..< cols {
+            var origNormSq: Double = 0
+            for i in 0 ..< rows {
+                let v = Double(mat[i * cols + k])
+                origNormSq += v * v
+            }
             for prev in 0 ..< k {
                 var dot: Double = 0
                 for i in 0 ..< rows { dot += Double(mat[i * cols + prev]) * Double(mat[i * cols + k]) }
@@ -234,7 +239,8 @@ public enum PowerSGDCompressor {
                 let v = Double(mat[i * cols + k])
                 normSq += v * v
             }
-            let inv = normSq > 1e-10 ? Float(1.0 / normSq.squareRoot()) : 0
+            let threshold = max(1e-24, origNormSq * 1e-10)
+            let inv = normSq > threshold ? Float(1.0 / normSq.squareRoot()) : 0
             if inv > 0 {
                 for i in 0 ..< rows { mat[i * cols + k] *= inv }
             } else {

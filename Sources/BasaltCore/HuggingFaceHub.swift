@@ -280,7 +280,9 @@ extension HuggingFaceHub {
         quant: String? = nil,
         limit: Int = 20
     ) async throws -> [HFModelInfo] {
-        var components = URLComponents(string: "\(apiURL)/models")!
+        guard var components = URLComponents(string: "\(apiURL)/models") else {
+            throw HFError.invalidURL
+        }
         components.queryItems = [
             .init(name: "author",    value: author),
             .init(name: "search",    value: search),

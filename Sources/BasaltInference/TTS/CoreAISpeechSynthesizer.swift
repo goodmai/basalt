@@ -5,14 +5,23 @@ import BasaltCore
 
 actor CoreMLSpeechRunner {
     private let model: MLModel
+    private let temporaryCompiledURL: URL?
 
-    init(compiledURL: URL) throws(BasaltError) {
+    init(compiledURL: URL, cleanupOnDeinit: Bool = false) throws(BasaltError) {
+        self.temporaryCompiledURL = cleanupOnDeinit ? compiledURL : nil
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         do {
             model = try MLModel(contentsOf: compiledURL, configuration: configuration)
         } catch {
+            if cleanupOnDeinit { try? FileManager.default.removeItem(at: compiledURL) }
             throw .modelConfigurationInvalid(path: compiledURL.path, reason: error.localizedDescription)
+        }
+    }
+
+    deinit {
+        if let url = temporaryCompiledURL {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 
@@ -124,7 +133,7 @@ public struct CoreAISpeechSynthesizer: SpeechSynthesizer {
             } catch {
                 throw .modelConfigurationInvalid(path: directory.path, reason: error.localizedDescription)
             }
-            runtime = .coreML(try CoreMLSpeechRunner(compiledURL: compiled))
+            runtime = .coreML(try CoreMLSpeechRunner(compiledURL: compiled, cleanupOnDeinit: true))
         case .synthetic:
             runtime = .syntheticHarmonic
         }

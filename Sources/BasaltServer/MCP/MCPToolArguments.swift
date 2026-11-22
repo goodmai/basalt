@@ -391,16 +391,28 @@ extension MCPArguments {
     }
 
     static func number(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> Float? {
-        try double(key, in: args).map(Float.init)
+        guard let d = try double(key, in: args) else { return nil }
+        let f = Float(d)
+        guard f.isFinite else { throw .invalidParams("\(key) must be a finite Float") }
+        return f
     }
 
     static func numbers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Float]? {
         guard let value = present(key, in: args) else { return nil }
-        let numbers = (value as? [Any])?.compactMap { ($0 as? Double) ?? ($0 as? Int).map(Double.init) }
-        guard let numbers, numbers.count == (value as? [Any])?.count, !numbers.isEmpty, numbers.allSatisfy(\.isFinite) else {
+        guard let list = value as? [Any], !list.isEmpty else {
             throw .invalidParams("\(key) must be a non-empty array of numbers")
         }
-        return numbers.map { Float($0) }
+        var out: [Float] = []
+        out.reserveCapacity(list.count)
+        for item in list {
+            guard !isJSONBoolean(item), let d = (item as? Double) ?? (item as? Int).map(Double.init), d.isFinite else {
+                throw .invalidParams("\(key) must be a non-empty array of numbers")
+            }
+            let f = Float(d)
+            guard f.isFinite else { throw .invalidParams("\(key) must be a non-empty array of numbers") }
+            out.append(f)
+        }
+        return out
     }
 
     static func integers(_ key: String, in args: [String: Any]?) throws(MCPFailure) -> [Int]? {

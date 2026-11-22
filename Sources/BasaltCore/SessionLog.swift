@@ -387,6 +387,11 @@ extension SessionLogWriter {
         fill(&event)
         append(event, session: session)
     }
+
+    deinit {
+        flushTask?.cancel()
+        for fd in state.handles.values { Darwin.close(fd) }
+    }
 }
 
 extension SessionLogWriter {
@@ -394,7 +399,7 @@ extension SessionLogWriter {
         guard flushTask == nil, mode != .off else { return }
         flushTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
+                guard (try? await Task.sleep(for: interval)) != nil else { break }
                 await self?.flush()
             }
         }
