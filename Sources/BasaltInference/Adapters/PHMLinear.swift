@@ -109,7 +109,7 @@ public final class PHMLinear: Linear, ParameterEfficientLayer {
     public let adapterScale: Float
     public var loraEnabled: Bool = true
 
-    public var activeBasis: MLXArray { ownedBasis ?? _basisBank.basis }
+    public var activeBasis: MLXArray { ownedBasis ?? _basisBank.ownerBasis?() ?? _basisBank.basis }
 
     private init(
         validated linear: Linear,
@@ -134,6 +134,9 @@ public final class PHMLinear: Linear, ParameterEfficientLayer {
         self.factorRank = factorRank
         self.adapterScale = scale
         super.init(weight: linear.weight, bias: linear.bias)
+        if case .owned(let sharedBank) = basisMode {
+            sharedBank.ownerBasis = { [weak self] in self?.ownedBasis }
+        }
         train(linear.training)
         freeze()
     }
@@ -255,7 +258,7 @@ public final class QuantizedPHMLinear: QuantizedLinear, ParameterEfficientLayer 
     public let adapterScale: Float
     public var loraEnabled: Bool = true
 
-    public var activeBasis: MLXArray { ownedBasis ?? _basisBank.basis }
+    public var activeBasis: MLXArray { ownedBasis ?? _basisBank.ownerBasis?() ?? _basisBank.basis }
 
     private init(
         validated linear: QuantizedLinear,
@@ -289,6 +292,9 @@ public final class QuantizedPHMLinear: QuantizedLinear, ParameterEfficientLayer 
         )
         if let baseBias = linear.bias {
             update(parameters: .unflattened(["bias": baseBias]))
+        }
+        if case .owned(let sharedBank) = basisMode {
+            sharedBank.ownerBasis = { [weak self] in self?.ownedBasis }
         }
         train(linear.training)
         freeze()

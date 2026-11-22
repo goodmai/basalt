@@ -12,6 +12,7 @@ public protocol ParameterEfficientLayer: LoRALayer {
 public final class PHMBasisBank {
     public let hypercomplexDim: Int
     public let basis: MLXArray
+    var ownerBasis: (() -> MLXArray?)?
 
     public init(hypercomplexDim: Int) {
         let n = max(1, hypercomplexDim)

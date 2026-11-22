@@ -118,6 +118,7 @@ extension SpecTrAndResidualRaceMetal {
             for m in 0 ..< cands {
                 let q = softmaxHost(draftLogits[s][m], temperature: temperature)
                 let tok = Int(draftTokens[s][m])
+                guard tok >= 0 && tok < pRes.count && tok < q.count else { continue }
                 let uAcc = keyedUniform(seed: seed, step: UInt32(s * 31 + m), index: 0xACCE_55ED)
                 if q[tok] <= 0 ? (pRes[tok] > 0) : (uAcc * q[tok] <= pRes[tok]) {
                     stepAccepted = Int32(tok)
@@ -235,7 +236,8 @@ private let verifySource = """
                 if (val > loc_max) { loc_max = val; loc_idx = v; }
             }
             float g_max = simd_max(loc_max);
-            int win_tok = simd_min(loc_max == g_max ? loc_idx : V);
+            int raw_win = simd_min(loc_max == g_max ? loc_idx : V);
+            int win_tok = (raw_win < V) ? raw_win : 0;
 
             bool matched = false;
             int cands = (MODE == 0) ? 1 : K_CAND;
@@ -256,7 +258,8 @@ private let verifySource = """
                 if (val > loc_max) { loc_max = val; loc_idx = v; }
             }
             float g_max = simd_max(loc_max);
-            int win_tok = simd_min(loc_max == g_max ? loc_idx : V);
+            int raw_win = simd_min(loc_max == g_max ? loc_idx : V);
+            int win_tok = (raw_win < V) ? raw_win : 0;
             if (lane == 0u) { out_tokens[STEPS] = win_tok; }
         }
         if (lane == 0u) { out_count[0] = acc; }
@@ -297,10 +300,11 @@ private let verifySource = """
             threadgroup_barrier(mem_flags::mem_threadgroup);
 
             int tok = d_tokens[s * K_CAND + m];
+            bool valid_tok = (tok >= 0 && tok < V);
             float u_acc = basalt_spec_u01(seed, uint(s * 31 + m), 0xACCE55EDu);
-            float q_tok = q_buf[tok];
-            float p_tok = p_res[tok];
-            bool ok = (q_tok <= 0.0f) ? (p_tok > 0.0f) : (u_acc * q_tok <= p_tok);
+            float q_tok = valid_tok ? q_buf[tok] : 1.0f;
+            float p_tok = valid_tok ? p_res[tok] : 0.0f;
+            bool ok = valid_tok && ((q_tok <= 0.0f) ? (p_tok > 0.0f) : (u_acc * q_tok <= p_tok));
             if (ok) {
                 accepted_tok = tok;
                 break;
@@ -334,7 +338,8 @@ private let verifySource = """
                 }
             }
             float min_time = simd_min(loc_time);
-            int fallback_tok = simd_min(loc_time == min_time ? loc_v : V);
+            int raw_fallback = simd_min(loc_time == min_time ? loc_v : V);
+            int fallback_tok = (raw_fallback < V) ? raw_fallback : 0;
             if (lane == 0u) { out_tokens[s] = fallback_tok; }
             acc = s;
             break;
@@ -362,7 +367,8 @@ private let verifySource = """
             }
         }
         float min_time = simd_min(loc_time);
-        int bonus_tok = simd_min(loc_time == min_time ? loc_v : V);
+        int raw_bonus = simd_min(loc_time == min_time ? loc_v : V);
+        int bonus_tok = (raw_bonus < V) ? raw_bonus : 0;
         if (lane == 0u) { out_tokens[STEPS] = bonus_tok; }
     }
     if (lane == 0u) { out_count[0] = acc; }
