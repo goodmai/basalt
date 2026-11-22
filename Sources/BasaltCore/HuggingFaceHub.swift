@@ -548,18 +548,14 @@ extension HuggingFaceHub {
             downloaded += Int64(chunk.count)
             onProgress(file.name, downloaded, totalSize)
         }
-        if downloaded == plan.offset {
-            onProgress(file.name, downloaded, totalSize)
-        }
+        if downloaded == plan.offset { onProgress(file.name, downloaded, totalSize) }
     }
 
     private static func fileSize(at url: URL) throws -> Int64 {
         guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
         return try FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.size] as? Int64 ?? 0
     }
-}
 
-extension HuggingFaceHub {
     package static func isRepoId(_ id: String) -> Bool {
         let parts = id.split(separator: "/", omittingEmptySubsequences: false)
         return (1 ... 2).contains(parts.count) && parts.allSatisfy { part in
