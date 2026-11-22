@@ -111,7 +111,11 @@ public struct SemanticCacheStore: Sendable, Equatable {
     }
 
     public static func cosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Float {
-        guard !lhs.isEmpty, lhs.count == rhs.count else { return -1.0 }
+        validCosineSimilarity(lhs, rhs) ?? -1.0
+    }
+
+    private static func validCosineSimilarity(_ lhs: [Float], _ rhs: [Float]) -> Float? {
+        guard !lhs.isEmpty, lhs.count == rhs.count else { return nil }
         var dot: Float = 0
         var normA: Float = 0
         var normB: Float = 0
@@ -123,7 +127,7 @@ public struct SemanticCacheStore: Sendable, Equatable {
             normB += b * b
         }
         let denom = Foundation::sqrt(normA) * Foundation::sqrt(normB)
-        guard denom > 1e-8, dot.isFinite else { return -1.0 }
+        guard denom.isFinite, denom > 1e-8, dot.isFinite else { return nil }
         return min(1.0, max(-1.0, dot / denom))
     }
 
@@ -136,7 +140,7 @@ public struct SemanticCacheStore: Sendable, Equatable {
         var bestIdx: Int?
         var bestSim: Float = config.minSimilarity
         for idx in list.indices {
-            let sim = Self.cosineSimilarity(list[idx].embedding, embedding)
+            guard let sim = Self.validCosineSimilarity(list[idx].embedding, embedding) else { continue }
             if sim >= bestSim {
                 bestSim = sim
                 bestIdx = idx

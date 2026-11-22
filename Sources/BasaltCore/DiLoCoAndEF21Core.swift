@@ -237,8 +237,8 @@ public enum PowerSGDCompressor {
             let inv = normSq > 1e-16 ? Float(1.0 / normSq.squareRoot()) : 0
             if inv > 0 {
                 for i in 0 ..< rows { mat[i * cols + k] *= inv }
-            } else if k < rows {
-                mat[k * cols + k] = 1.0
+            } else {
+                for i in 0 ..< rows { mat[i * cols + k] = 0 }
             }
         }
     }
