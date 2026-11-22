@@ -38,7 +38,10 @@ public actor OnDemandDecision: DecisionEngine {
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
-    deinit { announce.finish() }
+    deinit {
+        timer?.cancel()
+        announce.finish()
+    }
 
     public var phase: OnDemandCore.Phase { core.phase }
 
@@ -155,9 +158,9 @@ public actor OnDemandDecision: DecisionEngine {
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [sleep, idle] in
+        timer = Task { [weak self, sleep, idle] in
             guard (try? await sleep(idle)) != nil else { return }
-            await self.expire(generation)
+            await self?.expire(generation)
         }
     }
 

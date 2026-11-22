@@ -168,14 +168,14 @@ private enum FusedLogitConfidenceMetal {
                     if (x > m) {
                         const float d = (s > 0.0f) ? (m - x) : 0.0f;
                         const float scale = (s > 0.0f) ? metal::exp(d) : 0.0f;
-                        wy = scale * (wy + d * s);
+                        wy = (scale > 0.0f) ? (scale * (wy + d * s)) : 0.0f;
                         s = scale * s + 1.0f;
                         m = x;
                     } else {
                         const float d = x - m;
                         const float p = metal::exp(d);
                         s += p;
-                        wy += p * d;
+                        if (p > 0.0f) { wy += p * d; }
                     }
                 }
             }
@@ -189,7 +189,7 @@ private enum FusedLogitConfidenceMetal {
         const float lane_d = (s > 0.0f) ? (m - sg_m) : 0.0f;
         const float lane_f = (s > 0.0f) ? metal::exp(lane_d) : 0.0f;
         const float sg_s = simd_sum(s * lane_f);
-        const float sg_wy = simd_sum((wy + lane_d * s) * lane_f);
+        const float sg_wy = simd_sum((lane_f > 0.0f) ? ((wy + lane_d * s) * lane_f) : 0.0f);
 
         threadgroup float tg_m1[SIMDGROUPS];
         threadgroup int tg_idx1[SIMDGROUPS];
@@ -227,7 +227,7 @@ private enum FusedLogitConfidenceMetal {
             const float bd = (b_s > 0.0f) ? (b_m - row_m) : 0.0f;
             const float bf = (b_s > 0.0f) ? metal::exp(bd) : 0.0f;
             const float row_s = simd_sum(b_s * bf);
-            const float row_wy = simd_sum((b_wy + bd * b_s) * bf);
+            const float row_wy = simd_sum((bf > 0.0f) ? ((b_wy + bd * b_s) * bf) : 0.0f);
 
             if (lane == 0) {
                 if (row_bad != 0 || !(row_s > 0.0f) || !(row_m1 > -INFINITY)) {

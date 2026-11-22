@@ -7,6 +7,7 @@ public struct OnDemandCore: Sendable, Equatable {
     public private(set) var phase = Phase.unloaded
     public private(set) var users = 0
     public private(set) var generation = 0
+    public private(set) var loadEpoch = 0
 
     public init() {}
 
@@ -27,9 +28,11 @@ public struct OnDemandCore: Sendable, Equatable {
     public mutating func loaded(_ succeeded: Bool) {
         phase = succeeded ? .loaded : .unloaded
         generation += 1
+        if succeeded { loadEpoch += 1 }
     }
 
-    public mutating func leave() -> Int? {
+    public mutating func leave(epoch: Int? = nil) -> Int? {
+        if let epoch, epoch != loadEpoch { return nil }
         users = max(0, users - 1)
         generation += 1
         return users == 0 ? generation : nil
@@ -46,6 +49,7 @@ public struct OnDemandCore: Sendable, Equatable {
         phase = .unloading
         users = 0
         generation += 1
+        loadEpoch += 1
         return true
     }
 
@@ -79,7 +83,10 @@ public actor OnDemandModel {
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
-    deinit { announce.finish() }
+    deinit {
+        timer?.cancel()
+        announce.finish()
+    }
 
     public var phase: OnDemandCore.Phase { core.phase }
 
@@ -189,9 +196,9 @@ public actor OnDemandModel {
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [sleep, idle] in
+        timer = Task { [weak self, sleep, idle] in
             guard (try? await sleep(idle)) != nil else { return }
-            await self.expire(generation)
+            await self?.expire(generation)
         }
     }
 

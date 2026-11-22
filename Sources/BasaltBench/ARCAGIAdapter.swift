@@ -136,38 +136,41 @@ public struct ARCAGIAdapter: BenchmarkAdapter {
         let tasks = try loadTasks(path: context.task.dataset)
         var samples: [BenchmarkSampleRecord] = []
         for item in tasks {
-            let prompt = Self.buildPrompt(item)
-            let payload: [String: Any] = [
-                "model": context.resolvedModelName,
-                "messages": [["role": "user", "content": prompt]],
-                "max_tokens": context.task.params["max_tokens"]?.intValue ?? 2048,
-                "temperature": context.temperature,
-                "seed": context.seed,
-            ]
-            let (json, reply) = try await context.endpoint.postJSON("/v1/chat/completions", payload: payload)
-            let content = BenchmarkStats.extractChatContent(json)
-            let usage = BenchmarkStats.extractUsage(json)
-            var grids = ARCGridParser.extractAttemptGrids(from: content)
-            if grids.count == 1 { grids.append(grids[0]) }
-            let expected = item.test.first?.output
-            let verdict: (passed: Bool, score: Double)
-            if let expected {
-                verdict = ARCGridParser.scoreAttempts(grids, expected: expected)
-            } else {
-                let valid = grids.count == 2 && grids.allSatisfy { ARCGridValidator.validate($0, label: item.id).isEmpty }
-                verdict = (valid, valid ? 1.0 : 0.0)
+            let pairs = item.test.isEmpty ? [ARCAGITaskItem.Pair(input: [], output: nil)] : item.test
+            for (idx, pair) in pairs.enumerated() {
+                let sampleId = pairs.count > 1 ? "\(item.id)#\(idx)" : item.id
+                let prompt = Self.buildPrompt(item, testIndex: idx)
+                let payload: [String: Any] = [
+                    "model": context.resolvedModelName,
+                    "messages": [["role": "user", "content": prompt]],
+                    "max_tokens": context.task.params["max_tokens"]?.intValue ?? 2048,
+                    "temperature": context.temperature,
+                    "seed": context.seed,
+                ]
+                let (json, reply) = try await context.endpoint.postJSON("/v1/chat/completions", payload: payload)
+                let content = BenchmarkStats.extractChatContent(json)
+                let usage = BenchmarkStats.extractUsage(json)
+                var grids = ARCGridParser.extractAttemptGrids(from: content)
+                if grids.count == 1 { grids.append(grids[0]) }
+                let verdict: (passed: Bool, score: Double)
+                if let expected = pair.output {
+                    verdict = ARCGridParser.scoreAttempts(grids, expected: expected)
+                } else {
+                    let valid = grids.count == 2 && grids.allSatisfy { ARCGridValidator.validate($0, label: sampleId).isEmpty }
+                    verdict = (valid, valid ? 1.0 : 0.0)
+                }
+                var sample = BenchmarkSampleRecord(
+                    id: sampleId, adapter: id, model: context.resolvedModelName,
+                    prompt: prompt, answer: content, score: verdict.score
+                )
+                sample.dataset = context.task.dataset
+                sample.gridAttempts = grids
+                sample.latencyMs = reply.totalMs
+                sample.promptTokens = usage.prompt
+                sample.completionTokens = usage.completion
+                sample.passed = verdict.passed
+                samples.append(sample)
             }
-            var sample = BenchmarkSampleRecord(
-                id: item.id, adapter: id, model: context.resolvedModelName,
-                prompt: prompt, answer: content, score: verdict.score
-            )
-            sample.dataset = context.task.dataset
-            sample.gridAttempts = grids
-            sample.latencyMs = reply.totalMs
-            sample.promptTokens = usage.prompt
-            sample.completionTokens = usage.completion
-            sample.passed = verdict.passed
-            samples.append(sample)
         }
         let accuracy = Double(samples.filter(\.passed).count) / Double(max(1, samples.count))
         let metrics: [String: Double] = [
@@ -208,14 +211,14 @@ public struct ARCAGIAdapter: BenchmarkAdapter {
         return ARCAGITaskItem(id: id, train: body.train, test: body.test)
     }
 
-    static func buildPrompt(_ task: ARCAGITaskItem) -> String {
+    static func buildPrompt(_ task: ARCAGITaskItem, testIndex: Int = 0) -> String {
         var lines = ["Solve this ARC-AGI grid transformation puzzle. Cells are integers 0..9."]
         for (idx, pair) in task.train.enumerated() {
             lines.append("Train \(idx + 1) input: \(pair.input)")
             if let out = pair.output { lines.append("Train \(idx + 1) output: \(out)") }
         }
-        if let testInput = task.test.first?.input {
-            lines.append("Test input: \(testInput)")
+        if testIndex >= 0, testIndex < task.test.count {
+            lines.append("Test input: \(task.test[testIndex].input)")
         }
         lines.append("Reply with JSON {\"attempt_1\": [[...]], \"attempt_2\": [[...]]}.")
         return lines.joined(separator: "\n")

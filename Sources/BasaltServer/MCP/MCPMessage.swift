@@ -97,8 +97,12 @@ enum MCPRoute: Sendable {
     case toolsList(id: JSONRPCId?)
     case toolsCall(id: JSONRPCId?, params: AnyCodable?)
 
+    static let maxLineBytes = 16 * 1024 * 1024
+
     init(line: String) {
-        guard let data = line.data(using: .utf8),
+        guard line.utf8.count <= Self.maxLineBytes,
+              let data = line.data(using: .utf8),
+              JSONNesting.depth(of: data.span) <= 128,
               let message = try? MCPWire.decoder.decode(RawMessage.self, from: data)
         else {
             self = .failed(id: nil, .parseError)

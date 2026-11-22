@@ -164,6 +164,7 @@ public final class FusedRMSNormQuantizedLinear: QuantizedLinear {
                 guard let norm = module as? RMSNorm, type(of: norm) == RMSNorm.self else { continue }
                 let prefix = String(path.dropLast(pair.normSuffix.count))
                 if pair.normSuffix == "post_attention_layernorm", modules[prefix + "pre_feedforward_layernorm"] != nil { continue }
+                if pair.normSuffix == "input_layernorm", hasExtraSelfAttnProjections(prefix: prefix, modules: modules) { continue }
                 let targets = pair.projSuffixes.compactMap { suffix -> (String, QuantizedLinear)? in
                     guard let q = modules[prefix + suffix] as? QuantizedLinear,
                           type(of: q) == QuantizedLinear.self,
@@ -183,6 +184,17 @@ public final class FusedRMSNormQuantizedLinear: QuantizedLinear {
         }
         PHMAdapterApplicator.updateLeafModules(in: model, updates: updates)
         return fusedCount
+    }
+
+    private static let standardSelfAttnProjections: Set<String> = ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+    private static func hasExtraSelfAttnProjections(prefix: String, modules: [String: Module]) -> Bool {
+        let attnPrefix = prefix + "self_attn."
+        return modules.contains { path, mod in
+            guard path.hasPrefix(attnPrefix), mod is Linear else { return false }
+            let leaf = String(path.dropFirst(attnPrefix.count))
+            return !leaf.contains(".") && !standardSelfAttnProjections.contains(leaf)
+        }
     }
 }
 

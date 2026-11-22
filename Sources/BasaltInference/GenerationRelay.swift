@@ -48,10 +48,10 @@ struct GenerationRelay: Sendable {
     }
 
     mutating func step(_ generation: Generation) -> (chunks: [StreamChunk], stops: Bool) {
-        tokenCount += 1
         let onyxPrefix = drainOnyxReasoning()
         switch generation {
         case .chunk(let text):
+            tokenCount += 1
             let chunks = onyxPrefix + route(splitter.feed(text))
             if gate.isSaturated || setup.alarm.isTripped { return (chunks, true) }
             stoppedOnRepetition = repetition?.shouldStop(after: text) == true
@@ -132,7 +132,8 @@ struct GenerationRelay: Sendable {
     private var finishReason: GenerationResponse.FinishReason {
         if setup.alarm.isTripped { return .error }
         if stoppedOnRepetition { return .repetition }
-        return (lastInfo?.generationTokenCount ?? 0) >= (setup.request.maxTokens ?? 1024) ? .length : .stop
+        let limit = setup.request.maxTokens ?? 1024
+        return limit > 0 && (lastInfo?.generationTokenCount ?? tokenCount) >= limit ? .length : .stop
     }
 
     private mutating func called(_ chunk: StreamChunk) -> (chunks: [StreamChunk], stops: Bool) {

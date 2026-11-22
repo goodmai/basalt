@@ -196,7 +196,7 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
 
     private mutating func advance() {
         let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
-        guard remaining > 0 else { return }
+        guard remaining > 0, !history.isEmpty else { return }
 
         let forced = takeForcedTokens(limit: remaining)
         if forced.isEmpty {
@@ -280,8 +280,8 @@ struct PromptLookupTokenIterator: TokenIteratorProtocol {
         let savedState = state
         let recurrent = cache.compactMap { $0 as? MambaCache }
         let checkpoints = recurrent.map { (conv: $0[0], state: $0[1], offset: $0.offset) }
-        let storage = stagesRounds ? KVCacheStorage(cache) : nil
-        let round = storage?.beginRound(maximumPositions: fed.count)
+        let storage = stagesRounds ? KVCacheStorage(cache) : nil; let round = storage?.beginRound(maximumPositions: fed.count)
+        if stagesRounds && round == nil { emitFallbackStep(); return }
         let logits = forward(LMInput.Text(tokens: MLXArray(fed.map(Int32.init))), through: round?.caches)
             .logits[0, 0..., 0...]
 
@@ -566,5 +566,12 @@ struct DraftBackoff {
             pause = nextPause * pauseScale
             nextPause = Swift.min(nextPause * 2, Self.longestPause)
         }
+    }
+}
+
+private extension PromptLookupTokenIterator {
+    mutating func emitFallbackStep() {
+        let remaining = maxTokens.map { $0 - tokenCount } ?? Int.max
+        emit(step(MLXArray([Int32(history[history.count - 1])])), lookingAhead: remaining > 1)
     }
 }

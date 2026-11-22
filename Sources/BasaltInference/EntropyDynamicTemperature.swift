@@ -43,22 +43,26 @@ public struct EntropyDynamicTemperature: LogitProcessor {
     }
 
     func temperature(entropy: MLXArray, repetition: Float) -> MLXArray {
-        let t = baseTemperature * pow(MLXArray(n), theta / entropy) + gammaRep * repetition
-        return clip(t, min: min(Self.temperatureRange.lowerBound, baseTemperature), max: Self.temperatureRange.upperBound)
+        let safeBase = max(baseTemperature, Float(1e-6))
+        let safeEntropy = maximum(entropy, MLXArray(Float(1e-6)))
+        let t = safeBase * pow(MLXArray(n), theta / safeEntropy) + gammaRep * repetition
+        return clip(t, min: min(Self.temperatureRange.lowerBound, safeBase), max: Self.temperatureRange.upperBound)
     }
 
     public mutating func prompt(_ prompt: MLXArray) {
     }
 
     public func process(logits: MLXArray) -> MLXArray {
-        let t = temperature(entropy: Self.entropy(logits), repetition: repetition)
-        return filteredByTopPMinP(logits) * (baseTemperature / t)
+        let safeBase = max(baseTemperature, Float(1e-6))
+        let t = maximum(temperature(entropy: Self.entropy(logits), repetition: repetition), MLXArray(Float(1e-6)))
+        return filteredByTopPMinP(logits) * (safeBase / t)
     }
 
     func filteredByTopPMinP(_ logits: MLXArray) -> MLXArray {
         guard topP != nil || minP != nil else { return logits }
         let z = logits.asType(.float32)
         let logp = z - logSumExp(z, axis: -1, keepDims: true)
+        let maxLogp = logp.max(axis: -1, keepDims: true)
         let negInf = MLXArray(-Float.infinity)
         var keep = logp .> negInf
         if let topP {
@@ -68,8 +72,9 @@ public struct EntropyDynamicTemperature: LogitProcessor {
             keep = keep .&& putAlong(keep, order, values: keepSorted, axis: -1)
         }
         if let minP {
-            keep = keep .&& (logp .>= logp.max(axis: -1, keepDims: true) + log(MLXArray(minP)))
+            keep = keep .&& (logp .>= maxLogp + log(MLXArray(minP)))
         }
+        keep = keep .|| (logp .== maxLogp)
         return MLX.where(keep, z, negInf)
     }
 

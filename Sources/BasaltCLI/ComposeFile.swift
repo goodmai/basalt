@@ -35,11 +35,12 @@ enum ComposeFile {
         if let spec, walk.issues.isEmpty {
             walk.issues += spec.issues.map { ServeConfigError.Issue(path: $0.path, line: walk.line($0.path), message: $0.message) }
         }
-        guard let spec, walk.issues.isEmpty else {
+        guard var resolvedSpec = spec, walk.issues.isEmpty else {
             let fallback = [ServeConfigError.Issue(path: "", message: "the file is empty")]
             throw .invalid(file: file, issues: walk.issues.isEmpty ? fallback : walk.issues)
         }
-        return spec
+        resolvedSpec.adapters = relativeAdapters(resolvedSpec.adapters, base: context.base)
+        return resolvedSpec
     }
 
     struct Walk {

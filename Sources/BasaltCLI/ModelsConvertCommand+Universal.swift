@@ -114,9 +114,7 @@ extension ConvertSubcommand {
                 destLabel = outURL.path
                 if let repo = registerCache {
                     let snap = try UniversalModelConverter.cacheSnapshotDirectory(for: repo)
-                    try? FileManager.default.removeItem(at: snap)
-                    try FileManager.default.createDirectory(at: snap.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try FileManager.default.copyItem(at: outURL, to: snap)
+                    try Self.copyToCacheSnapshot(from: outURL, to: snap)
                 }
             }
         } catch {
@@ -132,5 +130,17 @@ extension ConvertSubcommand {
                 pv.valKLBefore, pv.valKLAfter, pv.updatedCodes))
         }
         print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+    }
+
+    static func copyToCacheSnapshot(from outURL: URL, to snap: URL) throws {
+        let srcPath = outURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let dstPath = snap.standardizedFileURL.resolvingSymlinksInPath().path
+        if srcPath == dstPath { return }
+        if dstPath.hasPrefix(srcPath + "/") || srcPath.hasPrefix(dstPath + "/") {
+            throw ValidationError("--out and --register-cache cannot overlap (\(srcPath) vs \(dstPath))")
+        }
+        try? FileManager.default.removeItem(at: snap)
+        try FileManager.default.createDirectory(at: snap.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: outURL, to: snap)
     }
 }

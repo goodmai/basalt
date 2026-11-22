@@ -4,8 +4,6 @@ public enum ChatTemplateCompatibility {
     static let reservedLoopVariable = "call"
     static let renamedLoopVariable = "call_item"
 
-    private static let jinjaSegment = try! NSRegularExpression(
-        pattern: #"\{[{%].*?[%}]\}"#, options: .dotMatchesLineSeparators)
     private static let loopOpening = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*for\s+(.+?)\s+in\b"#)
     private static let loopClosing = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*endfor\b"#)
     private static let stringLiteral = try! NSRegularExpression(
@@ -13,13 +11,16 @@ public enum ChatTemplateCompatibility {
     private static let reservedIdentifier = try! NSRegularExpression(
         pattern: #"(?<![\w.])"# + reservedLoopVariable + #"(?!\w)"#)
     public static func renamingReservedLoopVariables(_ template: String) -> String {
-        let source = template as NSString
+        let chars = Array(template)
+        let scanner = TemplateScanner(chars)
         var output = ""
         var cursor = 0
         var loopsBindingReserved: [Bool] = []
-        for match in jinjaSegment.matches(in: template, range: NSRange(location: 0, length: source.length)) {
-            output += source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
-            var segment = source.substring(with: match.range)
+        for range in scanner.codeTagRanges() {
+            if range.lowerBound > cursor {
+                output += String(chars[cursor ..< range.lowerBound])
+            }
+            var segment = String(chars[range])
             let whole = NSRange(location: 0, length: (segment as NSString).length)
             if let opening = loopOpening.firstMatch(in: segment, range: whole) {
                 loopsBindingReserved.append(bindsReserved(targets: (segment as NSString).substring(with: opening.range(at: 1))))
@@ -27,9 +28,10 @@ public enum ChatTemplateCompatibility {
             if loopsBindingReserved.contains(true) { segment = renamingOutsideStringLiterals(segment) }
             if loopClosing.firstMatch(in: segment, range: whole) != nil { _ = loopsBindingReserved.popLast() }
             output += segment
-            cursor = match.range.location + match.range.length
+            cursor = range.upperBound
         }
-        return output + source.substring(from: cursor)
+        if cursor < chars.count { output += String(chars[cursor...]) }
+        return output
     }
 
     private static func bindsReserved(targets: String) -> Bool {
@@ -193,6 +195,25 @@ struct TemplateScanner {
         }
         texts.append(text)
         return (texts, tags)
+    }
+
+    func codeTagRanges() -> [Range<Int>] {
+        var ranges: [Range<Int>] = []
+        var position = 0
+        while position + 1 < source.count {
+            guard source[position] == "{", source[position + 1] == "{" || source[position + 1] == "%" else {
+                position += 1
+                continue
+            }
+            let closer: Character = source[position + 1] == "{" ? "}" : "%"
+            guard let closing = closingDelimiter(from: position + 2, closer: closer, skipsStrings: true) else {
+                position += 1
+                continue
+            }
+            ranges.append(position ..< (closing + 2))
+            position = closing + 2
+        }
+        return ranges
     }
 
     private func tag(at position: Int) -> (TemplateTag, Int)? {

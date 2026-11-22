@@ -191,16 +191,10 @@ public final class QuantizedOFTLinear: QuantizedLinear, OFTAdapterLayer {
         self.totalBlocks = blocks
         self.parameterization = parameterization
         self.blockShared = blockShared
-        super.init(
-            weight: linear.weight,
-            scales: linear.scales,
-            biases: linear.biases,
-            groupSize: linear.groupSize,
-            bits: linear.bits,
-            mode: linear.mode
-        )
-        if let baseBias = linear.bias {
-            update(parameters: .unflattened(["bias": baseBias]))
+        if linear.mode == .affine {
+            super.init(weight: linear.weight, bias: linear.bias, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits)
+        } else {
+            super.init(weight: linear.weight, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
         }
         train(linear.training)
         freeze()
@@ -312,7 +306,7 @@ public final class QuantizedOFTLinear: QuantizedLinear, OFTAdapterLayer {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let targetDType = scales.dtype
+        let targetDType = scales.dtype.isFloatingPoint ? scales.dtype : (x.dtype.isFloatingPoint ? x.dtype : .float32)
         let baseInput = x.asType(targetDType)
         if !loraEnabled { return super.callAsFunction(baseInput) }
         let rotated = OFTMath.rotateInput(

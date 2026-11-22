@@ -4,16 +4,16 @@ import HTTPTypes
 import CryptoKit
 import BasaltCore
 
-/// Middleware that enforces API key authentication for incoming REST requests
-/// when an API key is configured on the server.
 public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
     public let apiKey: String
     public let virtualKeys: [VirtualKey]
     static var budgetKeyHeader: HTTPField.Name { HTTPField.Name("x-basalt-budget-key")! }
+    static var rateKeyHeader: HTTPField.Name { HTTPField.Name("x-basalt-rate-key")! }
     private let virtualKeyDigests: [(digest: SHA256.Digest, id: String)]
 
-    /// Health check and API documentation stay reachable without a key and outside the rate limit.
-    static var publicPaths: Set<String> { ["/api/v1/health", "/swagger", "/api/v1/openapi.json", "/"] }
+    static var publicPaths: Set<String> {
+        ["/api/v1/health", "/v1/health/live", "/v1/health/ready", "/swagger", "/api/v1/openapi.json", "/"]
+    }
     private let apiKeyDigest: SHA256.Digest
 
     public init(apiKey: String, virtualKeys: [VirtualKey] = []) {
@@ -23,10 +23,13 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         self.virtualKeyDigests = virtualKeys.map { (SHA256.hash(data: Data($0.key.utf8)), $0.id) }
     }
 
-    static func request(_ request: Request, budgetKey: String?) -> Request {
-        guard budgetKey != nil || request.headers[budgetKeyHeader] != nil else { return request }
+    static func request(_ request: Request, budgetKey: String?, rateKey: String? = nil) -> Request {
+        guard budgetKey != nil || rateKey != nil || request.headers[budgetKeyHeader] != nil || request.headers[rateKeyHeader] != nil else {
+            return request
+        }
         var head = request.head
         head.headerFields[budgetKeyHeader] = budgetKey
+        head.headerFields[rateKeyHeader] = rateKey
         return Request(head: head, body: request.body)
     }
 
@@ -67,10 +70,10 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         }
         for candidate in candidates where !candidate.isEmpty {
             if !apiKey.isEmpty, matches(candidate) {
-                return try await next(request, context)
+                return try await next(Self.request(request, budgetKey: nil, rateKey: "master"), context)
             }
             if let id = virtualKeyId(for: candidate) {
-                return try await next(Self.request(request, budgetKey: id), context)
+                return try await next(Self.request(request, budgetKey: id, rateKey: id), context)
             }
         }
 

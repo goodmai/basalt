@@ -27,9 +27,14 @@ extension KeychainClient {
                 return String(data: data, encoding: .utf8)
             },
             write: { account, value in
-                SecItemDelete(query(account) as CFDictionary)
-                let item = query(account).merging([kSecValueData as String: Data(value.utf8), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked]) { $1 }
-                return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+                let attrs: [String: Any] = [kSecValueData as String: Data(value.utf8), kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked]
+                let status = SecItemUpdate(query(account) as CFDictionary, attrs as CFDictionary)
+                if status == errSecSuccess { return true }
+                if status == errSecItemNotFound {
+                    let item = query(account).merging(attrs) { $1 }
+                    return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+                }
+                return false
             },
             delete: { account in SecItemDelete(query(account) as CFDictionary) })
     }
@@ -55,6 +60,11 @@ public enum CloudKeys {
         names.filter(isName).reduce(into: [:]) { environment, name in
             if let value = keychain.read(name), !value.isEmpty { environment[name] = value }
         }
+    }
+
+    public static func environment(defaults: UserDefaults = .standard, keychain: KeychainClient = .live()) -> [String: String] {
+        let names = (defaults.string(forKey: defaultsKey) ?? "").split(separator: "\n").map(String.init)
+        return environment(names, keychain: keychain)
     }
 }
 

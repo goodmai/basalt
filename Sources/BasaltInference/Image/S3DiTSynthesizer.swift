@@ -220,8 +220,9 @@ extension S3DiTSynthesizer {
         expectedEpoch: Int
     ) async throws(BasaltError) -> Int {
         guard let module, epoch == expectedEpoch else { throw .modelNotLoaded }
-        let hLat = max(config.patchSize, request.height / 8)
-        let wLat = max(config.patchSize, request.width / 8)
+        let p = max(1, config.patchSize)
+        let hLat = max(p, ((request.height / 8 + p - 1) / p) * p)
+        let wLat = max(p, ((request.width / 8 + p - 1) / p) * p)
         let noise = MLXRandom.normal([1, hLat, wLat, config.latentChannels], dtype: .float32, key: MLXRandom.key(seed))
         let (refSnapshot, uncachedRefLatents, primaryImg, pixelMask, cacheHit) = try resolveS3References(module: module, request: request)
         let primaryLatent = refSnapshot?.primaryLatent ?? uncachedRefLatents.first

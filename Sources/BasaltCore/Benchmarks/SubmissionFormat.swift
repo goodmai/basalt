@@ -98,12 +98,14 @@ public enum SubmissionFormatter {
     }
 
     static func jsonData(_ object: Any) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        guard JSONSerialization.isValidJSONObject(object) else { return Data() }
+        return (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
     }
 
     static func jsonLines(_ objects: [[String: Any]]) -> Data {
         let lines = objects.compactMap { obj -> String? in
-            guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes]) else { return nil }
+            guard JSONSerialization.isValidJSONObject(obj),
+                  let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes]) else { return nil }
             return String(decoding: data, as: UTF8.self)
         }
         return Data((lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")).utf8)

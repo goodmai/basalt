@@ -5,14 +5,23 @@ import BasaltCore
 
 actor CoreMLSpeechRunner {
     private let model: MLModel
+    private let temporaryCompiledURL: URL?
 
-    init(compiledURL: URL) throws(BasaltError) {
+    init(compiledURL: URL, cleanupOnDeinit: Bool = false) throws(BasaltError) {
+        self.temporaryCompiledURL = cleanupOnDeinit ? compiledURL : nil
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         do {
             model = try MLModel(contentsOf: compiledURL, configuration: configuration)
         } catch {
+            if cleanupOnDeinit { try? FileManager.default.removeItem(at: compiledURL) }
             throw .modelConfigurationInvalid(path: compiledURL.path, reason: error.localizedDescription)
+        }
+    }
+
+    deinit {
+        if let url = temporaryCompiledURL {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 
@@ -49,6 +58,9 @@ actor CoreMLSpeechRunner {
             for key in ["audio", "waveform", "output"] {
                 if let f32 = output.featureValue(for: key)?.shapedArrayValue(of: Float.self) {
                     return f32.withUnsafeShapedBufferPointer { ptr, _, _ in Array(ptr) }
+                }
+                if let f16 = output.featureValue(for: key)?.shapedArrayValue(of: Float16.self) {
+                    return f16.withUnsafeShapedBufferPointer { ptr, _, _ in ptr.map(Float.init) }
                 }
             }
             throw BasaltError.inferenceError("speech: CoreML vocoder returned no audio feature")
@@ -121,7 +133,7 @@ public struct CoreAISpeechSynthesizer: SpeechSynthesizer {
             } catch {
                 throw .modelConfigurationInvalid(path: directory.path, reason: error.localizedDescription)
             }
-            runtime = .coreML(try CoreMLSpeechRunner(compiledURL: compiled))
+            runtime = .coreML(try CoreMLSpeechRunner(compiledURL: compiled, cleanupOnDeinit: true))
         case .synthetic:
             runtime = .syntheticHarmonic
         }

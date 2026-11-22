@@ -11,7 +11,11 @@ extension Introspector {
     ) {
         let allowed = ResearchTool.introspection(interventions: interventions).filter { filter.allows($0.rawValue, researchTools: researchTools) }
         self.init(orchestrator: orchestrator, tools: allowed.map(\.definition), journal: journal) { call, model throws(BasaltError) in
-            try await ResearchCall(introspected: call).run(on: model).text
+            let parsed = try ResearchCall(introspected: call)
+            if case .tensor(let req) = parsed, req.spectrum, !filter.allowsSpectrum(researchTools: researchTools) {
+                throw .invalidRequestStructure(details: "model_tensor spectrum requires --research-tools or an enabled experiment tool")
+            }
+            return try await parsed.run(on: model).text
         }
     }
 }

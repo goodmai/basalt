@@ -298,6 +298,7 @@ public actor OnDemandImageSynthesizer: ImageSynthesizer {
     public private(set) var lastUsed: Date?
 
     deinit {
+        timer?.cancel()
         announce.finish()
     }
 
@@ -462,9 +463,9 @@ extension OnDemandImageSynthesizer {
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [sleep, idle] in
+        timer = Task { [weak self, sleep, idle] in
             guard (try? await sleep(idle)) != nil else { return }
-            await self.expire(generation)
+            await self?.expire(generation)
         }
     }
 

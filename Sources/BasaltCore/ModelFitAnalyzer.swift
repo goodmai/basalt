@@ -188,9 +188,10 @@ extension ModelFitAnalyzer {
     private static func stackedTensorBytes(
         key: String, value: Any, headerLength: Int, fileSize: Int64
     ) -> (bytes: Int64, isWeight: Bool)? {
+        let payloadLimit = fileSize - 8 - Int64(headerLength)
         guard let entry = value as? [String: Any], let shape = entry["shape"] as? [Int],
               let offsets = entry["data_offsets"] as? [Int], offsets.count == 2,
-              0 <= offsets[0], offsets[0] < offsets[1], Int64(8 + headerLength + offsets[1]) <= fileSize else {
+              0 <= offsets[0], offsets[0] < offsets[1], Int64(offsets[1]) <= payloadLimit else {
             return nil
         }
         let spanBytes = offsets[1] - offsets[0]

@@ -49,11 +49,13 @@ public actor CloudAPIClient: Sendable {
         responseType: T.Type
     ) async throws -> T {
         let request = makeRequest(endpoint: endpoint, method: method, body: body)
+        let maxAttempts = max(1, config.maxRetries)
+        let noRedirects = NoRedirects()
         var lastError: Error?
-        for attempt in 0..<config.maxRetries {
-            let attemptsLeft = attempt < config.maxRetries - 1
+        for attempt in 0..<maxAttempts {
+            let attemptsLeft = attempt < maxAttempts - 1
             do {
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await session.data(for: request, delegate: noRedirects)
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw BasaltError.invalidRequestStructure(details: "Invalid response type")
                 }
@@ -73,17 +75,18 @@ public actor CloudAPIClient: Sendable {
                     throw error
                 }
                 lastError = error
+            } catch let error as DecodingError {
+                errorCount += 1
+                throw error
             } catch {
-                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
-                    throw error
-                }
+                if Self.isCancellation(error) { throw error }
                 lastError = error
                 if attemptsLeft { try await backoff(attempt) }
             }
         }
         errorCount += 1
         throw lastError ?? BasaltError.modelInferenceError(
-            details: "Request failed after \(config.maxRetries) attempts"
+            details: "Request failed after \(maxAttempts) attempts"
         )
     }
 
@@ -103,8 +106,12 @@ public actor CloudAPIClient: Sendable {
         }
     }
 
+    private static func isCancellation(_ error: Error) -> Bool {
+        Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
     private func backoff(_ attempt: Int) async throws {
-        try await sleep(.seconds(1 << attempt))
+        try await sleep(.seconds(1 << min(max(0, attempt), 10)))
     }
 
     private func makeRequest(endpoint: String, method: String, body: Data?, accept: String? = nil) -> URLRequest {
@@ -129,15 +136,25 @@ public actor CloudAPIClient: Sendable {
         responseType: T.Type
     ) async throws -> AsyncThrowingStream<T, Error> {
         let request = makeRequest(endpoint: endpoint, method: method, body: body, accept: "text/event-stream")
-        let (result, response) = try await session.bytes(for: request)
+        let (result, response) = try await session.bytes(for: request, delegate: NoRedirects())
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw BasaltError.invalidRequestStructure(details: "Invalid response type")
         }
         
-        if let failure = Self.failure(of: httpResponse, body: Data()) {
-            self.errorCount += 1
-            throw failure
+        if !(200...299).contains(httpResponse.statusCode) {
+            var errBytes: [UInt8] = []
+            errBytes.reserveCapacity(1024)
+            do {
+                for try await byte in result {
+                    errBytes.append(byte)
+                    if errBytes.count >= 8192 { break }
+                }
+            } catch {}
+            if let failure = Self.failure(of: httpResponse, body: Data(errBytes)) {
+                self.errorCount += 1
+                throw failure
+            }
         }
         
         self.requestCount += 1
@@ -147,8 +164,9 @@ public actor CloudAPIClient: Sendable {
                 do {
                     let decoder = JSONDecoder()
                     for try await line in result.lines {
-                        guard line.hasPrefix("data: ") else { continue }
-                        let dataString = line.dropFirst("data: ".count).trimmingCharacters(in: .whitespaces)
+                        guard line.hasPrefix("data:") else { continue }
+                        let dataString = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+                        guard !dataString.isEmpty else { continue }
                         if dataString == "[DONE]" {
                             continuation.finish()
                             return
@@ -181,7 +199,7 @@ public actor CloudAPIClient: Sendable {
         let probeRequest = request
         let session = self.session
         let (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-            group.addTask { try await session.data(for: probeRequest) }
+            group.addTask { try await session.data(for: probeRequest, delegate: NoRedirects()) }
             group.addTask {
                 try await Task.sleep(for: timeout)
                 throw URLError(.timedOut)

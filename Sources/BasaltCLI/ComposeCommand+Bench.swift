@@ -34,6 +34,7 @@ extension ComposeCommand {
             let (spec, text, _, _) = try source.load()
             let baseURL = try resolveBaseURL(spec: spec)
             let resolvedRunID = runID ?? "bench-\(suite)-\(Int(Date().timeIntervalSince1970))"
+            try Self.validateRunID(resolvedRunID)
             let rawOut = outputDir ?? spec.benchmarks?.defaults?.outputDir ?? ".basalt/bench"
             let rootOut = URL(
                 fileURLWithPath: (rawOut as NSString).expandingTildeInPath,
@@ -111,6 +112,13 @@ extension ComposeCommand {
                 for file in plan.files { print("  file: \(file.relativePath) (\(file.data.count) bytes)") }
                 if let cli = plan.cliCommand { print("  cli: \(cli.joined(separator: " "))") }
                 if let http = plan.httpEndpoint { print("  endpoint: \(http)") }
+            }
+        }
+
+        static func validateRunID(_ id: String) throws {
+            guard !id.isEmpty, id != ".", id != "..",
+                  !id.contains("/"), !id.contains("\\"), !id.contains("\0") else {
+                throw ValidationError("Invalid run id '\(id)': must be a single path component without '/', '\\', or '..'")
             }
         }
 

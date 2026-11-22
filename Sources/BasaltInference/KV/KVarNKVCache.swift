@@ -72,14 +72,18 @@ final class KVarNKVCache: KVCacheAttentionProtocol {
     func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
         materializedForCaller = true
         appendTail(keys: keys, values: values)
-        return (tailKeys ?? keys, tailValues ?? values)
+        return materializedKV(fallbackKeys: keys, fallbackValues: values)
     }
 
     @discardableResult
     func trim(_ n: Int) -> Int { 0 }
 
     func makeMask(n: Int, windowSize: Int?, returnArray: Bool) -> MLXFast.ScaledDotProductAttentionMaskMode {
-        n == 1 ? .none : .causal
+        guard n > 1 else { return .none }
+        if returnArray || (windowSize.map { n > $0 } ?? false) {
+            return .array(createCausalMask(n: n, offset: offset, windowSize: windowSize))
+        }
+        return .causal
     }
 
     func copy() -> any KVCache {
@@ -107,7 +111,8 @@ final class KVarNKVCache: KVCacheAttentionProtocol {
             && KVarNFlashDecodeMetal.supportedDTypes.contains(queries.dtype)
             && queries.dim(1).isMultiple(of: max(1, tk.dim(1)))
         if !fits {
-            return MLXFast.scaledDotProductAttention(queries: queries, keys: tk, values: tv, scale: scale, mask: mask)
+            let (fullK, fullV) = materializedKV(fallbackKeys: tk, fallbackValues: tv)
+            return MLXFast.scaledDotProductAttention(queries: queries, keys: fullK, values: fullV, scale: scale, mask: mask)
         }
         if queries.dim(2) > 1 {
             if tilesByHead.isEmpty {
@@ -217,6 +222,27 @@ final class KVarNKVCache: KVCacheAttentionProtocol {
 }
 
 extension KVarNKVCache {
+    private func materializedKV(fallbackKeys: MLXArray, fallbackValues: MLXArray) -> (MLXArray, MLXArray) {
+        let tk = tailKeys ?? fallbackKeys
+        let tv = tailValues ?? fallbackValues
+        guard encodedTokenCount > 0, !tilesByHead.isEmpty else { return (tk, tv) }
+        let dtype = tk.dtype
+        var kHeads: [MLXArray] = []
+        var vHeads: [MLXArray] = []
+        kHeads.reserveCapacity(tilesByHead.count)
+        vHeads.reserveCapacity(tilesByHead.count)
+        for headTiles in tilesByHead {
+            let kSeq = concatenated(headTiles.map { KVarNTileCodec.decodeTile($0.key, dtype: dtype) }, axis: 0)
+            let vSeq = concatenated(headTiles.map { KVarNTileCodec.decodeTile($0.value, dtype: dtype) }, axis: 0)
+            kHeads.append(kSeq)
+            vHeads.append(vSeq)
+        }
+        let prefixK = stacked(kHeads, axis: 0).expandedDimensions(axis: 0)
+        let prefixV = stacked(vHeads, axis: 0).expandedDimensions(axis: 0)
+        guard let tailK = tailKeys, let tailV = tailValues else { return (prefixK, prefixV) }
+        return (concatenated([prefixK, tailK], axis: 2), concatenated([prefixV, tailV], axis: 2))
+    }
+
     private static func exactTailAttention(
         qGroup: MLXArray, kTail: MLXArray, vTail: MLXArray, scale: Float
     ) -> (MLXArray, MLXArray) {

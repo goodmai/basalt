@@ -109,7 +109,10 @@ public struct CloudCommand: AsyncParsableCommand {
             encoder.outputFormatting = .prettyPrinted
             let data = try encoder.encode(config)
             
-            FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: NSNumber(value: 0o600)])
+            guard FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: NSNumber(value: 0o600)]) else {
+                print("Failed to write cloud configuration to \(url.path)")
+                throw ExitCode.failure
+            }
             print("Cloud configuration saved to \(url.path)")
         }
     }
@@ -120,7 +123,7 @@ public struct CloudCommand: AsyncParsableCommand {
         public mutating func run() async throws {
             guard let config = CloudCommand.loadConfig() else {
                 print("Cloud config not found. Run 'basalt cloud configure' first.")
-                return
+                throw ExitCode.failure
             }
             
             let clientConfig = OpenRouterClient.Config(
@@ -145,9 +148,13 @@ public struct CloudCommand: AsyncParsableCommand {
                     print("Response: \(content)")
                 } else {
                     print("❌ No response content")
+                    throw ExitCode.failure
                 }
+            } catch let code as ExitCode {
+                throw code
             } catch {
                 print("❌ Connection failed: \(error)")
+                throw ExitCode.failure
             }
         }
     }
@@ -158,7 +165,7 @@ public struct CloudCommand: AsyncParsableCommand {
         public mutating func run() async throws {
             guard let config = CloudCommand.loadConfig() else {
                 print("Cloud config not found. Run 'basalt cloud configure' first.")
-                return
+                throw ExitCode.failure
             }
             
             let clientConfig = OpenRouterClient.Config(
@@ -181,6 +188,7 @@ public struct CloudCommand: AsyncParsableCommand {
                 }
             } catch {
                 print("❌ Failed to fetch models: \(error)")
+                throw ExitCode.failure
             }
         }
     }

@@ -409,7 +409,8 @@ extension Zonos3MiniSynthesizer {
         let validFrames = take.map { frame in
             frame.map { tok in (tok >= 0 && tok < Int32(c.codebookSize)) ? tok : 0 }
         }
-        take = validFrames.isEmpty ? [Array(g.silenceFrame.prefix(n))] : validFrames
+        let fallbackFrame = Array(g.silenceFrame.prefix(n)) + Array(repeating: Int32(0), count: max(0, n - g.silenceFrame.count))
+        take = validFrames.isEmpty ? [fallbackFrame] : validFrames
         let codeTensor = MLXArray(take.flatMap { $0 }).reshaped(take.count, n)
         let decoded = module.codec.decode(codes: codeTensor)
         eval(decoded)

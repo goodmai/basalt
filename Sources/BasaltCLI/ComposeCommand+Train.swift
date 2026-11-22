@@ -84,7 +84,6 @@ enum ComposeTrainRunner {
             if exists, !env.force, !env.resume {
                 outcomes.append(ComposeTrainOutcome(name: entry.name, base: baseName, directory: dir.path, skipped: true, keptRows: 0, nllBefore: nil, nllAfter: nil))
             } else {
-                if env.force, !env.resume { _ = try? FileManager.default.removeItem(at: dir) }
                 pending.append(PendingAdapter(name: entry.name, adapter: entry.adapter, dir: dir))
             }
         }
@@ -96,6 +95,7 @@ enum ComposeTrainRunner {
             }
         }
         for item in pending {
+            if env.force, !env.resume { _ = try? FileManager.default.removeItem(at: item.dir) }
             outcomes.append(try await trainOne(item, baseName: baseName, composeName: composeName, engine: engine, env: env))
         }
         return outcomes

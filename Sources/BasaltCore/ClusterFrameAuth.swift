@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import Security
 
@@ -159,8 +160,8 @@ extension ClusterFrameAuth {
         let unbracketed = lowered.hasPrefix("[") && lowered.hasSuffix("]")
             ? String(lowered.dropFirst().dropLast())
             : lowered
-        let wildcards: Set<String> = ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "*", "0.0.0.0/0", "::/0", "255.255.255.255"]
-        if wildcards.contains(unbracketed) || unbracketed.hasPrefix("0.") {
+        let wildcards: Set<String> = ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "*", "0", "0.0.0.0/0", "::/0", "255.255.255.255"]
+        if wildcards.contains(unbracketed) || unbracketed.hasPrefix("0.") || isWildcardAddress(unbracketed) {
             throw .wildcardBindRejected(host: trimmed)
         }
         let octets = unbracketed.split(separator: ".", omittingEmptySubsequences: false)
@@ -176,6 +177,21 @@ extension ClusterFrameAuth {
             throw .invalidEndpoint("invalid bind host '\(trimmed)'")
         }
         return unbracketed
+    }
+
+    private static func isWildcardAddress(_ host: String) -> Bool {
+        var v4 = in_addr()
+        if inet_pton(AF_INET, host, &v4) == 1 {
+            return v4.s_addr == 0 || v4.s_addr == UInt32.max
+        }
+        var v6 = in6_addr()
+        if inet_pton(AF_INET6, host, &v6) == 1 {
+            let bytes = withUnsafeBytes(of: &v6) { Array($0) }
+            if bytes.allSatisfy({ $0 == 0 }) { return true }
+            let isV4Mapped = bytes[0..<10].allSatisfy({ $0 == 0 }) && bytes[10] == 0xff && bytes[11] == 0xff
+            if isV4Mapped && bytes[12..<16].allSatisfy({ $0 == 0 }) { return true }
+        }
+        return false
     }
 
     public static func validateSecret(_ secret: String) throws(ClusterError) -> Data {
@@ -220,6 +236,7 @@ extension ClusterFrameAuth {
         responderNonce: Data? = nil
     ) throws(ClusterError) -> (accept: HandshakeAccept, sessionKey: Data) {
         let psk = try validateSecret(secret)
+        guard challenge.nonce.count >= 16 else { throw .malformedFrame("challenge nonce too short") }
         let symKey = SymmetricKey(data: psk)
         let cTranscript = challengeTranscript(
             runId: challenge.runId, challengerId: challenge.challengerId,
@@ -228,6 +245,7 @@ extension ClusterFrameAuth {
             throw .macMismatch
         }
         let rNonce: Data = if let responderNonce { responderNonce } else { try randomBytes(count: 32) }
+        guard rNonce.count >= 16 else { throw .malformedFrame("responder nonce too short") }
         let fullTranscript = acceptTranscript(
             challenge: challenge, responderId: responder.peerId,
             responderNonce: rNonce, responderKey: responder.publicKeyRaw)
@@ -257,6 +275,9 @@ extension ClusterFrameAuth {
         }
         guard accept.challengerNonce == challenge.nonce else {
             throw .malformedFrame("handshake challenger nonce mismatch")
+        }
+        guard challenge.nonce.count >= 16, accept.responderNonce.count >= 16 else {
+            throw .malformedFrame("handshake nonce too short")
         }
         let symKey = SymmetricKey(data: psk)
         let fullTranscript = acceptTranscript(

@@ -26,7 +26,11 @@ package struct VideoDiTConfig: Sendable, Equatable {
         self.modelID = modelID
         self.modelType = modelType
         self.hiddenSize = alignedHidden
-        self.numHeads = max(1, min(alignedHidden / 16, numHeads))
+        var resolvedHeads = max(1, min(alignedHidden / 16, numHeads))
+        while resolvedHeads > 1 && !alignedHidden.isMultiple(of: resolvedHeads) {
+            resolvedHeads -= 1
+        }
+        self.numHeads = resolvedHeads
         self.numLayers = max(1, min(6, numLayers))
         self.latentChannels = max(4, min(32, latentChannels))
         self.temporalScale = 4

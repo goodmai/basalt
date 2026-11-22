@@ -21,15 +21,19 @@ extension MLXInferenceEngine {
         if let request { try Self.validate(request) }
         let key = Self.describe(source)
         guard modelFacts.deltas[key] == nil else { throw .invalidRequestStructure(details: "adapter_apply: \(key) is already applied; undo it first") }
-        record(.learned(modelEpoch) { $0.deltas[key] = AppliedDelta() })
+        guard !modelFacts.deltas.values.contains(where: { $0.pack != nil }) else {
+            throw .invalidRequestStructure(details: "adapter_apply: cannot apply an adapter while a tensor_pack overlay is active; undo the pack first")
+        }
+        let epoch = modelEpoch
+        record(.learned(epoch) { $0.deltas[key] = AppliedDelta() })
         let modules: [String]
         do throws(BasaltError) {
             modules = try await Self.labRun(container, "the adapter") { context in try Self.attach(source, to: context.model) }
         } catch {
-            record(.learned(modelEpoch) { $0.deltas[key] = nil })
+            record(.learned(epoch) { $0.deltas[key] = nil })
             throw error
         }
-        guard self.container === container else {
+        guard self.container === container, modelEpoch == epoch else {
             throw .inferenceHardwareFailure(reason: "the model was replaced while the adapter was applied; nothing is applied")
         }
         let info = register(nil, description: key, lifetime: request == nil ? OverlayRegistry.defaultLifetime : nil)

@@ -116,13 +116,14 @@ public enum ReasoningPolicy: Sendable, Equatable {
     case effort(String)
 
     public init?(rawValue: String?) {
-        switch rawValue?.lowercased() {
-        case nil:                     return nil
+        guard let normalized = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !normalized.isEmpty else {
+            return nil
+        }
+        switch normalized {
         case "none", "off", "false":  self = .disabled
         case "default", "auto":       self = .modelDefault
-        // Levels pass through as named: each profile maps them onto its own template's
-        // vocabulary (Qwen spells the top level `xhigh`, gpt-oss spells it `high`).
-        case .some(let value):        self = .effort(value)  // already lowercased
+        default:                      self = .effort(normalized)
         }
     }
 }

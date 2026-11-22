@@ -70,7 +70,7 @@ struct DeepSeekOCRProcessor: UserInputProcessor {
             ids += tokenizer.encode(text: entry.element, addSpecialTokens: false)
             if entry.offset < layouts.count { ids += Array(repeating: image, count: layouts[entry.offset].tokens) }
         }
-        return Array(ids.dropLast())
+        return ids.count > 1 ? Array(ids.dropLast()) : ids
     }
 
     func prepare(input: UserInput) async throws -> LMInput {

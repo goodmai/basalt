@@ -344,6 +344,9 @@ extension ImageRunnerCore {
     }
 
     private static func decodeAudioBytesToSamples(_ data: Data) -> [Float] {
+        if data.prefix(4) == Data("RIFF".utf8), let decoded = try? WAVEncoder.decode(data), !decoded.samples.isEmpty {
+            return Array(decoded.samples.prefix(24_000))
+        }
         let headerOffset = data.count > 44 && data.prefix(4) == Data("RIFF".utf8) ? 44 : 0
         let payload = data.dropFirst(headerOffset)
         if payload.count >= 4 {

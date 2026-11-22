@@ -34,6 +34,12 @@ struct SessionsCommand: AsyncParsableCommand {
         @OptionGroup var location: Location
         @Option(name: .long, help: "Show at most this many sessions") var limit: Int = 20
 
+        mutating func validate() throws {
+            guard limit >= 0 else {
+                throw ValidationError("--limit must be non-negative")
+            }
+        }
+
         mutating func run() async throws {
             let formatter = ISO8601DateFormatter()
             for session in SessionLogReader.sessions(in: location.url).prefix(limit) {

@@ -54,10 +54,14 @@ public struct BenchmarkMetricDelta: Sendable, Equatable, Codable {
         metric: String, baseline: Double, candidate: Double,
         improved: Bool, regressed: Bool
     ) {
-        (self.metric, self.baseline, self.candidate) = (metric, baseline, candidate)
-        let delta = candidate - baseline
-        let denom = abs(baseline) > 1e-9 ? abs(baseline) : 1.0
-        (self.absoluteDelta, self.percentDelta) = (delta, (delta / denom) * 100.0)
+        self.metric = metric
+        let safeBase = baseline.isFinite ? baseline : 0.0
+        let safeCand = candidate.isFinite ? candidate : 0.0
+        (self.baseline, self.candidate) = (safeBase, safeCand)
+        let delta = safeCand - safeBase
+        let denom = abs(safeBase) > 1e-9 ? abs(safeBase) : 1.0
+        let pct = (delta / denom) * 100.0
+        (self.absoluteDelta, self.percentDelta) = (delta.isFinite ? delta : 0.0, pct.isFinite ? pct : 0.0)
         (self.improved, self.regressed) = (improved, regressed)
     }
 }
@@ -121,6 +125,28 @@ public enum BenchmarkComparator {
         "cost_usd", "cost_per_1k_usd", "abstain_rate",
     ]
 
+    private static func metricDelta(
+        key: String, oldVal: Double, newVal: Double, relativeTolerance: Double
+    ) -> BenchmarkMetricDelta {
+        guard oldVal.isFinite && newVal.isFinite else {
+            return BenchmarkMetricDelta(
+                metric: key, baseline: oldVal, candidate: newVal,
+                improved: !oldVal.isFinite && newVal.isFinite,
+                regressed: oldVal.isFinite && !newVal.isFinite
+            )
+        }
+        let absDelta = newVal - oldVal
+        let denom = abs(oldVal) > 1e-9 ? abs(oldVal) : 1.0
+        let significant = abs(absDelta / denom) > relativeTolerance
+        let lowerBetter = lowerIsBetter.contains(key)
+        let improved = significant && (lowerBetter ? absDelta < 0 : absDelta > 0)
+        let regressed = significant && (lowerBetter ? absDelta > 0 : absDelta < 0)
+        return BenchmarkMetricDelta(
+            metric: key, baseline: oldVal, candidate: newVal,
+            improved: improved, regressed: regressed
+        )
+    }
+
     public static func compare(
         baseline: BenchmarkRunArtifact,
         candidate: BenchmarkRunArtifact,
@@ -130,17 +156,7 @@ public enum BenchmarkComparator {
         let deltas = sharedKeys.compactMap { key -> BenchmarkMetricDelta? in
             guard let oldVal = baseline.scorecard.metrics[key],
                   let newVal = candidate.scorecard.metrics[key] else { return nil }
-            let absDelta = newVal - oldVal
-            let denom = abs(oldVal) > 1e-9 ? abs(oldVal) : 1.0
-            let relDelta = absDelta / denom
-            let significant = abs(relDelta) > relativeTolerance
-            let lowerBetter = lowerIsBetter.contains(key)
-            let improved = significant && (lowerBetter ? absDelta < 0 : absDelta > 0)
-            let regressed = significant && (lowerBetter ? absDelta > 0 : absDelta < 0)
-            return BenchmarkMetricDelta(
-                metric: key, baseline: oldVal, candidate: newVal,
-                improved: improved, regressed: regressed
-            )
+            return metricDelta(key: key, oldVal: oldVal, newVal: newVal, relativeTolerance: relativeTolerance)
         }
         let baseByID = Dictionary(baseline.samples.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var sampleRegressions: [String] = []

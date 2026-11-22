@@ -97,8 +97,8 @@ struct PaddleOCRVLProcessorConfiguration: Codable, Sendable {
         var w = (width / factor).rounded(.toNearestOrEven) * factor
         if h * w > Double(maxPixels) {
             let beta = (height * width / Double(maxPixels)).squareRoot()
-            h = (height / beta / factor).rounded(.down) * factor
-            w = (width / beta / factor).rounded(.down) * factor
+            h = max(factor, (height / beta / factor).rounded(.down) * factor)
+            w = max(factor, (width / beta / factor).rounded(.down) * factor)
         } else if h * w < Double(minPixels) {
             let beta = (Double(minPixels) / (height * width)).squareRoot()
             h = (height * beta / factor).rounded(.up) * factor

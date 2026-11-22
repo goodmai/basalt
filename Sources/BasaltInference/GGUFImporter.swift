@@ -134,8 +134,8 @@ package struct GGUFImporter: Sendable {
             let pArr = MLXArray(file.floats(preScale), [1, preScale.count])
             if let b = macaqBlock, b > 1, tensor.rowLength.isMultiple(of: b) {
                 weight = MACaQMath.rotateBlocks(weight, blockSize: b)
-                weight = weight * pArr
             }
+            weight = weight * pArr
         }
         switch plan.transform {
         case .none: break

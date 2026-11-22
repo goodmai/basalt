@@ -95,9 +95,10 @@ public struct MCPToolFilter: Sendable, Equatable {
     }
 
     public func allowsSpectrum(researchTools: Bool) -> Bool {
-        guard allows("model_tensor", researchTools: researchTools),
-              !disabled.isSuperset(of: Self.experimentTools) else { return false }
-        return researchTools || !enabled.isDisjoint(with: Self.experimentTools)
+        guard allows("model_tensor", researchTools: researchTools) else { return false }
+        let activeExperiments = (researchTools ? Self.experimentTools : enabled.intersection(Self.experimentTools))
+            .subtracting(disabled)
+        return !activeExperiments.isEmpty
     }
 
     public static func splitTokens(_ raw: [String]) -> [String] {

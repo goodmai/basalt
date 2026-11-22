@@ -13,6 +13,7 @@ extension ComposeCommand {
     }
 
     static func stop(_ record: ComposeRecord, grace: Duration) async throws {
+        guard record.pid > 0 else { return }
         kill(record.pid, SIGINT)
         let deadline = ContinuousClock.now + grace
         while ComposeRecord.alive(record), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(100)) }

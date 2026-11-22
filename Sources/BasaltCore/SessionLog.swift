@@ -248,6 +248,11 @@ public actor SessionLogWriter {
     public var isEnabled: Bool { mode != .off && !state.disabled }
 
     nonisolated var format: SessionLogFormat { .init(mode: mode, redacts: redacts) }
+
+    deinit {
+        flushTask?.cancel()
+        for fd in state.handles.values { Darwin.close(fd) }
+    }
 }
 
 extension SessionLogWriter {
@@ -394,7 +399,7 @@ extension SessionLogWriter {
         guard flushTask == nil, mode != .off else { return }
         flushTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
+                guard (try? await Task.sleep(for: interval)) != nil else { break }
                 await self?.flush()
             }
         }

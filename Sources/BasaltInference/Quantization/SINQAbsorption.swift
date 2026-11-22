@@ -37,7 +37,11 @@ package enum SINQAbsorption {
     package static func addsUnitOffset(config: [String: Any]) -> Bool {
         let top = (config["model_type"] as? String)?.lowercased() ?? ""
         let text = ((config["text_config"] as? [String: Any])?["model_type"] as? String)?.lowercased() ?? ""
-        return top.hasPrefix("gemma") || text.hasPrefix("gemma")
+        return isUnitOffsetModelType(top) || isUnitOffsetModelType(text)
+    }
+
+    private static func isUnitOffsetModelType(_ modelType: String) -> Bool {
+        modelType.hasPrefix("gemma") || modelType.hasPrefix("muse_glimmer") || modelType.hasPrefix("muse-glimmer")
     }
 
     package static func discoverGroups(keys: Set<String>) -> [SINQAbsorptionGroup] {

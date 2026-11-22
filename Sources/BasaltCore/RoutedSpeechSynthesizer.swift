@@ -134,6 +134,7 @@ public actor OnDemandSpeechSynthesizer: SpeechSynthesizer {
     public private(set) var lastUsed: Date?
 
     deinit {
+        timer?.cancel()
         announce.finish()
     }
 
@@ -298,9 +299,9 @@ extension OnDemandSpeechSynthesizer {
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [sleep, idle = descriptor.idle] in
+        timer = Task { [weak self, sleep, idle = descriptor.idle] in
             guard (try? await sleep(idle)) != nil else { return }
-            await self.expire(generation)
+            await self?.expire(generation)
         }
     }
 

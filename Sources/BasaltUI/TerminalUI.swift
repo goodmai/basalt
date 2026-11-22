@@ -15,44 +15,17 @@ import BasaltCore
 /// Thread Safety: Uses actor for state management in Swift 6
 public enum TerminalUI: Sendable {
     
-    // MARK: - Configuration Actor
-    
-    /// Thread-safe configuration manager
     public actor Configuration {
         public static let shared = Configuration()
-        
-        private var _colorsEnabled: Bool
-        
-        private init() {
-            self._colorsEnabled = Self.detectColorSupport()
-            // Note: Rainbow.enabled is set via environment variables (FORCE_COLOR)
-        }
-        
+
+        private init() {}
+
         public var colorsEnabled: Bool {
-            get { _colorsEnabled }
+            get { TerminalUI.colorsEnabled }
         }
-        
+
         public func setColorsEnabled(_ enabled: Bool) {
-            _colorsEnabled = enabled
-        }
-        
-        private static func detectColorSupport() -> Bool {
-            // Check NO_COLOR environment variable (https://no-color.org/)
-            if ProcessInfo.processInfo.environment["NO_COLOR"] != nil {
-                return false
-            }
-            
-            // Check FORCE_COLOR environment variable
-            if ProcessInfo.processInfo.environment["FORCE_COLOR"] != nil {
-                return true
-            }
-            
-            // Auto-detect TTY
-            #if canImport(Darwin)
-            return isatty(fileno(stdout)) == 1
-            #else
-            return false
-            #endif
+            TerminalUI.colorsEnabled = enabled
         }
     }
     

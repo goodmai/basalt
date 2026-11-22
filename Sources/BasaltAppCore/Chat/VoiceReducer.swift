@@ -69,9 +69,10 @@ public enum VoiceReducer {
             state.enhancement = options
             return []
         case .failed(let message):
+            let wasRecording = state.capture == .recording
             (state.capture, state.holdingThinkingPause, state.speakingMessage, state.synthesizingMessage, state.error) =
                 (.idle, false, nil, nil, message)
-            return []
+            return wasRecording ? [.stopCapture] : []
         }
     }
 
@@ -196,11 +197,21 @@ public enum VoiceEffects {
             switch effect {
             case .startCapture:
                 return .run(id: captureID) { send in
-                    do { try await environment.startCapture() } catch { await send(.failed(describe(error))) }
+                    guard !Task.isCancelled else { return }
+                    do {
+                        try await environment.startCapture()
+                    } catch {
+                        if !Task.isCancelled { await send(.failed(describe(error))) }
+                    }
                 }
             case .stopCapture:
                 return .run(id: captureID) { send in
-                    do { await send(.recorded(try await environment.stopCapture())) } catch { await send(.failed(describe(error))) }
+                    do {
+                        let wav = try await environment.stopCapture()
+                        if !Task.isCancelled { await send(.recorded(wav)) }
+                    } catch {
+                        if !Task.isCancelled { await send(.failed(describe(error))) }
+                    }
                 }
             case .transcribe(let wav):
                 return .run(id: transcribeID) { send in await transcribe(wav, environment, send) }

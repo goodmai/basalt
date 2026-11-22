@@ -114,12 +114,15 @@ struct ModelRouterCoreTests {
         #expect(state.outcomeBias.beta(model: "q", bucket: .toolUse, at: now) > 0)
     }
 
-    @Test("A cloud reply floors sub-second durations at 1 ms and maps only \"length\" to a length stop")
+    @Test("A cloud reply floors sub-millisecond durations at 1 ms and maps only \"length\" to a length stop")
     func cloudReplyMapping() {
-        let quick = GenerationResponse.cloudReply(text: "a", promptTokens: 3, completionTokens: 2, finishReason: "length", elapsed: .milliseconds(400))
+        let quick = GenerationResponse.cloudReply(text: "a", promptTokens: 3, completionTokens: 2, finishReason: "length", elapsed: .microseconds(100))
         #expect(quick.generationTime == 0.001)
         #expect(quick.tokensPerSecond == 2_000)
         #expect(quick.finishReason == .length)
+        let subSecond = GenerationResponse.cloudReply(text: "a", promptTokens: 3, completionTokens: 2, finishReason: "length", elapsed: .milliseconds(400))
+        #expect(abs(subSecond.generationTime - 0.4) < 1e-6)
+        #expect(abs(subSecond.tokensPerSecond - 5.0) < 1e-4)
         let slow = GenerationResponse.cloudReply(text: "b", promptTokens: 0, completionTokens: 10, finishReason: nil, elapsed: .seconds(2))
         #expect(slow.generationTime == 2)
         #expect(slow.tokensPerSecond == 5)

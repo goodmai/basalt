@@ -16,18 +16,19 @@ extension OpenAIController {
             let anti = try pipeline.antiRepetition(parsed.antiRepetition, bodyBytes: buffer.readableBytes)
             let chat = try pipeline.parsed { () throws(BasaltError) in try Self.chatMessages(dto.messages) }
             let model = dto.model ?? modelId
+            let prepared = try pipeline.prepare(ChatPipeline.Input(
+                chat: chat, maxTokens: dto.maxTokens,
+                sampling: dto.sampling(anti),
+                reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
+                responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if anti.xrayTrace == true, !stream {
+                try await pipeline.admitStream(prepared.request)
                 let topLP = anti.topLogprobs ?? anti.nProbs ?? 5
                 return try await XrayTokensController.chatXrayResponse(
                     chat: chat, maxTokens: dto.maxTokens, temperature: dto.temperature,
                     topLogprobs: topLP, model: model, orchestrator: orchestrator
                 )
             }
-            let prepared = try pipeline.prepare(ChatPipeline.Input(
-                chat: chat, maxTokens: dto.maxTokens,
-                sampling: dto.sampling(anti),
-                reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
             if stream { try await pipeline.admitStream(prepared.request) }
             let includeUsage = dto.streamOptions?.includeUsage == true
             return await pipeline.respond(to: prepared, stream: stream) { chunks in

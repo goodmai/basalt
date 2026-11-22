@@ -22,6 +22,12 @@ public final class Store<State: Sendable, Action: Sendable, Effect: Sendable> {
         (self.state, self.reduce, self.handle) = (state, reduce, handle)
     }
 
+    isolated deinit {
+        for entry in tasks.values {
+            entry.task.cancel()
+        }
+    }
+
     public func send(_ action: Action) {
         for effect in reduce(&state, action) {
             switch handle(effect) {
