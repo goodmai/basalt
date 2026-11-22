@@ -256,6 +256,9 @@ extension MCPServer {
 extension MCPServer {
     private func introspect(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         let request = try IntrospectRequest(mcp: args)
+        if request.allowInterventions {
+            try await enforceHITLApproval(toolName: "intervene", arguments: args)
+        }
         let introspector = Introspector(
             orchestrator: orchestrator, interventions: request.allowInterventions, filter: toolFilter, researchTools: researchTools)
         do throws(BasaltError) {

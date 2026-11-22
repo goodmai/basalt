@@ -62,9 +62,13 @@ func runCommand(_ command: String, args: [String]) -> (status: Int32, output: St
     task.executableURL = URL(fileURLWithPath: command)
     task.arguments = args
     task.standardOutput = pipe
-    try? task.run()
-    task.waitUntilExit()
+    do {
+        try task.run()
+    } catch {
+        return (-1, error.localizedDescription)
+    }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
     let output = String(data: data, encoding: .utf8) ?? ""
     return (task.terminationStatus, output.trimmingCharacters(in: .whitespacesAndNewlines))
 }

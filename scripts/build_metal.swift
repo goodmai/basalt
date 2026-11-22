@@ -43,7 +43,10 @@ if args.contains("--dry-run") {
 func queryBinPath(configuration: String, buildSystem: String? = nil) -> (path: String, stderr: String, status: Int32) {
     let task = Process()
     let outPipe = Pipe()
-    let errPipe = Pipe()
+    let errURL = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-metal-stderr-\(UUID().uuidString).log")
+    FileManager.default.createFile(atPath: errURL.path, contents: nil)
+    defer { try? FileManager.default.removeItem(at: errURL) }
+    let errHandle = try? FileHandle(forWritingTo: errURL)
     task.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     var command = ["swift", "build", "-c", configuration, "--disable-sandbox", "--show-bin-path"]
     if let buildSystem {
@@ -51,11 +54,16 @@ func queryBinPath(configuration: String, buildSystem: String? = nil) -> (path: S
     }
     task.arguments = command
     task.standardOutput = outPipe
-    task.standardError = errPipe
-    try? task.run()
+    task.standardError = errHandle ?? FileHandle.nullDevice
+    do {
+        try task.run()
+    } catch {
+        return ("", error.localizedDescription, -1)
+    }
     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
     task.waitUntilExit()
+    try? errHandle?.close()
+    let errData = (try? Data(contentsOf: errURL)) ?? Data()
     let path = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let stderrText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     return (path, stderrText, task.terminationStatus)

@@ -116,6 +116,10 @@ struct ModelsConvertController: Sendable {
             }
             normalized.pvTeacher = teacherId
         }
+        if let rawAdapter = req.adapter, !rawAdapter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ProviderErrorResponse.response(
+                status: .badRequest, message: "Local adapter paths are not permitted over REST; use `basalt models convert --adapter`.", shape: .openAI)
+        }
         guard let jobId = await operations.conversionCoordinator.tryBegin() else {
             return ProviderErrorResponse.response(
                 status: .conflict, message: "Another model conversion is currently running.", shape: .openAI)

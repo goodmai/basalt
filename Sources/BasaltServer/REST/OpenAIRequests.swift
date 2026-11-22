@@ -166,6 +166,7 @@ extension OpenAIController {
             let spec = (entry["function"] as? [String: Any]) ?? entry
             guard let name = spec["name"] as? String, !name.isEmpty else { return nil }
             let parameters = (spec["parameters"] ?? spec["input_schema"])
+                .flatMap { JSONSerialization.isValidJSONObject($0) ? $0 : nil }
                 .flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .withoutEscapingSlashes]) }
                 .flatMap { String(data: $0, encoding: .utf8) }
             return ToolDefinition(name: name, description: spec["description"] as? String, parametersJSON: parameters)

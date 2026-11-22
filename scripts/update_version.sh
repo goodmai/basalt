@@ -28,12 +28,12 @@ echo -e "  PATCH: $PATCH\n"
 
 # Count commits by type
 echo -e "${BLUE}Commit Analysis:${NC}"
-FEAT_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* feat:" || echo "0")
-FIX_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* fix:" || echo "0")
-BREAKING_COMMITS=$(git log --oneline --all | grep -c "BREAKING:" || echo "0")
-DOCS_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* docs:" || echo "0")
-CHORE_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* chore:" || echo "0")
-SECURITY_COMMITS=$(git log --online --all | grep -c "^[a-f0-9]* security:" || echo "0")
+FEAT_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* feat:" || true)
+FIX_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* fix:" || true)
+BREAKING_COMMITS=$(git log --oneline --all | grep -c "BREAKING:" || true)
+DOCS_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* docs:" || true)
+CHORE_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* chore:" || true)
+SECURITY_COMMITS=$(git log --oneline --all | grep -c "^[a-f0-9]* security:" || true)
 TOTAL_COMMITS=$(git log --oneline --all | wc -l | tr -d ' ')
 
 echo -e "  feat:     ${GREEN}${FEAT_COMMITS}${NC} commits (MINOR bumps)"
@@ -46,9 +46,9 @@ echo -e "  ${BLUE}Total:    ${TOTAL_COMMITS} commits${NC}\n"
 
 # Count features
 echo -e "${BLUE}Feature Analysis:${NC}"
-COMPLETED_FEATURES=$(grep -c "\[x\]" PLAN.md || echo "0")
-IN_PROGRESS_FEATURES=$(grep -c "🔄" PLAN.md || echo "0")
-PLANNED_FEATURES=$(grep -c "📋" PLAN.md || echo "0")
+COMPLETED_FEATURES=$(grep -c "\[x\]" PLAN.md || true)
+IN_PROGRESS_FEATURES=$(grep -c "🔄" PLAN.md || true)
+PLANNED_FEATURES=$(grep -c "📋" PLAN.md || true)
 TOTAL_FEATURES=$((COMPLETED_FEATURES + IN_PROGRESS_FEATURES + PLANNED_FEATURES))
 
 echo -e "  Completed:   ${GREEN}${COMPLETED_FEATURES}${NC}"
@@ -58,9 +58,9 @@ echo -e "  ${BLUE}Total:       ${TOTAL_FEATURES}${NC}\n"
 
 # Count completed epics
 echo -e "${BLUE}Epic Analysis:${NC}"
-COMPLETED_EPICS=$(grep -c "## Epic.*✅.*COMPLETED" PLAN.md || echo "0")
-IN_PROGRESS_EPICS=$(grep -c "## Epic.*🔄.*IN PROGRESS" PLAN.md || echo "0")
-TOTAL_EPICS=$(grep -c "## Epic [0-9]:" PLAN.md || echo "0")
+COMPLETED_EPICS=$(grep -c "## Epic.*✅.*COMPLETED" PLAN.md || true)
+IN_PROGRESS_EPICS=$(grep -c "## Epic.*🔄.*IN PROGRESS" PLAN.md || true)
+TOTAL_EPICS=$(grep -c "## Epic [0-9]:" PLAN.md || true)
 
 echo -e "  Completed:   ${GREEN}${COMPLETED_EPICS}${NC}"
 echo -e "  In Progress: ${YELLOW}${IN_PROGRESS_EPICS}${NC}"

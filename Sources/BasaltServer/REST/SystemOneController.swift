@@ -37,7 +37,7 @@ struct SystemOneController: Sendable {
 
     static func request(from data: Data) -> SystemOneRequest? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let state = root["state"],
-              let questions = root["questions"], JSONSerialization.isValidJSONObject(["q": questions]),
+              let questions = root["questions"] as? [String: Any], JSONSerialization.isValidJSONObject(questions),
               let questionData = try? JSONSerialization.data(withJSONObject: questions),
               let decoded = try? JSONDecoder().decode([String: SystemOneQuestion].self, from: questionData)
         else { return nil }

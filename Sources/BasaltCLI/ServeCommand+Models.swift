@@ -117,8 +117,9 @@ extension ServeCommand {
         let hub = HuggingFaceHub(requireVerified: requireVerified)
         do {
             let dest = try await hub.download(repoId: modelId, subfolder: quant, token: nil,
-                                              onFile: DownloadProgressReporter().callAsFunction)
-            print("\n")
+                                              onFile: DownloadProgressReporter(useStderr: true).callAsFunction)
+            fputs("\n", stderr)
+            fflush(stderr)
             return dest.path
         } catch {
             log("\(red("Download failed:")) \(error.localizedDescription)")
