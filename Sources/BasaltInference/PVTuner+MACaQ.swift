@@ -255,6 +255,6 @@ extension PVTuner {
         let rowCopy = mac.rowScale.map { $0 + MLXArray(0, dtype: $0.dtype) }
         return MACaQQuantizedLinear(
             packed: MACaQPackedWeights(weight: q.wq, scales: q.scales, biases: q.biases),
-            bias: mac.bias, preScale: pre, rowScale: rowCopy, spec: spec)
+            bias: mac.bias, preScale: pre, spec: spec, rowScale: rowCopy)
     }
 }
