@@ -335,6 +335,17 @@ extension BasaltFoundationTransport {
             }
             pending.removeAll(keepingCapacity: true)
         }
+        if !pending.isEmpty {
+            pending.append(UInt8(ascii: "\n"))
+        }
+        pending.append(UInt8(ascii: "\n"))
+        for event in parser.feed(pending) {
+            switch try ChatDeltaDecoder.decode(event) {
+            case .done: return
+            case .deltas(let deltas):
+                for delta in deltas { continuation.yield(delta) }
+            }
+        }
     }
 
     private static func inProcessStream(

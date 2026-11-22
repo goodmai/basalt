@@ -31,13 +31,13 @@ public enum SecretRedactor {
         var cursor = text.startIndex
         while let begin = text.range(of: pemBegin, range: cursor..<text.endIndex) {
             let lineEnd = text[begin.upperBound...].firstIndex(where: \.isNewline) ?? text.endIndex
-            guard text[begin.upperBound..<lineEnd].hasSuffix(pemPrivate) else {
+            guard let headerEnd = text.range(of: pemPrivate, range: begin.upperBound..<lineEnd) else {
                 out += text[cursor..<begin.upperBound]
                 cursor = begin.upperBound
                 continue
             }
             out += text[cursor..<begin.lowerBound] + "[REDACTED:private_key]"
-            guard let end = text.range(of: pemEnd, range: lineEnd..<text.endIndex) else {
+            guard let end = text.range(of: pemEnd, range: headerEnd.upperBound..<text.endIndex) else {
                 return out
             }
             let afterEnd = text[end.upperBound...].range(of: "-----")?.upperBound ?? text.endIndex

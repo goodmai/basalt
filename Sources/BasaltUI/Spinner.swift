@@ -51,20 +51,22 @@ public actor Spinner {
         fflush(stderr)
         
         animationTask = Task { [weak self] in
-            while let self = self, await self.isRunning {
+            while !Task.isCancelled, let self = self, await self.isRunning {
                 await self.render()
-                try? await Task.sleep(for: self.style.interval)
+                do {
+                    try await Task.sleep(for: self.style.interval)
+                } catch {
+                    break
+                }
             }
         }
     }
     
-    /// Stop the animation and clean up
     public func stop(finalMessage: String? = nil) {
         isRunning = false
         animationTask?.cancel()
         animationTask = nil
         
-        // Clear line and show cursor
         fputs("\r\u{1B}[K", stderr)
         if let msg = finalMessage {
             fputs("\(msg)\n", stderr)
@@ -87,9 +89,12 @@ public actor Spinner {
     }
     
     deinit {
-        // Ensure cleanup
+        let wasRunning = isRunning
         isRunning = false
-        fputs("\u{1B}[?25h", stderr)
-        fflush(stderr)
+        animationTask?.cancel()
+        if wasRunning {
+            fputs("\u{1B}[?25h", stderr)
+            fflush(stderr)
+        }
     }
 }

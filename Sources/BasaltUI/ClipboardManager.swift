@@ -280,8 +280,16 @@ public actor ClipboardManager {
         }
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+        var launched = false
+        defer {
+            if launched {
+                if process.isRunning { process.terminate() }
+                process.waitUntilExit()
+            }
+        }
         do {
             try process.run()
+            launched = true
             let inputBytes = ContiguousArray((input ?? "").utf8)
             let (outputData, errorData) = try ClipboardPipePump.run(
                 stdin: inputPipe?.fileHandleForWriting,
@@ -290,12 +298,12 @@ public actor ClipboardManager {
                 stderr: errorPipe.fileHandleForReading
             )
             process.waitUntilExit()
+            launched = false
             guard process.terminationStatus == 0 else {
                 throw ClipboardError.operationFailed(String(data: errorData, encoding: .utf8) ?? "Unknown error")
             }
             return String(data: outputData, encoding: .utf8) ?? ""
         } catch is CancellationError {
-            if process.isRunning { process.terminate() }
             throw CancellationError()
         } catch let error as ClipboardError {
             throw error

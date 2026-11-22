@@ -145,17 +145,25 @@ extension MLXInferenceEngine {
             batchSize: min(4, texts.count), iterations: request.iterations, stepsPerReport: 1, stepsPerEval: Int.max, validationBatches: 1)
         var ema = request.emaDecay.map { EMAWeightShadow(decay: $0, model: context.model) }
         var losses: [Float] = []
+        var nonFiniteStep: Int?
         try LoRATrain.train(
             model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: Adam(learningRate: request.learningRate),
             loss: { _, inputs, targets, lengths in labLoss(context.model, inputs, targets, lengths) }, tokenizer: context.tokenizer, parameters: parameters
         ) { progress in
-            if case .train(_, let loss, _, _) = progress {
+            if case .train(let step, let loss, _, _) = progress {
+                if !loss.isFinite {
+                    nonFiniteStep = step
+                    return .stop
+                }
                 losses.append(loss)
                 ema?.update(from: context.model)
             }
             return Task.isCancelled ? .stop : .more
         }
         try Task.checkCancellation()
+        if let step = nonFiniteStep {
+            throw BasaltError.modelInferenceError(details: "adapter training diverged with non-finite loss at step \(step)")
+        }
         var emaApplied: Bool?
         if let ema, ema.updates > 0 {
             ema.apply(to: context.model)

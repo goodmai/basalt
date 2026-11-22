@@ -109,17 +109,19 @@ public struct ModelCache: Sendable {
         "claude-local/" + hfId.replacingOccurrences(of: "/", with: "--")
     }
 
-    /// Inverse of `ModelsController.claudeLocalId` — strips the `claude-local/` prefix and
-    /// restores the "/" separator. Plain HF IDs (or aliases) pass through unchanged.
+    private static func replaceFirstSeparator(_ raw: String) -> String {
+        guard let range = raw.range(of: "--") else { return raw }
+        return raw.replacingCharacters(in: range, with: "/")
+    }
+
     package static func hfRepoId(from modelId: String) -> String {
         if modelId.hasPrefix("claude-local/") {
             let body = String(modelId.dropFirst("claude-local/".count))
-            return body.replacingOccurrences(of: "--", with: "/")
+            return replaceFirstSeparator(body)
         }
         return modelId
     }
 
-    /// Strips local path prefixes, snapshot dirs, or claude-local/ prefixes to yield the canonical model repo ID
     public static func canonicalRepoId(from raw: String) -> String {
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.hasPrefix("claude-local/") {
@@ -128,14 +130,17 @@ public struct ModelCache: Sendable {
         if cleaned.contains("models--") {
             let parts = cleaned.components(separatedBy: "models--")
             if let last = parts.last?.components(separatedBy: "/").first {
-                return last.replacingOccurrences(of: "--", with: "/")
+                return replaceFirstSeparator(last)
             }
         }
         if cleaned.hasPrefix("/") || cleaned.hasPrefix("./") {
             let url = URL(fileURLWithPath: cleaned)
             let lastComponent = url.lastPathComponent
             if lastComponent.contains("--") {
-                return lastComponent.replacingOccurrences(of: "models--", with: "").replacingOccurrences(of: "--", with: "/")
+                let stripped = lastComponent.hasPrefix("models--")
+                    ? String(lastComponent.dropFirst("models--".count))
+                    : lastComponent
+                return replaceFirstSeparator(stripped)
             }
             return lastComponent
         }
@@ -251,9 +256,14 @@ package actor HuggingFaceHub {
     var state = HubState()
     package var bytesFetched: Int { state.bytesFetched }
 
+    private static let defaultProtocolClassIDs: Set<ObjectIdentifier> = Set(
+        (URLSessionConfiguration.default.protocolClasses ?? []).map { ObjectIdentifier($0) }
+    )
+
     package init(configuration: URLSessionConfiguration = .default, endpoint: String = "https://huggingface.co", requireVerified: Bool = false) {
         self.requireVerified = requireVerified
-        self.usesCustomProtocols = !(configuration.protocolClasses ?? []).isEmpty
+        let configuredIDs = Set((configuration.protocolClasses ?? []).map { ObjectIdentifier($0) })
+        self.usesCustomProtocols = !configuredIDs.isSubset(of: Self.defaultProtocolClassIDs)
         baseURL = endpoint
         apiURL = endpoint + "/api"
         let config = configuration
@@ -312,11 +322,12 @@ extension HuggingFaceHub {
         return total > 0 ? total : nil
     }
 
-    package func modelDetails(repoId: String) async throws -> HFModelDetails {
+    package func modelDetails(repoId: String, token: String? = nil) async throws -> HFModelDetails {
         guard Self.isRepoId(repoId), let url = URL(string: "\(apiURL)/models/\(repoId)") else {
             throw HFError.invalidRepoId(repoId)
         }
-        let (data, response) = try await session.data(from: url)
+        let req = HubRequest.file(url, token: token)
+        let (data, response) = try await session.data(for: req)
         state = HubState.reduce(state, .fetched(bytes: data.count))
 
         switch (response as? HTTPURLResponse)?.statusCode {
@@ -388,7 +399,7 @@ extension HuggingFaceHub {
             )
         }
 
-        let details = try await modelDetails(repoId: repoId)
+        let details = try await modelDetails(repoId: repoId, token: token)
         let destDir = ModelCache.cacheDir(for: repoId)
 
         try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)

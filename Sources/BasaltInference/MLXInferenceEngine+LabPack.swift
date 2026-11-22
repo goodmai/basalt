@@ -5,11 +5,21 @@ import MLXLMCommon
 import BasaltCore
 
 struct PackedLayer: Sendable {
+    struct MACaQMeta: Sendable {
+        let mode: QuantizationMode
+        let hadamardBlock: Int
+        let preScale: MaterializedArray
+        let rowScale: MaterializedArray?
+        let activationMode: MACaQActivationMode
+        let useSmallMKernel: Bool
+        let useQ3Kernel: Bool
+    }
+
     enum Kind: Sendable {
         case dense
         case quantized(QuantizationMode)
         case nf4
-        case macaq(QuantizationMode, Int, MaterializedArray)
+        case macaq(MACaQMeta)
     }
 
     let path: String
@@ -39,7 +49,15 @@ struct PackedLayer: Sendable {
             globalScale = nil
             groupSize = mac.groupSize
             bits = mac.bits
-            kind = .macaq(mac.mode, mac.hadamardBlock, materialize(mac.preScale))
+            kind = .macaq(MACaQMeta(
+                mode: mac.mode,
+                hadamardBlock: mac.hadamardBlock,
+                preScale: materialize(mac.preScale),
+                rowScale: mac.rowScale.map { materialize($0) },
+                activationMode: mac.activationMode,
+                useSmallMKernel: mac.useSmallMKernel,
+                useQ3Kernel: mac.useQ3Kernel
+            ))
         } else if let quantized = layer as? QuantizedLinear {
             scales = materialize(quantized.scales)
             biases = quantized.biases.map { materialize($0) }
@@ -70,13 +88,23 @@ struct PackedLayer: Sendable {
                 return Linear(weight: packed, bias: live(bias))
             }
             return restored
-        case .macaq(let mode, let hadamardBlock, let preScale):
+        case .macaq(let meta):
             guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
-            var spec = MACaQLayerSpec(bits: bits, groupSize: groupSize, mode: mode, hadamardBlock: hadamardBlock)
-            spec.scaleDType = scales.dtype == .float16 ? "float16" : "bfloat16"
+            var spec = MACaQLayerSpec(bits: bits, groupSize: groupSize, mode: meta.mode, hadamardBlock: meta.hadamardBlock)
+            spec.scaleDType = "\(scales.dtype)"
             spec.hasBias = bias != nil
             let packedWeights = MACaQPackedWeights(weight: packed, scales: scales, biases: live(biases))
-            return MACaQQuantizedLinear(packed: packedWeights, bias: live(bias), preScale: live(preScale) ?? preScale, spec: spec)
+            let restored = MACaQQuantizedLinear(
+                packed: packedWeights,
+                bias: live(bias),
+                preScale: live(meta.preScale) ?? meta.preScale,
+                spec: spec,
+                rowScale: live(meta.rowScale),
+                activationMode: meta.activationMode
+            )
+            restored.useSmallMKernel = meta.useSmallMKernel
+            restored.useQ3Kernel = meta.useQ3Kernel
+            return restored
         case .quantized(let mode):
             guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
             return QuantizedLinear(
