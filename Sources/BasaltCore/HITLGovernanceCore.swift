@@ -229,7 +229,7 @@ public actor HITLApprovalActor {
             Task { [weak self] in
                 let remaining = max(0, expiresAt - Date().timeIntervalSince1970)
                 try? await Task.sleep(for: .seconds(remaining))
-                await self?.expire(now: max(expiresAt, Date().timeIntervalSince1970))
+                _ = await self?.expire(now: max(expiresAt, Date().timeIntervalSince1970))
             }
         }
         defer { timerTask?.cancel() }
@@ -250,10 +250,10 @@ public actor HITLApprovalActor {
         if let continuations = waiters.removeValue(forKey: id) {
             let decision = resolved[id] ?? HITLApprovalDecision(
                 requestId: id,
-                status: .expired,
+                approved: false,
                 reviewer: "system",
-                decidedAt: Date().timeIntervalSince1970,
-                reason: "cancelled"
+                reason: "cancelled",
+                decidedAt: Date().timeIntervalSince1970
             )
             for continuation in continuations {
                 continuation.resume(returning: decision)

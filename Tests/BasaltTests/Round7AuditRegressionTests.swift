@@ -43,7 +43,7 @@ struct Round7AuditRegressionTests {
 
     @Test("EntropyDynamicTemperature stays finite on zero-entropy logits and tiny topP (#701)")
     func edtFiniteOnZeroEntropyAndTinyTopP() {
-        let edt = EntropyDynamicTemperature(baseTemperature: 0.7, topP: 1e-7, minP: nil, n: 0.8, theta: 0.0)
+        let edt = EntropyDynamicTemperature(baseTemperature: 0.7, n: 0.8, theta: 0.0, topP: 1e-7, minP: nil)
         let logits = MLXArray([Float(100.0), -100.0, -100.0, -100.0], [1, 4])
         let out = edt.process(logits: logits)
         let maxVal = out.max(axis: -1)

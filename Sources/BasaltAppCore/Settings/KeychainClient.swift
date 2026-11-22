@@ -61,6 +61,11 @@ public enum CloudKeys {
             if let value = keychain.read(name), !value.isEmpty { environment[name] = value }
         }
     }
+
+    public static func environment(defaults: UserDefaults = .standard, keychain: KeychainClient = .live()) -> [String: String] {
+        let names = (defaults.string(forKey: defaultsKey) ?? "").split(separator: "\n").map(String.init)
+        return environment(names, keychain: keychain)
+    }
 }
 
 public struct DraftStore: Sendable {

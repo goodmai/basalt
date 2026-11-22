@@ -89,7 +89,7 @@ extension ConvertSubcommand {
                 destLabel = outURL.path
                 if let repo = registerCache {
                     let snap = try UniversalModelConverter.cacheSnapshotDirectory(for: repo)
-                    try ModelsConvertCommand.copyToCacheSnapshot(from: outURL, to: snap)
+                    try Self.copyToCacheSnapshot(from: outURL, to: snap)
                 }
             }
             let elapsed = ContinuousClock.now - start

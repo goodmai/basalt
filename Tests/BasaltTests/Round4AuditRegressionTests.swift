@@ -112,7 +112,7 @@ struct Round4CLIRegressionTests {
     @Test("ComposeAdapterSpec rejects dot-only output paths while ComposeFile accepts relative output (#689)")
     func composeAdapterOutputValidation() throws {
         let yamlValid = """
-        version: 1
+        version: 2
         name: test-sys
         models:
           m:
@@ -124,7 +124,7 @@ struct Round4CLIRegressionTests {
               source: ./data.jsonl
             output: ./adapters/my_lora
         pipeline:
-          - m
+          answer: m
         """
         let spec = try ComposeFile.parse(yamlValid, file: "/tmp/compose.yaml", context: ComposeContext().with(base: "/tmp/compose.yaml"))
         #expect(spec.adapters["a"]?.output == "/tmp/adapters/my_lora")

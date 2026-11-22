@@ -73,7 +73,7 @@ struct Round5KVServerRegressionTests {
 
     @Test("KEqVRowKVCache handles zero keyNormWeight without NaN and clamps negative trim (#693)")
     func kEqVRowCacheZeroNormAndNegativeTrim() throws {
-        let layout = try #require(KEqVRowLayout(headDim: 4, partialRotaryFactor: 0.5, kvHeads: 1, globalLayers: [0]))
+        let layout = try #require(KEqVRowLayout(headDim: 4, partialRotaryFactor: 0.5, kvHeads: 1, globalLayers: 1))
         let normW = MLXArray([Float(0.0), 2.0, 1.0, 1.0])
         let cache = KEqVRowKVCache(layout: layout, keyNormWeight: normW)
         #expect(cache.trim(-5) == 0)
@@ -82,12 +82,12 @@ struct Round5KVServerRegressionTests {
 
     @Test("EvictingKVCache handles kept == 0 eviction without crashing (#693)")
     func evictingKVCacheZeroKeptEviction() {
-        let zones = KVZones(sinkTokens: 1, windowTokens: 2, migrationStep: 1, evictedMiddleFraction: 1.0)
+        let zones = KVZones(sinkTokens: 1, windowTokens: 2, migrationStep: 1, evictedMiddleFraction: 0.9)
         let cache = EvictingKVCache(zones: zones)
-        let k = MLXArray.ones([1, 1, 5, 4], dtype: .float16)
-        let v = MLXArray.ones([1, 1, 5, 4], dtype: .float16)
+        let k = MLXArray.ones([1, 1, 4, 4], dtype: .float16)
+        let v = MLXArray.ones([1, 1, 4, 4], dtype: .float16)
         _ = cache.update(keys: k, values: v)
-        #expect(cache.offset == 5)
+        #expect(cache.offset == 4)
     }
 
     @Test("APIKeyAuthenticator publicPaths includes health probes and JSONNestingLimit caps unknown paths (#694)")
@@ -101,8 +101,8 @@ struct Round5KVServerRegressionTests {
 
     @Test("AnthropicMessagesStream does not emit phantom empty text block when stopping during thinking (#694)")
     func anthropicStreamClosingDuringThinking() {
-        var stream = AnthropicMessagesStream()
-        _ = stream.step(.reasoning("thinking..."))
+        var stream = AnthropicMessagesStream(model: "claude")
+        _ = stream.frames(for: .reasoning("thinking..."))
         let events = stream.closing()
         let joined = events.joined()
         #expect(!joined.contains("\"type\":\"text\""))

@@ -17,13 +17,18 @@ struct Round6CoreUIBenchRegressionTests {
 
     @Test("BenchmarkComparator flags NaN candidate as regressed and encodes cleanly to JSON (#696)")
     func benchmarkComparatorNaNAndJSON() throws {
+        let prov = BasaltProvenance(gitCommit: "a", composeSHA256: "b", chip: "M4", unifiedMemoryGB: 24, timestampISO8601: "2026-11-22T00:00:00Z")
         let base = BenchmarkRunArtifact(
-            runID: "b1", suiteID: "s", model: "m",
-            scorecard: BenchmarkScorecard(metrics: ["accuracy": 0.9]), samples: []
+            manifest: BenchmarkManifest(runID: "b1", composeName: "c", suite: "s", seed: 1, temperature: 0),
+            provenance: prov,
+            scorecard: BenchmarkScorecard.evaluate(metrics: ["accuracy": 0.9], gates: nil, samples: []),
+            samples: []
         )
         let cand = BenchmarkRunArtifact(
-            runID: "c1", suiteID: "s", model: "m",
-            scorecard: BenchmarkScorecard(metrics: ["accuracy": Double.nan]), samples: []
+            manifest: BenchmarkManifest(runID: "c1", composeName: "c", suite: "s", seed: 1, temperature: 0),
+            provenance: prov,
+            scorecard: BenchmarkScorecard.evaluate(metrics: ["accuracy": Double.nan], gates: nil, samples: []),
+            samples: []
         )
         let report = BenchmarkComparator.compare(baseline: base, candidate: cand)
         #expect(report.hasRegressions)
@@ -84,8 +89,8 @@ struct Round6CoreUIBenchRegressionTests {
     }
 
     @Test("MCPToolFilter.allowsSpectrum respects disabled experiment tools (#697)")
-    func mcpToolFilterSpectrumDisabled() {
-        let filter = MCPToolFilter(enabled: ["weights_delta"], disabled: ["weights_delta"])
+    func mcpToolFilterSpectrumDisabled() throws {
+        let filter = try MCPToolFilter(enable: ["weights_delta"], disable: ["weights_delta"])
         #expect(!filter.allowsSpectrum(researchTools: false))
     }
 

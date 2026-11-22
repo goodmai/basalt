@@ -12,7 +12,7 @@ struct Round8AuditRegressionTests {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-r8-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let writer = ServeCommand.sessionLogWriter(
-            mode: .metadata,
+            mode: .meta,
             directory: dir.path,
             retention: SessionLogRetention(days: 14, maxTotalMB: Int.max),
             redacts: true,
@@ -26,11 +26,11 @@ struct Round8AuditRegressionTests {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-r8-snap-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        try ModelsConvertCommand.copyToCacheSnapshot(from: dir, to: dir)
+        try ConvertSubcommand.copyToCacheSnapshot(from: dir, to: dir)
         #expect(FileManager.default.fileExists(atPath: dir.path))
         let child = dir.appendingPathComponent("sub")
         #expect(throws: (any Error).self) {
-            try ModelsConvertCommand.copyToCacheSnapshot(from: dir, to: child)
+            try ConvertSubcommand.copyToCacheSnapshot(from: dir, to: child)
         }
     }
 
@@ -79,6 +79,6 @@ struct Round8AuditRegressionTests {
         let waiter = Task { await actor.awaitDecision(id: "req-cancel") }
         waiter.cancel()
         let decision = await waiter.value
-        #expect(decision.status == .expired)
+        #expect(!decision.approved)
     }
 }

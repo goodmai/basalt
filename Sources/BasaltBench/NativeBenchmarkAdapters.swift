@@ -117,13 +117,14 @@ public struct BasaltThroughputAdapter: BenchmarkAdapter {
     }
 
     private func fetchPeakGB(endpoint: BenchmarkEndpoint) async -> Double? {
-        let statsReply: ([String: Any], Int)?
+        let stats: [String: Any]
         if let primary = try? await endpoint.getJSON("/api/v1/stats") {
-            statsReply = primary
+            stats = primary.json
+        } else if let fallback = try? await endpoint.getJSON("/v1/stats") {
+            stats = fallback.json
         } else {
-            statsReply = try? await endpoint.getJSON("/v1/stats")
+            return nil
         }
-        guard let (stats, _) = statsReply else { return nil }
         let mem = stats["memory"] as? [String: Any]
         let peakBytes = (mem?["gpu_peak_bytes"] as? Double)
             ?? (mem?["gpuPeakBytes"] as? Double)

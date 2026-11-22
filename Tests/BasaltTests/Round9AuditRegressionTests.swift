@@ -46,9 +46,12 @@ struct Round9AuditRegressionTests {
             BenchmarkSampleRecord(id: "dup", adapter: "lcb", model: "m", prompt: "p", answer: "a", score: 1.0),
             BenchmarkSampleRecord(id: "dup", adapter: "lcb", model: "m", prompt: "p", answer: "b", score: 0.0)
         ]
+        let prov = BasaltProvenance(gitCommit: "a", composeSHA256: "b", chip: "M4", unifiedMemoryGB: 24, timestampISO8601: "2026-11-22T00:00:00Z")
         let artifact = BenchmarkRunArtifact(
-            runID: "r1", suiteID: "s", model: "m",
-            scorecard: BenchmarkScorecard(metrics: ["accuracy": 0.5]), samples: samples
+            manifest: BenchmarkManifest(runID: "r1", composeName: "c", suite: "s", seed: 1, temperature: 0),
+            provenance: prov,
+            scorecard: BenchmarkScorecard.evaluate(metrics: ["accuracy": 0.5], gates: nil, samples: samples),
+            samples: samples
         )
         let plan = SubmissionFormatter.build(target: .liveCodeBench, artifact: artifact, submit: nil)
         #expect(!plan.files.isEmpty)
