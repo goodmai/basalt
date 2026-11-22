@@ -9,6 +9,7 @@ public protocol InferenceEngine: AudioTranscriber {
     var isLoaded: Bool { get async }
     var kvMemoryBudget: ByteCount? { get async }
     var supportsKVZones: Bool { get async }
+    var sharedKVRowLayout: KEqVRowLayout? { get async }
     var supportsKVEviction: Bool { get async }
     var supportsKVQuantization: Bool { get async }
     var evictsKVInFullPrecision: Bool { get async }
@@ -33,6 +34,7 @@ extension InferenceEngine {
     public func releaseCaches() async {}
     public var kvMemoryBudget: ByteCount? { get async { nil } }
     public var supportsKVZones: Bool { get async { true } }
+    public var sharedKVRowLayout: KEqVRowLayout? { get async { nil } }
     public var supportsKVEviction: Bool { get async { true } }
     public var supportsKVQuantization: Bool { get async { true } }
     public var evictsKVInFullPrecision: Bool { get async { false } }

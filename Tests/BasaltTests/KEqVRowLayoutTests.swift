@@ -12,7 +12,7 @@ struct KEqVRowLayoutTests {
         let types = (0 ..< layers).map { ($0 + 1).isMultiple(of: globalEvery) ? "full_attention" : "sliding_attention" }
         return ["text_config": [
             "attention_k_eq_v": true, "global_head_dim": 512, "head_dim": 256, "num_hidden_layers": layers,
-            "num_kv_shared_layers": 0, "num_global_key_value_heads": kvHeads, "num_key_value_heads": 8, "layer_types": types,
+            "num_kv_shared_layers": 0, "num_global_key_value_heads": kvHeads, "num_key_value_heads": 8, "num_attention_heads": 16, "sliding_window": 1024, "layer_types": types,
             "rope_parameters": ["full_attention": ["partial_rotary_factor": 0.25, "rope_type": "proportional"]],
         ] as [String: Any]]
     }
@@ -33,6 +33,17 @@ struct KEqVRowLayoutTests {
         #expect(Set(layout.keyOrder) == Set(0 ..< 512) && Set(layout.valueOrder) == Set(0 ..< 512))
         #expect(layout.outputRestore.map { layout.valueOrder[$0] } == Array(0 ..< 512))
         #expect(Array(layout.keyOrder[128...]) == Array(layout.valueOrder[..<384]))
+    }
+
+    @Test("The KV geometry of a 12B-shaped config drops 384 values per global KV head per token, 6,144 bytes at fp16, with sliding layers unchanged")
+    func geometry() throws {
+        let config = Self.config(layers: 48, globalEvery: 6, kvHeads: 1)
+        let stock = try #require(KVCacheGeometry(config: config))
+        let layout = try #require(KEqVRowLayout(config: config))
+        let row = stock.sharingKEqVRows(layout)
+        #expect(stock.bytesPerToken(nil) - row.bytesPerToken(nil) == 6_144)
+        #expect(row.windowedElementsPerToken == stock.windowedElementsPerToken && row.window == stock.window)
+        #expect(KVCacheGeometry(parameterProxy: 12).sharingKEqVRows(layout) == KVCacheGeometry(parameterProxy: 12))
     }
 
     @Test("No layout without attention_k_eq_v, with full rotation, or with no rotation")

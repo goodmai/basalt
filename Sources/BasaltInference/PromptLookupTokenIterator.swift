@@ -419,7 +419,7 @@ extension PromptLookupTokenIterator {
 
     static func isReplayableHybrid(_ cache: [KVCache]) -> Bool {
         cache.contains { $0 is MambaCache }
-            && cache.allSatisfy { $0 is MambaCache || type(of: $0) == KVCacheSimple.self }
+            && cache.allSatisfy { $0 is MambaCache || $0.holdsWholeContext }
     }
 
     static func routesExperts(_ model: any LanguageModel) -> Bool {

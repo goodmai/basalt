@@ -242,10 +242,15 @@ struct GenerationLauncher {
         return MTPPrefix(state).map { (prompt.snapshot(at: tokens.upperBound, state: nil), $0) }
     }
 
-    func cached(_ prompt: CachedPrompt, batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
+    func freshLayers(rows: KEqVRowLayout?) throws -> [any KVCache] {
+        let layers = try context.model.newCache(parameters: params)
+        return rows.map { KEqVRowKVCache.replacingFullAttention(layers, model: context.model, layout: $0) } ?? layers
+    }
+
+    func cached(_ prompt: CachedPrompt, batch: BatchedDecoder?, lookup: LookupOptions, rows: KEqVRowLayout? = nil) throws -> MLXInferenceEngine.GenerationLaunch {
         let (reuse, blend) = (prompt.reuse, prompt.blend)
         try components.validate(parameters: params)
-        var cache = try reuse?.cache ?? PromptCache(context.model.newCache(parameters: params))
+        var cache = try reuse?.cache ?? PromptCache(freshLayers(rows: rows))
         let reused = reuse?.reusedTokens ?? 0
         let blended = cache.isHybrid ? nil : blend.flatMap {
             $0.store.extend(

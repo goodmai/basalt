@@ -7,12 +7,16 @@ extension KVCache {
     var isSnapshotOnly: Bool {
         self is ArraysCache || type(of: self) == RotatingKVCache.self
     }
+
+    var holdsWholeContext: Bool {
+        type(of: self) == KVCacheSimple.self || self is KEqVRowKVCache
+    }
 }
 
 extension PromptCache {
     var isHybrid: Bool {
         layers.contains { $0.isSnapshotOnly }
-            && layers.allSatisfy { $0.isSnapshotOnly || type(of: $0) == KVCacheSimple.self }
+            && layers.allSatisfy { $0.isSnapshotOnly || $0.holdsWholeContext }
     }
 
     func isSnapshot(of count: Int) -> Bool {

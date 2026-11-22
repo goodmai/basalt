@@ -76,7 +76,7 @@ extension MLXInferenceEngine {
     }
 
     func restoreFromDisk(_ namespace: String, prompt: [Int], container: ModelContainer, epoch: ModelEpoch) async {
-        guard promptCacheDisk != nil, modelFingerprint != nil,
+        guard promptCacheDisk != nil, modelFingerprint != nil, !kvSharedRowApplies,
               promptCaches.storedPrefix(of: prompt, in: namespace) < prompt.count - 1,
               let layout = await cacheLayout(container, epoch: epoch),
               epoch == modelEpoch, let fingerprint = modelFingerprint,

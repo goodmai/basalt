@@ -5,12 +5,17 @@ import MLXLMCommon
 extension MLXInferenceEngine {
     func probeAttentionCaches(directory: URL, epoch: ModelEpoch) async {
         await probeQuest()
-        await probeKEqVRow(directory: directory, epoch: epoch)
+        await probeKEqVRow(config: ModelCache.config(at: directory))
     }
 
-    func probeKEqVRow(directory: URL, epoch: ModelEpoch) async {
+    var kvSharedRowApplies: Bool { configuration.kvSharedRow && modelFacts.kEqVRow != nil }
+
+    public var sharedKVRowLayout: KEqVRowLayout? { kvSharedRowApplies ? modelFacts.kEqVRow : nil }
+
+    func probeKEqVRow(config: [String: Any]?) async {
         guard configuration.kvSharedRow, let container else { return }
-        guard let layout = ModelCache.config(at: directory).flatMap(KEqVRowLayout.init(config:)) else {
+        let epoch = modelEpoch
+        guard let layout = config.flatMap(KEqVRowLayout.init(config:)) else {
             return logger.warn("--experimental-kv-shared-row does not apply: the model's config has no attention_k_eq_v with partial RoPE on its global layers (Gemma 4 12B, 26B-A4B and 31B have it); the KV cache stays stock")
         }
         do {
@@ -22,6 +27,6 @@ extension MLXInferenceEngine {
         }
         record(.learned(epoch) { $0.kEqVRow = layout })
         let bytes = layout.globalBytesPerToken()
-        logger.info("KV shared row (experimental, #645): \(layout.globalLayers) global layers store one \(layout.rowWidth)-value row per KV head instead of \(2 * layout.headDim) values, \(bytes.stock) → \(bytes.row) bytes per token; requests without a prompt-cache namespace use it")
+        logger.info("KV shared row (experimental, #645): \(layout.globalLayers) global layers store one \(layout.rowWidth)-value row per KV head instead of \(2 * layout.headDim) values, \(bytes.stock) → \(bytes.row) bytes per token; the in-memory prompt cache keeps rows, the disk prompt cache is skipped")
     }
 }
