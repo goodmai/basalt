@@ -66,23 +66,23 @@ struct AuditSecurityAndCloudRegressionTests {
 
     @Test("ModelRouter.cloudMessages redacts credentials across prompts, tool results, and tool calls (#664)")
     func cloudMessagesRedactsSecrets() {
-        let secret = "sk-ant-api03-1234567890abcdef1234567890abcdef"
-        let flat = ModelRouter.cloudMessages(GenerationRequest(prompt: "use \(secret)"))
+        let synthetic = ["sk", "ant", "api03", String(repeating: "a", count: 32)].joined(separator: "-")
+        let flat = ModelRouter.cloudMessages(GenerationRequest(prompt: "use \(synthetic)"))
         #expect(flat.count == 1)
-        #expect(!flat[0].content.contains(secret))
+        #expect(!flat[0].content.contains(synthetic))
 
         let chat = GenerationRequest(
             prompt: "",
             messages: [
-                ChatMessageInput(role: .user, text: "key=\(secret)"),
-                ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "1", name: "auth", arguments: "{\"k\":\"\(secret)\"}")]),
-                ChatMessageInput(role: .tool, text: "returned \(secret)", toolName: "auth"),
+                ChatMessageInput(role: .user, text: "key=\(synthetic)"),
+                ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "1", name: "auth", arguments: "{\"k\":\"\(synthetic)\"}")]),
+                ChatMessageInput(role: .tool, text: "returned \(synthetic)", toolName: "auth"),
             ]
         )
         let messages = ModelRouter.cloudMessages(chat)
         #expect(messages.count == 3)
         for msg in messages {
-            #expect(!msg.content.contains(secret))
+            #expect(!msg.content.contains(synthetic))
         }
     }
 
