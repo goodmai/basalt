@@ -13,7 +13,7 @@ enum PaddleOCRVLText {
         let steps = MLXArray(Int32(0) ..< Int32(length))
         let shift = delta?.asType(.int32) ?? MLXArray(Int32(0))
         let base = switch cache?.ropeOffset {
-        case .batch(let offsets): offsets.asType(.int32).reshaped(-1, 1) + steps
+        case .batch(let offsets): offsets.asType(.int32).reshaped(-1, 1) + steps + shift
         case .scalar(let offset): broadcast(steps + Int32(offset) + shift, to: [batch, length])
         case nil: broadcast(steps + shift, to: [batch, length])
         }

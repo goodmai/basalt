@@ -64,7 +64,7 @@ final class QuestKVCache: KVCacheAttentionProtocol {
     ) -> MLXArray {
         let (k, v) = base.update(keys: keys, values: values)
         index(k)
-        guard queries.dim(2) == 1, maxima != nil, middle.count > topK else {
+        guard queries.dim(2) == 1, topK > 0, maxima != nil, middle.count > topK else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
         }
         sparseSteps += 1

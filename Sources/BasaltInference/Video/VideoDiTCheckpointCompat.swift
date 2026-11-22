@@ -125,7 +125,7 @@ extension VideoDiTCheckpointCompat {
         let alpha = request.alpha ?? 0.5
         var manifest: [String: MACaQLayerSpec] = [:]
         for (path, sub) in module.namedModules() {
-            guard type(of: sub) == Linear.self, let lin = sub as? Linear,
+            guard let lin = denseLinear(from: sub),
                   lin.shape.1.isMultiple(of: align) else { continue }
             let built = try quantizeLinearToMACaQ(lin, mode: mode, hadamardBlock: hadamard, alpha: alpha)
             try PVTuner.swapModule(path, with: built.layer, in: module)
@@ -188,7 +188,7 @@ extension VideoDiTCheckpointCompat {
         eval(tlut)
         var entries: [String: QTIPNativeLoader.LayerEntry] = [:]
         for (path, sub) in module.namedModules() {
-            guard type(of: sub) == Linear.self, let lin = sub as? Linear else { continue }
+            guard let lin = denseLinear(from: sub) else { continue }
             let (outF, inF) = lin.shape
             let inKey = QTIPQuantizer.sharedInputGroupKey(path: path, inFeatures: inF, sharedMoERHT: false)
             let outKey = QTIPQuantizer.sharedOutputKey(path: path, sharedMoERHT: false)
@@ -226,11 +226,27 @@ extension VideoDiTCheckpointCompat {
         let shards = try writer.finish()
         let cfgURL = source.appending(component: "config.json")
         var cfg = (try? JSONSerialization.jsonObject(with: Data(contentsOf: cfgURL)) as? [String: Any]) ?? [:]
+        cfg.removeValue(forKey: "quantization")
+        cfg.removeValue(forKey: "quantization_config")
         let manifest = QTIPNativeLoader.Manifest(bpw: rate.bpw, seed: seed, layers: entries, sharedMoERHT: false)
         cfg["qtip_quantization"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(manifest))
         try JSONSerialization.data(withJSONObject: cfg, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appending(component: "config.json"))
         return (shards, bytesAfter)
+    }
+
+    private static func denseLinear(from sub: Module) -> Linear? {
+        if type(of: sub) == Linear.self, let lin = sub as? Linear {
+            return lin
+        }
+        if let ql = sub as? QuantizedLinear {
+            let deq = MLX.dequantized(
+                ql.weight, scales: ql.scales, biases: ql.biases,
+                groupSize: ql.groupSize, bits: ql.bits, mode: ql.mode, dtype: .float32)
+            eval(deq)
+            return Linear(weight: deq, bias: ql.bias)
+        }
+        return nil
     }
 }
 

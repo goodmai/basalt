@@ -43,10 +43,15 @@ package enum BlockSparseRoutingMetal {
         let d = q.dim(-1)
         let heads = q.size / max(1, lQ * d)
         let numBlocks = lK / blockSize
-        let kCentroids = mean(k.asType(.float32).reshaped(heads, numBlocks, blockSize, d), axis: 2)
+        guard numBlocks > 0 else {
+            return MLXArray.zeros([heads, lQ, 0], type: Int32.self)
+        }
+        let usable = numBlocks * blockSize
+        let kTrimmed = usable == lK ? k : k[.ellipsis, 0 ..< usable, 0...]
+        let kCentroids = mean(kTrimmed.asType(.float32).reshaped(heads, numBlocks, blockSize, d), axis: 2)
         let q3D = q.asType(.float32).reshaped(heads, lQ, d)
         let blockScores = matmul(q3D, kCentroids.swappedAxes(-1, -2))
-        let kSel = min(topBlocks, numBlocks)
+        let kSel = min(max(0, topBlocks), numBlocks)
         return argSort(-blockScores, axis: -1)[.ellipsis, 0 ..< kSel].asType(.int32)
     }
 
@@ -100,9 +105,17 @@ package enum BlockSparseRoutingMetal {
         let q3D = q.asType(.float32).reshaped(heads, lQ, d)
         let k3D = k.asType(.float32).reshaped(heads, lK, d)
         let v3D = v.asType(.float32).reshaped(heads, lK, d)
+        guard numBlocks > 0 else {
+            let winStart = max(0, lK - config.slidingWindow)
+            let wScores = matmul(q3D, k3D[0..., winStart ..< lK, 0...].swappedAxes(-1, -2)) * config.scale
+            return matmul(softmax(wScores, axis: -1), v3D[0..., winStart ..< lK, 0...]).asType(origType).reshaped(q.shape)
+        }
+        let usable = numBlocks * config.blockSize
+        let kBlocks = usable == lK ? k3D : k3D[0..., 0 ..< usable, 0...]
+        let vBlocks = usable == lK ? v3D : v3D[0..., 0 ..< usable, 0...]
 
-        let kComp = mean(k3D.reshaped(heads, numBlocks, config.blockSize, d), axis: 2)
-        let vComp = mean(v3D.reshaped(heads, numBlocks, config.blockSize, d), axis: 2)
+        let kComp = mean(kBlocks.reshaped(heads, numBlocks, config.blockSize, d), axis: 2)
+        let vComp = mean(vBlocks.reshaped(heads, numBlocks, config.blockSize, d), axis: 2)
         let compWeights = softmax(matmul(q3D, kComp.swappedAxes(-1, -2)) * config.scale, axis: -1)
         let outComp = matmul(compWeights, vComp)
 

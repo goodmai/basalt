@@ -28,7 +28,7 @@ final class MACaQShardTeacherReader {
             for key in try loadArrays(url: shard).keys { map[key] = shard }
         }
         self.shardOf = map
-        if !isNF4, cfgJSON["quantization"] != nil {
+        if !isNF4, cfgJSON["quantization"] != nil || cfgJSON["quantization_config"] != nil {
             self.quantization = try? JSONDecoder.json5().decode(BaseConfiguration.self, from: cfgData).perLayerQuantization
         } else {
             self.quantization = nil
@@ -86,7 +86,9 @@ final class MACaQShardTeacherReader {
             eval(deq)
             return deq
         }
-        return weight.asType(.float32)
+        throw BasaltError.invalidRequestStructure(
+            details: "MACaQShardTeacherReader: quantized tensor \(base).weight has scales but no matching quantization spec in config.json"
+        )
     }
 }
 

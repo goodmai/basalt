@@ -45,6 +45,8 @@ extension EngineConfiguration {
         var configuration = self
         configuration.batchSlots = max(1, batchSlots)
         configuration.mtpBlockSize = max(2, mtpBlockSize)
+        configuration.mobaTopK = max(1, mobaTopK)
+        configuration.questTopK = questTopK.map { max(1, $0) }
         return configuration
     }
 }
