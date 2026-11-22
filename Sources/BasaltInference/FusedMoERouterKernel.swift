@@ -12,7 +12,7 @@ public struct FusedMoERouterOutput {
 }
 
 public enum FusedMoERouterKernel {
-    public static let maxExperts = 256
+    public static let maxExperts = 1024
     public static let maxTopK = 16
     public static let dtypes: Set<DType> = [.float16, .bfloat16, .float32]
 
@@ -52,6 +52,7 @@ public enum FusedMoERouterKernel {
                 ("K", clampedK),
                 ("NORM_TOPK", normTopkProb),
                 ("SOFTMAX_FIRST", softmaxBeforeTopK),
+                ("PER_LANE", perLane(experts)),
             ],
             grid: (32, paddedRows, 1),
             threadGroup: (32, rowsPerGroup, 1),
@@ -60,6 +61,10 @@ public enum FusedMoERouterKernel {
         return FusedMoERouterOutput(
             indices: outputs[0].reshaped(outShape),
             weights: outputs[1].reshaped(outShape))
+    }
+
+    static func perLane(_ experts: Int) -> Int {
+        [8, 16, 32].first { $0 * 32 >= experts } ?? 32
     }
 
     public static func reference(
@@ -96,7 +101,6 @@ public enum FusedMoERouterKernel {
 
 private enum FusedMoERouterMetal {
     static let source = """
-        constexpr int MAX_PER_LANE = 8;
         constexpr int MAX_IDX = 2147483647;
         const int lane = int(thread_index_in_simdgroup);
         const int row = int(thread_position_in_grid.y);
@@ -106,11 +110,11 @@ private enum FusedMoERouterMetal {
             return;
         }
 
-        float vals[MAX_PER_LANE];
-        int idxs[MAX_PER_LANE];
+        float vals[PER_LANE];
+        int idxs[PER_LANE];
         float lane_max = -INFINITY;
         const size_t base = size_t(row) * size_t(V);
-        for (int slot = 0; slot < MAX_PER_LANE; slot++) {
+        for (int slot = 0; slot < PER_LANE; slot++) {
             const int col = lane + 32 * slot;
             if (col < V) {
                 const float raw = float(logits[base + size_t(col)]);
@@ -130,7 +134,7 @@ private enum FusedMoERouterMetal {
             row_max = simd_max(lane_max);
             float lane_exp = 0.0f;
             if (row_max > -INFINITY && row_max < INFINITY) {
-                for (int slot = 0; slot < MAX_PER_LANE; slot++) {
+                for (int slot = 0; slot < PER_LANE; slot++) {
                     if (idxs[slot] < V) {
                         lane_exp += metal::precise::exp(vals[slot] - row_max);
                     }
@@ -143,20 +147,20 @@ private enum FusedMoERouterMetal {
         int top_idxs[K];
         for (int r = 0; r < K; r++) {
             float lane_best = -INFINITY;
-            for (int slot = 0; slot < MAX_PER_LANE; slot++) {
+            for (int slot = 0; slot < PER_LANE; slot++) {
                 if (idxs[slot] < V && vals[slot] > lane_best) {
                     lane_best = vals[slot];
                 }
             }
             const float win_val = simd_max(lane_best);
             int lane_win_idx = MAX_IDX;
-            for (int slot = 0; slot < MAX_PER_LANE; slot++) {
+            for (int slot = 0; slot < PER_LANE; slot++) {
                 if (idxs[slot] < V && vals[slot] == win_val && idxs[slot] < lane_win_idx) {
                     lane_win_idx = idxs[slot];
                 }
             }
             const int win_idx = simd_min(lane_win_idx);
-            for (int slot = 0; slot < MAX_PER_LANE; slot++) {
+            for (int slot = 0; slot < PER_LANE; slot++) {
                 if (idxs[slot] == win_idx) {
                     idxs[slot] = MAX_IDX;
                     vals[slot] = -INFINITY;
