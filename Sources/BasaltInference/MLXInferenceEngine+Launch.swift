@@ -129,6 +129,13 @@ extension MLXInferenceEngine {
                 return (stream, task, prefill, box)
             }
         }
+        if config.toolCallFormat == .inkling, let parser = InklingReasoningStateMachine(tokenizer: context.tokenizer) {
+            let box = OnyxReasoningBox()
+            let (stream, task) = generateTask(
+                promptTokenCount: promptTokenCount, modelConfiguration: config, tokenizer: context.tokenizer,
+                iterator: OnyxReasoningTapIterator(base: iterator, parser: parser, box: box), tools: tools, toolCallPolicy: toolCallPolicy)
+            return (stream, task, prefill, box)
+        }
         let (stream, task) = generateTask(
             promptTokenCount: promptTokenCount, modelConfiguration: config, tokenizer: context.tokenizer,
             iterator: iterator, tools: tools, toolCallPolicy: toolCallPolicy)
