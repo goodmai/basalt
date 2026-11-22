@@ -21,7 +21,7 @@ struct NoRepeatNGram: LogitProcessor {
     }
 
     func copy() -> NoRepeatNGram {
-        var cloned = NoRepeatNGram(size: size, window: window, whitelist: whitelist)
+        let cloned = NoRepeatNGram(size: size, window: window, whitelist: whitelist)
         cloned.history.tokens = history.tokens
         cloned.history.unread = history.unread
         return cloned
