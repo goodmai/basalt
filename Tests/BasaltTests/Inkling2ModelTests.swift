@@ -88,6 +88,37 @@ struct Inkling2ModelTests {
         #expect(abs(fused - reference).max().item(Float.self) <= 1e-4)
     }
 
+    static func stepwise(_ model: Inkling2Model) throws -> MLXArray {
+        let caches = try model.newCache(parameters: nil)
+        return concatenated(Self.tokens.prefix(10).map { model(MLXArray([$0])[.newAxis], cache: caches).asType(.float32) }, axis: 1)
+    }
+
+    @Test("Compiled decode steps follow weight updates: after an update they equal the eager path on the new weights, not the old ones")
+    func compiledStepsFollowWeightUpdates() throws {
+        let model = try Self.model()
+        let before = try Self.stepwise(model)
+        let key = "model.language_model.layers.1.self_attn.o_proj.weight"
+        let weight = try #require(Dictionary(uniqueKeysWithValues: model.parameters().flattened())[key])
+        model.update(parameters: ModuleParameters.unflattened([(key, weight * 3)]))
+        let compiled = try Self.stepwise(model)
+        model.train(true)
+        let eager = try Self.stepwise(model)
+        model.train(false)
+        #expect(abs(compiled - eager).max().item(Float.self) <= 2e-3)
+        #expect(abs(compiled - before).max().item(Float.self) > 1e-2)
+    }
+
+    final class TappedLinear: Linear {}
+
+    @Test("A wrapped or tapped module turns the compiled step off for that layer, so its Swift code runs on every token")
+    func wrappedModuleFallsBackToEager() throws {
+        let model = try Self.model()
+        let layer = model.model.languageModel.layers[1]
+        #expect(layer.stepFingerprint() != nil)
+        layer.attention.update(modules: ModuleChildren.unflattened([("o_proj", TappedLinear(64, 64, bias: false) as Module)]))
+        #expect(layer.stepFingerprint() == nil)
+    }
+
     @Test("The window cache keeps at least window − 1 earlier tokens, reports where its keys start, and trims")
     func windowCache() {
         let cache = Inkling2WindowKVCache(window: 4)
