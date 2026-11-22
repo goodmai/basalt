@@ -16,6 +16,7 @@ public final class MCPServer: Service, Sendable {
         var imageStoreDirectory: URL?
         var videoSynthesizer: (any VideoSynthesizer)?
         var videoStoreDirectory: URL?
+        var hitlApprovals: HITLApprovalActor?
     }
 
     let orchestrator: any ModelOrchestrating
@@ -37,6 +38,7 @@ public final class MCPServer: Service, Sendable {
     var imageStoreDirectory: URL? { options.imageStoreDirectory }
     var videoSynthesizer: (any VideoSynthesizer)? { options.videoSynthesizer }
     var videoStoreDirectory: URL? { options.videoStoreDirectory }
+    var hitlApprovals: HITLApprovalActor? { options.hitlApprovals }
 
     public init(
         orchestrator: any ModelOrchestrating,
@@ -116,6 +118,12 @@ public final class MCPServer: Service, Sendable {
     public func withDecisions(_ engine: (any DecisionEngine)?) -> MCPServer {
         var next = options
         next.decisions = GatedDecisionEngine.serving(engine, gate: orchestrator.gate)
+        return MCPServer(self, options: next)
+    }
+
+    public func withHITLApprovals(_ approvals: HITLApprovalActor?) -> MCPServer {
+        var next = options
+        next.hitlApprovals = approvals
         return MCPServer(self, options: next)
     }
 

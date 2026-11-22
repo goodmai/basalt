@@ -34,8 +34,12 @@ struct PipelineController: Sendable {
             throw .invalidRequestStructure(
                 details: "a pipeline request is JSON with attachments [{kind: pdf|image|audio, data: base64, format?}], text, questions {id: {type, instructions, criteria?}}, task and pages")
         }
+        let rawAttachments = body.attachments ?? []
+        guard rawAttachments.count <= PipelineRequest.maxAttachments else {
+            throw .invalidRequestStructure(details: "pipeline: at most \(PipelineRequest.maxAttachments) attachments are allowed")
+        }
         var attachments: [PipelineAttachment] = []
-        for attachment in body.attachments ?? [] {
+        for attachment in rawAttachments {
             switch (attachment.data, attachment.path) {
             case (let encoded?, nil):
                 attachments.append(try PipelineAttachment(kind: attachment.kind, encoded: encoded, format: attachment.format))

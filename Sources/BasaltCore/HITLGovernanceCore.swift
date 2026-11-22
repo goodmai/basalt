@@ -216,7 +216,8 @@ public actor HITLApprovalActor {
         argumentsSummary: String,
         now: Double
     ) throws(BasaltError) -> HITLApprovalRequest {
-        try store.submit(id: id, toolName: toolName, argumentsSummary: argumentsSummary, now: now)
+        _ = expire(now: now)
+        return try store.submit(id: id, toolName: toolName, argumentsSummary: argumentsSummary, now: now)
     }
 
     public func awaitDecision(id: String) async -> HITLApprovalDecision {
@@ -235,6 +236,7 @@ public actor HITLApprovalActor {
         reason: String,
         now: Double
     ) throws(BasaltError) -> HITLApprovalDecision {
+        _ = expire(now: now)
         let decision = try store.decide(id: id, approved: approved, reviewer: reviewer, reason: reason, now: now)
         finish(decision)
         return decision

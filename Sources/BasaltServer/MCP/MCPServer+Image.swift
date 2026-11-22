@@ -165,6 +165,13 @@ extension MCPArguments {
     }
 
     private static func decodeMCPReferences(_ args: [String: Any]?, allowedIn directories: [URL]) throws(BasaltError) -> [Data] {
+        let total = (args?["image"] is String ? 1 : 0)
+            + ((args?["images"] as? [String])?.count ?? 0)
+            + (args?["path"] is String ? 1 : 0)
+            + ((args?["paths"] as? [String])?.count ?? 0)
+        guard total <= ImageGenerationRequest.maxReferenceImages else {
+            throw .invalidRequestStructure(details: "at most \(ImageGenerationRequest.maxReferenceImages) reference images are allowed")
+        }
         var refs: [Data] = []
         if let single = args?["image"] as? String {
             refs.append(try ImageArtifactStore.decodeBase64Payload(single, field: "image"))

@@ -19,6 +19,7 @@ extension MCPServer {
                 }
                 throw MCPFailure.methodNotFound("\(call.name) is an experiment tool: start the server with serve --research-tools or --mcp-enable \(call.name) to use it")
             }
+            try await enforceHITLApproval(toolName: call.name, args: call.arguments)
             let output: ToolResult
             if let known {
                 output = try await result(of: known, args: call.arguments)
@@ -28,6 +29,28 @@ extension MCPServer {
             writer(MCPWire.result(id: id, output))
         } catch {
             writer(MCPWire.error(id: id, error))
+        }
+    }
+
+    private func enforceHITLApproval(toolName: String, args: [String: Any]?) async throws(MCPFailure) {
+        guard let approvals = hitlApprovals, await approvals.requiresApproval(toolName: toolName) else { return }
+        let requestId = UUID().uuidString
+        let summary = args.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+            .flatMap { String(data: $0, encoding: .utf8) }
+            .map { String($0.prefix(256)) } ?? "{}"
+        do throws(BasaltError) {
+            _ = try await approvals.enqueue(
+                id: requestId,
+                toolName: toolName,
+                argumentsSummary: summary,
+                now: Date().timeIntervalSince1970
+            )
+        } catch {
+            throw MCPFailure(error)
+        }
+        let decision = await approvals.awaitDecision(id: requestId)
+        guard decision.status == .approved else {
+            throw MCPFailure.invalidParams("Tool '\(toolName)' denied by HITL governance (\(decision.status.rawValue)): \(decision.reason)")
         }
     }
 

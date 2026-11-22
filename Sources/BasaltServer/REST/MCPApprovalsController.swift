@@ -20,6 +20,7 @@ struct MCPApprovalsController: Sendable {
 
     @Sendable
     func listApprovals(request _: Request, context _: BasicRequestContext) async throws -> Response {
+        _ = await approvals.expire(now: clock())
         let payload = ApprovalsSnapshot(
             pending: await approvals.pendingRequests(),
             audit: await approvals.auditLog()
