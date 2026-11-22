@@ -3,11 +3,16 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+private let compiledResidual = compile(shapeless: true) { (residual: MLXArray, update: MLXArray) -> MLXArray in
+    (residual + update.asType(.float32)).asType(update.dtype)
+}
+
 final class Inkling2DecoderLayer: Module {
     let index: Int
     let global: Bool
     let blockBoundary: Bool
     let kernel: Int
+    let steps = Inkling2CompiledSteps()
 
     @ModuleInfo(key: "attention_input") var attentionInput: Inkling2Query?
     @ModuleInfo(key: "mlp_input") var mlpInput: Inkling2Query
@@ -56,6 +61,13 @@ final class Inkling2DecoderLayer: Module {
     func callAsFunction(
         _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
     ) -> (MLXArray, MLXArray?) {
+        if hidden.dim(1) == 1, !training, let out = compiledDecode(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages) { return out }
+        return eager(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages)
+    }
+
+    func eager(
+        _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
+    ) -> (MLXArray, MLXArray?) {
         let dtype = hidden.dtype
         var states: [MLXArray?] = (0 ..< 4).map { conv?[$0] }
         let normedResidual = Inkling2Ops.unitRMS(hidden)
@@ -80,10 +92,10 @@ final class Inkling2DecoderLayer: Module {
                 if let window { conv[slot] = Inkling2Ops.convState(window, kernel: kernel) }
             }
         }
-        return ((residual + afterMLP.asType(.float32)).asType(dtype), blocks)
+        return (compiledResidual(residual, afterMLP), blocks)
     }
 
-    private func attentionInputs(_ hidden: MLXArray, mixed: MLXArray?, messages: MLXArray?, dtype: DType) -> Inkling2AttentionInputs {
+    func attentionInputs(_ hidden: MLXArray, mixed: MLXArray?, messages: MLXArray?, dtype: DType) -> Inkling2AttentionInputs {
         var (q, k, v) = global
             ? (mixed?[.ellipsis, 0, 0...] ?? hidden, mixed?[.ellipsis, 1, 0...] ?? hidden, mixed?[.ellipsis, 2, 0...] ?? hidden)
             : (mixed?[.ellipsis, 0, 0...] ?? hidden, mixed?[.ellipsis, 0, 0...] ?? hidden, mixed?[.ellipsis, 0, 0...] ?? hidden)
