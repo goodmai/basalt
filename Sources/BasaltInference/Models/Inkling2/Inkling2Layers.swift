@@ -3,6 +3,14 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+private let compiledRouting = MLXLMCommon.compile { (x: MLXArray, weight: MLXArray, correction: MLXArray, settings: MLXArray) -> (MLXArray, MLXArray) in
+    let topK = settings.dim(0) - 1
+    let scores = sigmoid(matmul(x.asType(.float32), weight.asType(.float32).transposed()))
+    let indices = argPartition(-(scores + correction.asType(.float32)), kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
+    let selected = takeAlong(scores, indices, axis: -1)
+    return (indices, selected / (selected.sum(axis: -1, keepDims: true) + 1e-20) * settings[0])
+}
+
 final class Inkling2Router: Module {
     let topK: Int
     let routeScale: Float
@@ -16,11 +24,7 @@ final class Inkling2Router: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray) {
-        let scores = sigmoid(matmul(x.asType(.float32), weight.asType(.float32).transposed()))
-        let biased = scores + correction.asType(.float32)
-        let indices = argPartition(-biased, kth: topK - 1, axis: -1)[.ellipsis, ..<topK]
-        let selected = takeAlong(scores, indices, axis: -1)
-        return (indices, selected / (selected.sum(axis: -1, keepDims: true) + 1e-20) * routeScale)
+        compiledRouting(x, weight, correction, MLXArray.full([topK + 1], values: MLXArray(routeScale)))
     }
 }
 
@@ -79,6 +83,10 @@ final class Inkling2Query: Module {
     }
 }
 
+private let compiledMessageBlend = MLXLMCommon.compile(shapeless: true) { (hidden: MLXArray, message: MLXArray, forget: MLXArray, gain: MLXArray) -> MLXArray in
+    (1 - tanh(forget)) * hidden.asType(.float32) + tanh(gain) * message.asType(.float32)
+}
+
 final class Inkling2MessageGate: Module {
     @ModuleInfo(key: "down_proj") var downProj: Linear
     @ModuleInfo(key: "forget_gate_proj") var forgetProj: Linear
@@ -93,9 +101,7 @@ final class Inkling2MessageGate: Module {
     func callAsFunction(_ hidden: MLXArray, message: MLXArray) -> MLXArray {
         let joined = concatenated([Inkling2Ops.unitRMS(hidden), Inkling2Ops.unitRMS(message)], axis: -1)
         let reduced = downProj(joined.asType(downProj.weight.dtype)).asType(.float32)
-        let forget = tanh(forgetProj(reduced))
-        let gain = tanh(messageProj(reduced))
-        return (1 - forget) * hidden.asType(.float32) + gain * message.asType(.float32)
+        return compiledMessageBlend(hidden, message, forgetProj(reduced), messageProj(reduced))
     }
 }
 

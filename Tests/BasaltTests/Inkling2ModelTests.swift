@@ -68,6 +68,26 @@ struct Inkling2ModelTests {
         }
     }
 
+    @Test("Fused SDPA attention (per-head sinks at decode, a zero key carrying per-token sinks in prefill) matches the reference path (#228)",
+          arguments: [(1, 0, false), (1, 9, true), (5, 3, false), (5, 0, true)])
+    func fusedAttentionMatchesReference(length: Int, keyStart: Int, global: Bool) throws {
+        let model = try Self.model()
+        let layer = model.model.languageModel.layers[global ? 1 : 0]
+        let attention = layer.attention
+        let keys = 12
+        let key = MLXRandom.key(6501)
+        let q = MLXRandom.normal([1, 4, length, 16], key: key)
+        let k = MLXRandom.normal([1, 2, keys, 16], key: MLXRandom.key(6502))
+        let v = MLXRandom.normal([1, 2, keys, 16], key: MLXRandom.key(6503))
+        let bias = MLXRandom.normal([1, length, 4, global ? 8 : 8], key: MLXRandom.key(6504))
+        let sinks = MLXRandom.normal([1, length, 4], key: MLXRandom.key(6505))
+        let positions = Inkling2Positions(query: keyStart + keys - length, key: keyStart)
+        let fused = attention.attend(q, k, v, bias: bias, sinks: sinks, positions: positions)
+        let reference = attention.attendReference(q, k, v, bias: bias, sinks: sinks, positions: positions)
+        #expect(fused.shape == reference.shape)
+        #expect(abs(fused - reference).max().item(Float.self) <= 1e-4)
+    }
+
     @Test("The window cache keeps at least window − 1 earlier tokens, reports where its keys start, and trims")
     func windowCache() {
         let cache = Inkling2WindowKVCache(window: 4)
