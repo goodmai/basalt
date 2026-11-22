@@ -299,17 +299,24 @@ func printRunHint(repoId: String) {
     print()
 }
 
-func printFileProgress(filename: String, downloaded: Int64, total: Int64) {
+func printFileProgress(filename: String, downloaded: Int64, total: Int64, useStderr: Bool = false) {
     let name = padded(filename, 40)
+    let line: String
     if total > 0 {
         let pct  = Double(downloaded) / Double(total)
         let bar  = progressBar(fraction: pct, width: 20)
         let pctStr = String(format: "%3.0f%%", pct * 100)
-        print("\r  \(name)  \(bar) \(pctStr)  \(formatBytes(downloaded))/\(formatBytes(total))", terminator: "")
+        line = "\r  \(name)  \(bar) \(pctStr)  \(formatBytes(downloaded))/\(formatBytes(total))"
     } else {
-        print("\r  \(name)  \(formatBytes(downloaded))", terminator: "")
+        line = "\r  \(name)  \(formatBytes(downloaded))"
     }
-    fflush(stdout)
+    if useStderr {
+        fputs(line, stderr)
+        fflush(stderr)
+    } else {
+        print(line, terminator: "")
+        fflush(stdout)
+    }
 }
 
 func progressBar(fraction: Double, width: Int) -> String {

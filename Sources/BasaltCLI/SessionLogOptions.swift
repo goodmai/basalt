@@ -31,8 +31,11 @@ struct SessionLogOptions: ParsableArguments {
     var maxTotalMB: Int = 1024
 
     func validateRetention() throws {
-        guard retentionDays >= 0, maxTotalMB >= 0 else {
-            throw ValidationError("--session-log-retention-days and --session-log-max-total-mb must not be negative")
+        guard retentionDays >= 0, maxTotalMB >= 0, idleMinutes >= 0 else {
+            throw ValidationError("--session-log-retention-days, --session-log-max-total-mb, and --session-idle-minutes must not be negative")
+        }
+        guard idleMinutes <= 525_600 else {
+            throw ValidationError("--session-idle-minutes must be at most 525600")
         }
     }
 
@@ -55,9 +58,11 @@ extension ServeCommand {
     ) -> SessionLogWriter? {
         guard mode != .off else { return nil }
         let url = directory.map(ConfigSection.fileURL) ?? SessionLogWriter.defaultDirectory
-        SessionLogWriter.applyRetention(directory: url, days: retention.days, maxTotalBytes: Int64(retention.maxTotalMB) << 20)
+        let clampedMB = Int64(min(max(0, retention.maxTotalMB), 1 << 30))
+        let clampedIdle = min(max(1, idleMinutes), 525_600)
+        SessionLogWriter.applyRetention(directory: url, days: retention.days, maxTotalBytes: clampedMB << 20)
         let writer = SessionLogWriter(
-            mode: mode, directory: url, redacts: redacts, defaultSession: defaultSession, idle: .init(timeout: TimeInterval(max(1, idleMinutes) * 60)))
+            mode: mode, directory: url, redacts: redacts, defaultSession: defaultSession, idle: .init(timeout: TimeInterval(clampedIdle * 60)))
         Task { await writer.startFlushing() }
         return writer
     }

@@ -50,17 +50,24 @@ struct Options {
 func parse(_ arguments: [String]) -> Options {
     var options = Options()
     var iterator = arguments.makeIterator()
+    func requireValue(_ flag: String) -> String {
+        guard let value = iterator.next(), !value.isEmpty, !value.hasPrefix("-") else {
+            FileHandle.standardError.write(Data("missing value for \(flag)\n\(usage)\n".utf8))
+            exit(2)
+        }
+        return value
+    }
     while let argument = iterator.next() {
         switch argument {
-        case "--out": options.out = iterator.next() ?? options.out
-        case "--bin": options.bin = iterator.next()
-        case "--identity": options.identity = iterator.next()
+        case "--out": options.out = requireValue("--out")
+        case "--bin": options.bin = requireValue("--bin")
+        case "--identity": options.identity = requireValue("--identity")
         case "--no-sign": options.identity = nil
         case "--skip-metal": options.skipMetal = true
         case "--dry-run": options.dryRun = true
         case "--zip": options.zip = true
         case "--dmg": options.dmg = true
-        case "--notarize": options.notarize = iterator.next()
+        case "--notarize": options.notarize = requireValue("--notarize")
         case "-h", "--help":
             print(usage)
             exit(0)

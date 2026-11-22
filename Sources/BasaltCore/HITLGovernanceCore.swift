@@ -224,8 +224,40 @@ public actor HITLApprovalActor {
         if let decision = resolved[id] {
             return decision
         }
-        return await withCheckedContinuation { continuation in
-            waiters[id, default: []].append(continuation)
+        let deadline = store.pendingRequests().first(where: { $0.id == id })?.expiresAt
+        let timerTask: Task<Void, Never>? = deadline.map { expiresAt in
+            Task { [weak self] in
+                let remaining = max(0, expiresAt - Date().timeIntervalSince1970)
+                try? await Task.sleep(for: .seconds(remaining))
+                await self?.expire(now: max(expiresAt, Date().timeIntervalSince1970))
+            }
+        }
+        defer { timerTask?.cancel() }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if let decision = resolved[id] {
+                    continuation.resume(returning: decision)
+                } else {
+                    waiters[id, default: []].append(continuation)
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiters(for: id) }
+        }
+    }
+
+    private func cancelWaiters(for id: String) {
+        if let continuations = waiters.removeValue(forKey: id) {
+            let decision = resolved[id] ?? HITLApprovalDecision(
+                requestId: id,
+                status: .expired,
+                reviewer: "system",
+                decidedAt: Date().timeIntervalSince1970,
+                reason: "cancelled"
+            )
+            for continuation in continuations {
+                continuation.resume(returning: decision)
+            }
         }
     }
 

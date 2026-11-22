@@ -20,12 +20,19 @@ trap cleanup EXIT
 
 # Wait for server
 echo "Waiting for REST server to start..."
+READY=0
 for i in {1..60}; do
   if curl -s http://localhost:8080/api/v1/health > /dev/null; then
+    READY=1
     break
   fi
   sleep 1
 done
+if [ "$READY" -ne 1 ]; then
+  echo "❌ REST server failed to become ready within 60s"
+  exit 1
+fi
+FAILED=0
 
 # No login route: the server checks a static API key. On loopback none is needed unless one
 # is configured — BASALT_API_KEY (the server reads it too) or `api_key` in ~/.gem/config.json;
@@ -51,6 +58,7 @@ validate_task() {
     echo "✅ Task $NAME PASSED"
   else
     echo "⚠️ Task $NAME check: Received '$TEXT', expected to contain '$EXPECTED'"
+    FAILED=1
   fi
 }
 
@@ -59,4 +67,8 @@ validate_task "Arithmetic" "Calculate 123 * 456 + 789 / 3" "56351"
 validate_task "Algebra" "Solve for x: 2x + 5 = 15. Show steps." "x = 5"
 validate_task "Translation" "Translate 'The quick brown fox jumps over the lazy dog' to Russian." "лиса"
 
+if [ "$FAILED" -ne 0 ]; then
+  echo "❌ Real Model Inference Validation FAILED"
+  exit 1
+fi
 echo "--- Real Model Inference Validation COMPLETE ---"

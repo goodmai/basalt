@@ -308,9 +308,12 @@ extension DeadZoneBitAllocator {
             return valid.isEmpty ? [min(max(allowedBits[0], item.minBits), item.maxBits)] : valid
         }
         let scores = items.map { item -> Double in
-            let mass = max(1e-4, item.routingMass)
-            let base = max(1e-12, item.routerWeightedTrace * mass)
-            return base * (1.0 + cascadeKLWeight * item.cascadeRouterKL)
+            let safeMass = item.routingMass.isFinite ? max(1e-4, item.routingMass) : 1e-4
+            let safeTrace = item.routerWeightedTrace.isFinite ? item.routerWeightedTrace : 0.0
+            let safeKL = item.cascadeRouterKL.isFinite ? max(0.0, item.cascadeRouterKL) : 0.0
+            let base = max(1e-12, safeTrace * safeMass)
+            let score = base * (1.0 + cascadeKLWeight * safeKL)
+            return score.isFinite ? score : 1e-12
         }
         let totalWeights = Double(items.reduce(0) { $0 + $1.weightCount })
         let initIdx = initialDualPicks(items: items, ladders: ladders, scores: scores, totalWeights: totalWeights)
@@ -339,8 +342,11 @@ extension DeadZoneBitAllocator {
         let maxIdx = ladders.map { $0.count - 1 }
         if totalBitSum(items: items, ladders: ladders, indices: maxIdx) / totalWeights <= targetBPW { return maxIdx }
         var (lamLo, lamHi) = (0.0, 1.0)
-        while dualBitSum(items: items, ladders: ladders, scores: scores, lambda: lamHi) / totalWeights > targetBPW {
+        var doublings = 0
+        while lamHi.isFinite && lamHi < 1e300 && doublings < 1024
+            && dualBitSum(items: items, ladders: ladders, scores: scores, lambda: lamHi) / totalWeights > targetBPW {
             lamHi *= 2.0
+            doublings += 1
         }
         for _ in 0 ..< 56 {
             let mid = 0.5 * (lamLo + lamHi)
