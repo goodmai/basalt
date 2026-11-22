@@ -37,9 +37,9 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         return try await next(request, context)
     }
 
-    private static let mediaBodyPaths: Set<String> = [
-        "/v1/chat/completions", "/api/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/ocr"
-    ]
+    private static var mediaBodyPaths: Set<String> {
+        ["/v1/chat/completions", "/api/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/ocr"]
+    }
 
     static func bodyLimit(for path: String) -> Int {
         if path.hasPrefix("/v1/images/") { return ImagesController.bodyLimit }
