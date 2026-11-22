@@ -41,6 +41,15 @@ struct OnPolicyDistillTests {
         return (Array(ranked), ranked.map { Float(Double(row[$0]) - normalizer) })
     }
 
+    @Test("Rollout seeds are a pure function of prompt ids, round and slot, so a run samples the same rollouts whatever else uses the GPU (#658)")
+    func rolloutSeeds() {
+        let ids = [5, 19, 42]
+        #expect(OnPolicyRun.rolloutSeed(ids, round: 3, slot: 1) == OnPolicyRun.rolloutSeed(ids, round: 3, slot: 1))
+        #expect(OnPolicyRun.rolloutSeed(ids, round: 3, slot: 1) != OnPolicyRun.rolloutSeed(ids, round: 4, slot: 1))
+        #expect(OnPolicyRun.rolloutSeed(ids, round: 3, slot: 1) != OnPolicyRun.rolloutSeed(ids, round: 3, slot: 0))
+        #expect(OnPolicyRun.rolloutSeed(ids, round: 0, slot: 0) != OnPolicyRun.rolloutSeed([5, 19, 43], round: 0, slot: 0))
+    }
+
     @Test("Reverse KL over the teacher's top-k plus one tail bucket matches a hand computation, ignores masked positions, and is zero when the student equals the teacher")
     func reverseKLByHand() {
         let studentLogits: [Float] = [1, 0, -1, 0.5]
