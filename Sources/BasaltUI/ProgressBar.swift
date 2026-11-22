@@ -33,10 +33,9 @@ public struct ProgressBar: Sendable {
     
     // MARK: - Computed Properties
     
-    /// Current percentage (0-100)
     public var percentage: Double {
         guard total > 0 else { return 0.0 }
-        return min(100.0, (Double(current) / Double(total)) * 100.0)
+        return max(0.0, min(100.0, (Double(current) / Double(total)) * 100.0))
     }
     
     /// Is the progress complete?
@@ -80,12 +79,11 @@ public struct ProgressBar: Sendable {
     
     // MARK: - Update
     
-    /// Update current progress value
     public mutating func update(current: Int, message: String? = nil) {
-        self.current = min(current, total)
+        self.current = max(0, min(current, total))
         self.currentMessage = message
         self.lastUpdateTime = now()
-        self.lastUpdateCurrent = current
+        self.lastUpdateCurrent = self.current
     }
     
     /// Increment progress by amount
@@ -115,8 +113,9 @@ public struct ProgressBar: Sendable {
     }
     
     private func renderBar(width: Int) -> String {
-        let filledWidth = Int(Double(width) * (percentage / 100.0))
-        let emptyWidth = width - filledWidth
+        let safeWidth = max(0, width)
+        let filledWidth = max(0, min(safeWidth, Int(Double(safeWidth) * (percentage / 100.0))))
+        let emptyWidth = safeWidth - filledWidth
         
         let filled = String(repeating: "█", count: filledWidth)
         let empty = String(repeating: "░", count: emptyWidth)

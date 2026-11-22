@@ -49,8 +49,8 @@ extension MCPServer {
             throw MCPFailure(error)
         }
         let decision = await approvals.awaitDecision(id: requestId)
-        guard decision.status == .approved else {
-            throw MCPFailure.invalidParams("Tool '\(toolName)' denied by HITL governance (\(decision.status.rawValue)): \(decision.reason)")
+        guard decision.approved else {
+            throw MCPFailure.invalidParams("Tool '\(toolName)' denied by HITL governance: \(decision.reason)")
         }
     }
 

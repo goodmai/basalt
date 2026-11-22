@@ -237,7 +237,7 @@ extension AudioSpeechController {
         let declaredRate = forces24k
             ? SpeechRequest.defaultSampleRate
             : (TTSModelFamily.detect(identifier: decision.selected.model)?.defaultSampleRate ?? SpeechRequest.defaultSampleRate)
-        let body = AsyncStream<ByteBuffer> { continuation in
+        let body = AsyncThrowingStream<ByteBuffer, any Error> { continuation in
             let task = Task {
                 do {
                     for try await chunk in stream where !chunk.samples.isEmpty {
@@ -248,8 +248,10 @@ extension AudioSpeechController {
                         buffer.writeBytes(outChunk.encodePCM16LE())
                         continuation.yield(buffer)
                     }
-                } catch {}
-                continuation.finish()
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
