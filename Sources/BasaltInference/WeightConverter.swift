@@ -295,9 +295,7 @@ extension WeightConverter {
             config["quantization"] = block
             config["quantization_config"] = block
         case .nf4(let groupSize):
-            var block = config["quantization"] as? [String: Any] ?? [:]
-            block["bits"] = 4
-            block["group_size"] = groupSize
+            var block = config["quantization"] as? [String: Any] ?? ["bits": 4, "group_size": groupSize, "mode": "affine"]
             block["mode"] = "nf4"
             block["quant_method"] = nil
             let merged = Self.mergingDisabled(disabledLayers, into: block)

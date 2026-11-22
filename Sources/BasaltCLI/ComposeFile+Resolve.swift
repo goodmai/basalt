@@ -121,7 +121,6 @@ extension ComposeFile {
                 spec.benchmarks?.suites[suiteName] = suite
             }
         }
-        spec.adapters = relativeAdapters(spec.adapters, base: base)
         spec.mcp.imageDirs = spec.mcp.imageDirs.map { resolvedPath($0, base: base) }
         return relativeSpeak(spec, base: base)
     }

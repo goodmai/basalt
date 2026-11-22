@@ -225,8 +225,10 @@ public actor HITLApprovalActor {
             return decision
         }
         let deadline = store.pendingRequests().first(where: { $0.id == id })?.expiresAt
-        let timerTask: Task<Void, Never>? = deadline.map { expiresAt in
-            Task { [weak self] in
+        let wallNow = Date().timeIntervalSince1970
+        let timerTask: Task<Void, Never>? = deadline.flatMap { expiresAt in
+            guard expiresAt > wallNow else { return nil }
+            return Task { [weak self] in
                 let remaining = max(0, expiresAt - Date().timeIntervalSince1970)
                 try? await Task.sleep(for: .seconds(remaining))
                 _ = await self?.expire(now: max(expiresAt, Date().timeIntervalSince1970))

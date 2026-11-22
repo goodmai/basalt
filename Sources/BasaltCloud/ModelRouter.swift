@@ -312,7 +312,7 @@ extension ModelRouter {
             maxTokens: request.maxTokens,
             stream: stream
         )
-        req.usage = .init(include: true)
+        if stream { req.usage = .init(include: true) }
         return req
     }
 
