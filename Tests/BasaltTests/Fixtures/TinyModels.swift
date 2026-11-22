@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -26,7 +26,7 @@ enum TinyModel {
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer: try multimodalModel(config, decoder: decoder)
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -39,6 +39,7 @@ enum TinyModel {
 
         private func multimodalModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
             if self == .gemma4Unified { return try TinyGemma4Unified.model(config) }
+            if self == .inkling2Loop { return try Inkling2Model(configurationData: config) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
             if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
@@ -54,6 +55,7 @@ enum TinyModel {
             case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
             case .gemma4Unified: 274
             case .gemma4KEqV: 645
+            case .inkling2Loop: 650
             case .nemotronH: 30
             case .lfm2: 97
             case .lfm2Moe: 83
@@ -73,7 +75,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
             }
         }
 
@@ -108,6 +110,16 @@ enum TinyModel {
                  "num_kv_shared_layers": 2, "hidden_size_per_layer_input": 16, "vocab_size": 256,
                  "vocab_size_per_layer_input": 256, "sliding_window": \(slidingWindow), "sliding_window_pattern": 2,
                  "use_double_wide_mlp": false, "rms_norm_eps": 1e-6}
+                """
+            case .inkling2Loop: """
+                {"model_type": "inkling2_loop", "text_config": {"model_type": "inkling2_loop_text", "hidden_size": 64, "num_hidden_layers": 6,
+                 "vocab_size": 272, "unpadded_vocab_size": 256, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16,
+                 "d_rel": 4, "rel_extent": 8, "log_scaling_n_floor": 4, "log_scaling_alpha": 0.1, "rms_norm_eps": 1e-6,
+                 "qk_l2_clip_threshold": 22.627416997969522, "rel_l2_clip_threshold": 8.0, "local_layer_ids": [0, 2, 4],
+                 "sconv_kernel_size": 4, "final_logit_softcapping": 30.0, "sliding_window_size": 8, "n_layers_per_attn_res_block": 2,
+                 "n_routed_experts": 8, "num_experts_per_tok": 2, "n_shared_experts": 0, "intermediate_size": 32,
+                 "mlp_gate_softcap": 4.0, "mlp_up_softcap": 25.0, "route_scale": 8.0,
+                 "loop_config": {"core_start": 2, "core_end": 4, "num_passes": 3, "gate_rank": 8, "is_varloop": false}}}
                 """
             case .gemma4KEqV: """
                 {"model_type": "gemma4_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
@@ -266,6 +278,11 @@ enum TinyModel {
                     $0.0.hasSuffix(".gate.weight") || $0.0.hasSuffix(".expert_bias") || $0.0.hasSuffix(".softmax_offset")
                 }
                 model.update(parameters: ModuleParameters.unflattened(specialized.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.25) }))
+            } else if family == .inkling2Loop {
+                let zeroed = model.parameters().flattened().filter { key, _ in
+                    [".query", ".proj", ".static_weight", "conv1d.weight", ".gate.weight", ".e_score_correction_bias"].contains { key.hasSuffix($0) }
+                }
+                model.update(parameters: ModuleParameters.unflattened(zeroed.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.25) }))
             } else if family == .ricursive {
                 let lambdas = model.parameters().flattened().filter { $0.0.hasSuffix(".value_res_lambda") }
                 model.update(parameters: ModuleParameters.unflattened(lambdas.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.5) }))
