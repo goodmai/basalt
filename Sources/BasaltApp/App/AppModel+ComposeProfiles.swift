@@ -74,6 +74,6 @@ extension AppModel {
     }
 
     func persists(_ id: ConversationID) -> Bool {
-        quickAsk?.state.conversation.id != id
+        chats[id] != nil
     }
 }

@@ -51,8 +51,7 @@ package enum DiTBlockQuantizer {
         case .mxfp4: (4, 32, .mxfp4)
         case .affine(let b, let g): (b, g, .affine)
         }
-        let keyToShard = try buildShardIndex(for: shardURLs)
-        let allKeys = Set(keyToShard.keys)
+        let allKeys = Set(try buildShardIndex(for: shardURLs).keys)
         var writer = ShardWriter(directory: output, maxBytes: 4_500_000_000, metadata: ["format": "mlx"])
         var manifestModules: [String: MACaQLayerSpec] = [:]
         var bytesAfter: Int64 = 0

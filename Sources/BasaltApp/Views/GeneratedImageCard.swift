@@ -7,13 +7,15 @@ public struct GeneratedImageCard: View {
     public let part: GeneratedImagePart
     public var onEdit: (GeneratedImagePart) -> Void = { _ in }
 
+    private let isStreaming: Bool
     @State private var showCheckerboard = true
     @State private var showBoxes = true
     @State private var splitRatio: Double = 0.52
     @State private var showingLightbox = false
 
-    public init(part: GeneratedImagePart, onEdit: @escaping (GeneratedImagePart) -> Void = { _ in }) {
+    public init(part: GeneratedImagePart, isStreaming: Bool = true, onEdit: @escaping (GeneratedImagePart) -> Void = { _ in }) {
         self.part = part
+        self.isStreaming = isStreaming
         self.onEdit = onEdit
     }
 
@@ -79,7 +81,7 @@ public struct GeneratedImageCard: View {
 
     @ViewBuilder
     private var mediaLayer: some View {
-        if part.isStreamingPreview {
+        if isStreaming && part.isStreamingPreview {
             DenoisingPreviewOverlay(part: part, previewImage: activeImage)
         } else if let beforeImage, let activeImage {
             BeforeAfterComparisonOverlay(
