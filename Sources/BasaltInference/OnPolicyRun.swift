@@ -12,14 +12,14 @@ struct OnPolicyRun: Sendable {
 
     func train(saving directory: URL) async throws(BasaltError) -> OnPolicyOutcome {
         var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
-        let heldOutRows = try await sampled(plan.heldOut, &state)
+        let heldOutRows = try await sampled(plan.heldOut, round: 0, &state)
         let heldOut = try await scored(plan.heldOut, heldOutRows)
         let before = try await steps.trainedAdapter(&state) { context, _, _ in MLXInferenceEngine.meanKL(heldOut, model: context.model) }
         let size = min(request.batchSize, plan.train.count)
         var losses: [Float] = []
         for step in 0 ..< request.iterations {
             let prompts = (0 ..< size).map { plan.train[(step * size + $0) % plan.train.count] }
-            let batch = try await scored(prompts, try await sampled(prompts, &state))
+            let batch = try await scored(prompts, try await sampled(prompts, round: step + 1, &state))
             losses.append(try await steps.trainedAdapter(&state) { context, optimizer, _ in try MLXInferenceEngine.onPolicyStep(batch, optimizer: optimizer, model: context.model) })
         }
         let after = try await steps.trainedAdapter(&state) { context, _, configuration in
@@ -29,27 +29,37 @@ struct OnPolicyRun: Sendable {
         return OnPolicyOutcome(losses: losses, before: before, after: after)
     }
 
-    func sampled(_ prompts: [OnPolicyPrompt], _ state: inout sending AdapterState) async throws(BasaltError) -> [DistillRow] {
+    func sampled(_ prompts: [OnPolicyPrompt], round: Int, _ state: inout sending AdapterState) async throws(BasaltError) -> [DistillRow] {
         var rows: [DistillRow] = []
-        for prompt in prompts {
-            rows += try await steps.trainedAdapter(&state) { context, _, _ in try sample([prompt], context) }
+        for (index, prompt) in prompts.enumerated() {
+            let seed = Self.rolloutSeed(prompt.ids, round: round, slot: index)
+            rows.append(try await steps.trainedAdapter(&state) { context, _, _ in try sample(prompt, seed: seed, context) })
         }
         return rows
     }
 
-    func sample(_ prompts: [OnPolicyPrompt], _ context: ModelContext) throws -> [DistillRow] {
+    static func rolloutSeed(_ ids: [Int], round: Int, slot: Int) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for value in ids + [round, slot] {
+            hash = (hash ^ UInt64(truncatingIfNeeded: value)) &* 0x0000_0100_0000_01b3
+        }
+        return hash
+    }
+
+    func sample(_ prompt: OnPolicyPrompt, seed: UInt64, _ context: ModelContext) throws -> DistillRow {
+        try Task.checkCancellation()
         let stops = MLXInferenceEngine.stopTokenIds(context)
-        return try prompts.map { prompt in
-            try Task.checkCancellation()
-            let parameters = GenerateParameters(maxTokens: min(request.teacher.maxTokens, request.maxSeqLen - prompt.ids.count), temperature: request.teacher.temperature)
+        let parameters = GenerateParameters(maxTokens: min(request.teacher.maxTokens, request.maxSeqLen - prompt.ids.count), temperature: request.teacher.temperature)
+        let completion = try withRandomState(MLXRandom.RandomState(seed: seed)) {
             var iterator = try TokenIterator(input: LMInput(tokens: MLXArray(prompt.ids.map(Int32.init))), model: context.model, parameters: parameters)
-            var completion: [Int] = []
+            var tokens: [Int] = []
             while let token = iterator.next() {
-                completion.append(token)
+                tokens.append(token)
                 if stops.contains(token) { break }
             }
-            return DistillRow(tokens: prompt.ids + completion, promptCount: prompt.ids.count)
+            return tokens
         }
+        return DistillRow(tokens: prompt.ids + completion, promptCount: prompt.ids.count)
     }
 
     func scored(_ prompts: [OnPolicyPrompt], _ rows: [DistillRow]) async throws(BasaltError) -> [ScoredRow] {
