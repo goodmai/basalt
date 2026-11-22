@@ -31,6 +31,7 @@ extension MLXInferenceEngine {
     }
 
     public func useAdapter(_ name: String?) async throws(BasaltError) {
+        guard !modelFacts.switchingAdapter else { throw .inferenceError("another adapter switch is in progress; try again when it finishes") }
         guard name != modelFacts.adapter else { return }
         guard let container else { throw .modelNotLoaded }
         guard !modelModified else { throw .invalidRequestStructure(details: "adapter: an overlay changes the live model; undo it before switching adapters") }
@@ -38,11 +39,16 @@ extension MLXInferenceEngine {
         let next = name.flatMap { modelFacts.adapters[$0] }
         guard name == nil || next != nil else { throw .invalidRequestStructure(details: "unknown adapter \(name ?? "")") }
         let epoch = modelEpoch
-        record(.learned(epoch) { $0.adapter = nil })
+        record(.learned(epoch) { $0.switchingAdapter = true })
+        var active: String?
+        defer {
+            let fence = leases.keys.max() ?? 0
+            record(.learned(epoch) { [active] in ($0.adapter, $0.switchingAdapter, $0.cacheFence) = (active, false, max($0.cacheFence, fence)) })
+        }
         try await Self.labRun(container, "the adapter switch") { context in
             try Self.swapAdapter(current?.weights, for: next?.weights, in: context.model)
         }
-        record(.learned(epoch) { $0.adapter = name })
+        active = name
     }
 
     static func swapAdapter(_ current: (any ModelAdapter)?, for next: (any ModelAdapter)?, in model: any LanguageModel) throws {

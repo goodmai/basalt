@@ -41,6 +41,10 @@ actor AdapterEngine: InferenceEngine {
     }
 }
 
+extension MLXInferenceEngine {
+    func markAdapterSwitchInFlight() { record(.learned(modelEpoch) { $0.switchingAdapter = true }) }
+}
+
 actor SwitchProbe {
     private(set) var runs = 0
     func ran() { runs += 1 }
@@ -109,6 +113,18 @@ struct AdapterServingTests {
         #expect(await LabGateTests.loraLayers(container) == 0)
         #expect(await engine.modelEpoch == epoch)
         #expect(await orchestrator.gate.checkInvariants(idle: true) == [])
+    }
+
+    @Test("While an adapter switch is in flight, a second switch and new requests are refused instead of running on half-swapped weights (#665)")
+    func switchInFlightRefusesOverlaps() async throws {
+        let (engine, _, _) = try await Self.served()
+        try await engine.useAdapter("a")
+        #expect(await !engine.modelFacts.switchingAdapter)
+        await engine.markAdapterSwitchInFlight()
+        await #expect(throws: BasaltError.self) { try await engine.useAdapter("b") }
+        await #expect(throws: BasaltError.self) { try await engine.useAdapter(nil) }
+        await #expect(throws: BasaltError.self) { _ = try await engine.generateStream(request: greedy(Self.prompt, key: nil).withAdapter("a")) }
+        #expect(await engine.activeAdapter == "a")
     }
 
     @Test("A research call runs on the base model: a served adapter left active by the last request is switched off first")
