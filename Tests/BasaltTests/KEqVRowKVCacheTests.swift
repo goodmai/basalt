@@ -105,6 +105,26 @@ struct KEqVRowPromptCacheTests {
         #expect(gap <= 1e-5)
     }
 
+    @Test("A stock entry stored next to row entries is leased back as KVCacheSimple, not as rows (#665)")
+    func stockEntryBesideRows() throws {
+        let model = try TinyModel.make(.gemma4KEqV)
+        let prompt: [Int32] = [5, 19, 42, 7, 88, 13]
+        let stock = try model.newCache(parameters: nil)
+        let rows = try KEqVRowKVCacheTests.rowCaches(model)
+        for cache in [stock, rows] { _ = model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: cache, state: nil) }
+        var tree = PromptCacheTree(byteBudget: ByteCount(1 << 26), anchorLimit: 4)
+        tree.store("stock", tokens: prompt.map(Int.init), cache: PromptCache(stock))
+        tree.store("row", tokens: prompt.map(Int.init), cache: PromptCache(rows))
+        guard let lease = tree.lease("stock", for: (prompt + [64]).map(Int.init)) else {
+            Issue.record("the tree did not lease the stored stock prefix")
+            return
+        }
+        #expect(lease.cache.layers.allSatisfy { !($0 is KEqVRowKVCache) })
+        let fromLease = model(LMInput.Text(tokens: MLXArray([Int32(64)])[.newAxis]), cache: lease.cache.layers, state: nil)
+        let fromStored = model(LMInput.Text(tokens: MLXArray([Int32(64)])[.newAxis]), cache: stock, state: nil)
+        #expect(abs(fromLease.logits[0, -1].asType(.float32) - fromStored.logits[0, -1].asType(.float32)).max().item(Float.self) <= 1e-5)
+    }
+
     @Test("The disk prompt cache never writes a row cache, whose layout the fork would reload as plain KVCache")
     func diskSkipsRows() throws {
         let model = try TinyModel.make(.gemma4KEqV)

@@ -45,6 +45,19 @@ struct EngineStateTests {
         #expect(model.facts.description == "/m")
     }
 
+    @Test("A load attached while its probes run is warming: facts are learned, but nothing serves until it is warmed (#665)")
+    func warmingHidesTheContainerUntilProbesFinish() throws {
+        var state = step(.loading(epoch: 2, path: "/m"), .loadFinished(2, container, ModelFacts(description: "/m"), warming: true))
+        #expect(state.loaded == nil)
+        #expect(state.attached?.container === container)
+        state = step(state, .learned(2) { $0.questApplies = true })
+        #expect(step(state, .warmed(1)).loaded == nil)
+        state = step(state, .warmed(2))
+        let model = try #require(state.loaded)
+        #expect(model.facts.questApplies && !model.warming)
+        #expect(step(state, .unloaded).attached == nil)
+    }
+
     @Test("A load that fails at its own epoch records the error")
     func loadFails() {
         let next = step(.loading(epoch: 2, path: "/m"), .loadFailed(2, .modelNotFound(identifier: "/m")))
@@ -106,7 +119,7 @@ private extension EngineState {
         switch self {
         case .unloaded(let epoch): "unloaded \(epoch)"
         case .loading(let epoch, let path): "loading \(epoch) \(path)"
-        case .ready(let model): "ready \(model.epoch) \(model.facts.description)"
+        case .ready(let model): "\(model.warming ? "warming" : "ready") \(model.epoch) \(model.facts.description)"
         case .failed(let epoch, _): "failed \(epoch)"
         }
     }

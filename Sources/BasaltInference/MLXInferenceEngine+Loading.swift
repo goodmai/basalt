@@ -169,14 +169,9 @@ extension MLXInferenceEngine {
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
                 transcribesAudio: transcribes)
-            guard attach(loaded, facts: facts, epoch: epoch) else { return }
-            await loadVisionTower(loaded, epoch: epoch)
+            guard attach(loaded, facts: facts, epoch: epoch, warming: true) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
-            learnPolarGeometry(ModelCache.config(at: directory), epoch: epoch)
-            await probeKVZones()
-            await wireWorkingSet(epoch: epoch)
-            await probeKVHeads(directory: directory)
-            await probeAttentionCaches(directory: directory, epoch: epoch)
+            await warmUp(loaded, directory: directory, epoch: epoch)
             logger.info("Sampling defaults from generation_config.json: \(samplingDefaults)")
             for line in ModelCache.config(at: directory).map(architectureLines(config:)) ?? [] { logger.info(line) }
             logger.info("Model loaded and initialized successfully.")
@@ -185,6 +180,16 @@ extension MLXInferenceEngine {
             record(.loadFailed(epoch, failure))
             throw failure
         }
+    }
+
+    func warmUp(_ loaded: ModelContainer, directory: URL, epoch: ModelEpoch) async {
+        await loadVisionTower(loaded, epoch: epoch)
+        learnPolarGeometry(ModelCache.config(at: directory), epoch: epoch)
+        await probeKVZones()
+        await wireWorkingSet(epoch: epoch)
+        await probeKVHeads(directory: directory)
+        await probeAttentionCaches(directory: directory, epoch: epoch)
+        record(.warmed(epoch))
     }
 
     func attach(
@@ -283,7 +288,7 @@ extension MLXInferenceEngine {
     }
 
     func probeKVZones() async {
-        guard let zones = configuration.kvZones, modelFacts.capabilities.allows(.kvZones), let container else { return }
+        guard let zones = configuration.kvZones, modelFacts.capabilities.allows(.kvZones), let container = warmingContainer else { return }
         let epoch = modelEpoch
         let precision = configuration.kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) })
@@ -322,7 +327,7 @@ extension MLXInferenceEngine {
     }
 
     func probeKVHeads(directory: URL) async {
-        guard let ratio = configuration.kvHeadSplit, let container else { return }
+        guard let ratio = configuration.kvHeadSplit, let container = warmingContainer else { return }
         guard modelFacts.capabilities.allows(.kvHeadSplit) else {
             logger.warn("--kv-head-split is not verified on this model family, so the KV cache stays dense")
             return
@@ -353,7 +358,7 @@ extension MLXInferenceEngine {
         let needsAttentionProbe = configuration.questTopK != nil
             || configuration.attentionBackend != .standard
             || configuration.kvPrecision?.isKVarN == true
-        guard needsAttentionProbe, modelFacts.capabilities.allows(.quest), let container else { return }
+        guard needsAttentionProbe, modelFacts.capabilities.allows(.quest), let container = warmingContainer else { return }
         let epoch = modelEpoch
         do {
             guard try await container.perform({ try QuestKVCache.modelAttendsThroughCache($0.model) }) else {

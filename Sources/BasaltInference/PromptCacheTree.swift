@@ -133,7 +133,8 @@ struct PromptCacheTree {
             if let recurrent = deepest.snapshot?.layers[layer] {
                 return recurrent.copy()
             }
-            var cache: KVCache = rowTemplates[layer]?.emptied() ?? KVCacheSimple()
+            let template = deepest.layers[layer].count == 1 ? rowTemplates[layer]?.emptied() : nil
+            var cache: KVCache = template ?? KVCacheSimple()
             cache.state = deepest.layers[layer].indices.map { part in
                 concatenated(path.map { $0.node.layers[layer][part][.ellipsis, ..<$0.used, 0...] }, axis: 2)
             }

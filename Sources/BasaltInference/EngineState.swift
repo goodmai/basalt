@@ -33,17 +33,20 @@ struct ModelFacts: Sendable {
     var cacheFence = 0
     var adapters: [String: ServedAdapter] = [:]
     var adapter: String?
+    var switchingAdapter = false
 }
 
 struct LoadedModel: Sendable {
     let container: ModelContainer
     let epoch: ModelEpoch
     var facts: ModelFacts
+    var warming = false
 }
 
 enum EngineEvent {
     case loadStarted(path: String)
-    case loadFinished(ModelEpoch, ModelContainer, ModelFacts)
+    case loadFinished(ModelEpoch, ModelContainer, ModelFacts, warming: Bool = false)
+    case warmed(ModelEpoch)
     case loadFailed(ModelEpoch, BasaltError)
     case learned(ModelEpoch, (inout ModelFacts) -> Void)
     case unloaded
@@ -62,9 +65,11 @@ enum EngineState: Sendable {
         }
     }
 
-    var loaded: LoadedModel? {
+    var attached: LoadedModel? {
         if case .ready(let model) = self { model } else { nil }
     }
+
+    var loaded: LoadedModel? { attached.flatMap { $0.warming ? nil : $0 } }
 
     func checkInvariants(after previous: EngineState) -> [String] {
         epoch < previous.epoch ? ["the epoch went back from \(previous.epoch) to \(epoch)"] : []
@@ -74,9 +79,13 @@ enum EngineState: Sendable {
         switch event {
         case .loadStarted(let path):
             return .loading(epoch: state.epoch + 1, path: path)
-        case .loadFinished(let epoch, let container, let facts):
+        case .loadFinished(let epoch, let container, let facts, let warming):
             guard case .loading(epoch, _) = state else { return state }
-            return .ready(LoadedModel(container: container, epoch: epoch, facts: facts))
+            return .ready(LoadedModel(container: container, epoch: epoch, facts: facts, warming: warming))
+        case .warmed(let epoch):
+            guard case .ready(var model) = state, model.epoch == epoch else { return state }
+            model.warming = false
+            return .ready(model)
         case .loadFailed(let epoch, let error):
             guard case .loading(epoch, _) = state else { return state }
             return .failed(epoch: epoch, error: error)
@@ -93,7 +102,8 @@ enum EngineState: Sendable {
 extension MLXInferenceEngine {
     var container: ModelContainer? { state.loaded?.container }
     var modelEpoch: ModelEpoch { state.epoch }
-    var modelFacts: ModelFacts { state.loaded?.facts ?? ModelFacts() }
+    var modelFacts: ModelFacts { state.attached?.facts ?? ModelFacts() }
+    var warmingContainer: ModelContainer? { state.attached?.container }
     var profile: any ModelProfile { modelFacts.profile }
     var samplingDefaults: SamplingDefaults { modelFacts.samplingDefaults }
     var controlTokens: ControlTokenGuard { modelFacts.controlTokens }

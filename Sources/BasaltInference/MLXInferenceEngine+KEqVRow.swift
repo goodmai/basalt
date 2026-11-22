@@ -13,7 +13,7 @@ extension MLXInferenceEngine {
     public var sharedKVRowLayout: KEqVRowLayout? { kvSharedRowApplies ? modelFacts.kEqVRow : nil }
 
     func probeKEqVRow(config: [String: Any]?) async {
-        guard configuration.kvSharedRow, let container else { return }
+        guard configuration.kvSharedRow, let container = warmingContainer else { return }
         let epoch = modelEpoch
         guard let layout = config.flatMap(KEqVRowLayout.init(config:)) else {
             return logger.warn("--experimental-kv-shared-row does not apply: the model's config has no attention_k_eq_v with partial RoPE on its global layers (Gemma 4 12B, 26B-A4B and 31B have it); the KV cache stays stock")

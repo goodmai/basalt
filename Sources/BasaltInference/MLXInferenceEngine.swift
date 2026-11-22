@@ -57,6 +57,11 @@ public actor MLXInferenceEngine: InferenceEngine {
         promptCacheFullBudget = ByteCount(configuration.promptCacheBytes ?? 0)
     }
 
+    func checkAdapter(_ requested: String?) throws(BasaltError) {
+        guard !modelFacts.switchingAdapter else { throw .inferenceError("an adapter switch is in progress; try again when it finishes") }
+        guard requested == activeAdapter else { throw .inferenceError("adapter \(requested ?? "none") was asked for while \(activeAdapter ?? "the base model") is active") }
+    }
+
     public func generateStream(request: GenerationRequest) async throws(BasaltError) -> AsyncStream<StreamChunk> {
         guard let container else {
             throw .inferenceHardwareFailure(reason: "MLX engine not initialized — call load() first")
@@ -65,7 +70,7 @@ public actor MLXInferenceEngine: InferenceEngine {
         if request.logprobs == true, request.logitProbe == nil {
             request.logitProbe = LogitProbe(topK: max(64, request.topLogprobs ?? 5))
         }
-        guard request.adapter == activeAdapter else { throw .inferenceError("adapter \(request.adapter ?? "none") was asked for while \(activeAdapter ?? "the base model") is active") }
+        try checkAdapter(request.adapter)
         let epoch = modelEpoch
         let (params, unbudgeted, shaping, exclusion, confidenceProbe) = try await checkedSampling(request)
         let settings = planSettings
@@ -167,9 +172,9 @@ extension MLXInferenceEngine {
     }
 
     @discardableResult
-    func attach(_ container: ModelContainer, facts: ModelFacts, epoch: ModelEpoch) -> Bool {
-        state = .reduce(state, .loadFinished(epoch, container, facts))
-        guard state.loaded?.epoch == epoch else { return false }
+    func attach(_ container: ModelContainer, facts: ModelFacts, epoch: ModelEpoch, warming: Bool = false) -> Bool {
+        state = .reduce(state, .loadFinished(epoch, container, facts, warming: warming))
+        guard state.attached?.epoch == epoch else { return false }
         batchDecoder = nil
         grammarVocabulary = nil
         sequenceBreakers = nil
