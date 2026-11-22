@@ -63,7 +63,10 @@ struct ModelsConvertController: Sendable {
         }
         let budgetGB = request.uri.queryParameters.get("budget_gb").flatMap { Double($0) }
         let pvTune = request.uri.queryParameters.get("pv_tune").map { $0 == "true" || $0 == "1" } ?? false
-        let sourceId = ModelsController.hfRepoId(from: String(rawSource))
+        guard let sourceId = ModelsController.restModel(from: String(rawSource)).repoId else {
+            return ProviderErrorResponse.response(
+                status: .badRequest, message: ModelsController.repoIdRequired, shape: .openAI)
+        }
         do {
             let plan = try await converter.plan(
                 source: sourceId, target: target, budgetGB: budgetGB, pvTune: pvTune, cacheRoot: operations.cacheRoot)
@@ -71,9 +74,9 @@ struct ModelsConvertController: Sendable {
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: ByteBuffer(bytes: data)))
         } catch let err as BasaltError {
             let status: HTTPResponse.Status = if case .modelNotFound = err { .notFound } else { .unprocessableContent }
-            return ProviderErrorResponse.response(status: status, message: err.localizedDescription, shape: .openAI)
+            return ProviderErrorResponse.response(status: status, message: ModelsController.publicMessage(for: err), shape: .openAI)
         } catch {
-            return ProviderErrorResponse.response(status: .unprocessableContent, message: error.localizedDescription, shape: .openAI)
+            return ProviderErrorResponse.response(status: .unprocessableContent, message: ModelsController.publicMessage(for: error), shape: .openAI)
         }
     }
 
@@ -100,8 +103,19 @@ struct ModelsConvertController: Sendable {
             return ProviderErrorResponse.response(
                 status: .badRequest, message: "Unsupported recipe '\(req.recipe ?? "")'. Expected rtn, sinq, a-sinq, or moe-rw.", shape: .openAI)
         }
+        guard let sourceId = ModelsController.restModel(from: req.source).repoId else {
+            return ProviderErrorResponse.response(
+                status: .badRequest, message: ModelsController.repoIdRequired, shape: .openAI)
+        }
         var normalized = req
-        normalized.source = ModelsController.hfRepoId(from: req.source)
+        normalized.source = sourceId
+        if let rawTeacher = req.pvTeacher, !rawTeacher.isEmpty {
+            guard let teacherId = ModelsController.restModel(from: rawTeacher).repoId else {
+                return ProviderErrorResponse.response(
+                    status: .badRequest, message: ModelsController.repoIdRequired, shape: .openAI)
+            }
+            normalized.pvTeacher = teacherId
+        }
         guard let jobId = await operations.conversionCoordinator.tryBegin() else {
             return ProviderErrorResponse.response(
                 status: .conflict, message: "Another model conversion is currently running.", shape: .openAI)

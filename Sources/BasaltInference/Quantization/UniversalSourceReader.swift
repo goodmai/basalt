@@ -144,6 +144,11 @@ extension UniversalSourceReader {
         onStep: (@Sendable (String) -> Void)? = nil
     ) async throws -> WeightConverter.Summary {
         let detected = try detect(at: source)
+        if detected.format == "gguf" {
+            throw BasaltError.invalidRequestStructure(
+                details: "Direct GGUF conversion requires config.json and tokenizer sidecars; import first with `basalt models convert <model.gguf> --template <hf-repo-or-dir> --out <dir>`."
+            )
+        }
         if detected.format.hasPrefix("affine:") || detected.format == "mxfp4" || detected.format.hasPrefix("dense:") {
             let summary = try WeightConverter(precision: .dense(dtype)).run(source: source, output: output)
             onStep?("canonical decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")

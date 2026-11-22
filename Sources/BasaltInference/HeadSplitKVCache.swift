@@ -31,6 +31,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     private let stream: KVCacheSimple
     private(set) var offset = 0
     private(set) var materializedForCaller = false
+    private var hasEvicted = false
     private var layout: Layout?
 
     struct Layout {
@@ -65,7 +66,9 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         if let index = heads.retrieval { full.state = state.map { $0[0..., index] } }
         if let index = heads.streaming {
             let count = state[0].dim(2)
-            let kept = count > Self.sinkTokens + Self.windowTokens
+            let evicted = count > Self.sinkTokens + Self.windowTokens
+            hasEvicted = evicted
+            let kept = evicted
                 ? Array(0 ..< Self.sinkTokens) + Array((count - Self.windowTokens) ..< count) : Array(0 ..< count)
             let rows = MLXArray(kept.map(Int32.init))
             stream.state = state.map { $0[0..., index][.ellipsis, rows, 0...] }
@@ -73,7 +76,7 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
     }
 
     var maxSize: Int? { nil }
-    var isTrimmable: Bool { full.isTrimmable }
+    var isTrimmable: Bool { !hasEvicted && (retrieval.isEmpty || full.isTrimmable) }
     var retrievalTokens: Int { full.offset }
     var streamingTokens: Int { stream.offset }
 
@@ -156,8 +159,20 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
 
     @discardableResult
     func trim(_ n: Int) -> Int {
-        let removed = full.trim(min(max(0, n), offset))
-        _ = stream.trim(min(removed, max(0, stream.offset - Self.sinkTokens)))
+        let requested = min(max(0, n), offset)
+        guard requested > 0 else { return 0 }
+        if retrieval.isEmpty {
+            let cap = hasEvicted ? max(0, stream.offset - Self.sinkTokens) : stream.offset
+            let removed = stream.trim(min(requested, cap))
+            offset -= removed
+            return removed
+        }
+        let streamCap = hasEvicted ? max(0, stream.offset - Self.sinkTokens) : stream.offset
+        let removable = stream.offset > 0 ? min(requested, streamCap) : requested
+        let removed = full.trim(removable)
+        if stream.offset > 0 {
+            _ = stream.trim(min(removed, streamCap))
+        }
         offset -= removed
         return removed
     }
@@ -175,13 +190,15 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
             preconditionFailure("KVCacheSimple copies to its own type")
         }
         let copied = HeadSplitKVCache(retrieval: retrieval, full: full.cloned(), stream: streamCopy)
-        (copied.offset, copied.materializedForCaller, copied.layout) = (offset, materializedForCaller, layout)
+        (copied.offset, copied.materializedForCaller, copied.hasEvicted, copied.layout) =
+            (offset, materializedForCaller, hasEvicted, layout)
         return copied
     }
 
     private func dropMiddle() {
         let count = stream.offset
         guard count > Self.sinkTokens + Self.windowTokens + Self.trimStep else { return }
+        hasEvicted = true
         stream.state = stream.state.map {
             concatenated([$0[.ellipsis, ..<Self.sinkTokens, 0...], $0[.ellipsis, (count - Self.windowTokens)..., 0...]], axis: 2)
         }

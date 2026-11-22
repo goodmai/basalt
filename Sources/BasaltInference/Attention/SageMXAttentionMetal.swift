@@ -200,7 +200,7 @@ extension SageMXAttentionMetal {
             var mRun: Float = -.infinity
             var lRun: Float = 0
             var acc = [Float](repeating: 0, count: d)
-            let maxJ = options.causal ? min(lK - 1, i) : (lK - 1)
+            let maxJ = options.causal ? min(lK - 1, (lK - lQ) + i) : (lK - 1)
             guard maxJ >= 0 else { continue }
             for j in 0 ... maxJ {
                 var dot: Float = 0
@@ -233,7 +233,7 @@ private let sageMXSource = """
     if (h >= H || qi >= LQ) { return; }
     const float attn_scale = params[0];
     const float grid_max = params[1];
-    const int max_j = CAUSAL ? min(LK - 1, qi) : (LK - 1);
+    const int max_j = CAUSAL ? min(LK - 1, (LK - LQ) + qi) : (LK - 1);
     if (max_j < 0) {
         for (int b = 0; b < BLOCKS; ++b) {
             out[(size_t(h) * size_t(LQ) + size_t(qi)) * size_t(D) + size_t(b * 32 + lane)] = static_cast<T>(0.0f);

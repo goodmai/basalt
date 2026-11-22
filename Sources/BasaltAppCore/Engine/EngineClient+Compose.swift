@@ -194,7 +194,9 @@ extension EngineClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let (bytes, response) = try await session.bytes(for: endpoint.request("v1/compose/events"))
+                    var urlRequest = endpoint.request("v1/compose/events")
+                    urlRequest.timeoutInterval = 7 * 24 * 3600
+                    let (bytes, response) = try await session.bytes(for: urlRequest)
                     if let http = response as? HTTPURLResponse {
                         if http.statusCode == 404 {
                             continuation.finish()

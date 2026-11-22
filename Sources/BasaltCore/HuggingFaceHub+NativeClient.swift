@@ -200,6 +200,7 @@ extension HuggingFaceHub {
     static func collectPublishableFiles(in directory: URL) throws -> [PublishableFile] {
         let root = directory.standardizedFileURL
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        let allowedPrefixes = publishableAllowedPrefixes(for: root)
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]
@@ -214,7 +215,10 @@ extension HuggingFaceHub {
             if rel.split(separator: "/").contains(where: { $0.hasPrefix(".") }) {
                 continue
             }
-            let resolved = itemURL.resolvingSymlinksInPath()
+            let resolved = itemURL.resolvingSymlinksInPath().standardizedFileURL
+            guard allowedPrefixes.contains(where: { resolved.path.hasPrefix($0) }) else {
+                continue
+            }
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDir),
                   !isDir.boolValue else {
@@ -224,5 +228,18 @@ extension HuggingFaceHub {
             result.append(PublishableFile(relativePath: rel, url: resolved, size: size))
         }
         return result.sorted { $0.relativePath < $1.relativePath }
+    }
+
+    private static func publishableAllowedPrefixes(for root: URL) -> [String] {
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let rootPrefix = canonicalRoot.path.hasSuffix("/") ? canonicalRoot.path : canonicalRoot.path + "/"
+        let snapshotsDir = canonicalRoot.deletingLastPathComponent()
+        let repoDir = snapshotsDir.deletingLastPathComponent()
+        if snapshotsDir.lastPathComponent == "snapshots", repoDir.lastPathComponent.hasPrefix("models--") {
+            let blobsPath = repoDir.appendingPathComponent("blobs").path
+            let blobsPrefix = blobsPath.hasSuffix("/") ? blobsPath : blobsPath + "/"
+            return [rootPrefix, blobsPrefix]
+        }
+        return [rootPrefix]
     }
 }

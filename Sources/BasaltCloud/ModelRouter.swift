@@ -184,6 +184,9 @@ public actor ModelRouter: Sendable {
             do {
                 return try await cloud(client, model)
             } catch {
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    throw error
+                }
                 lastError = error
                 log("Cloud model \(model) failed, trying the next in the chain: \(error)")
             }
@@ -320,7 +323,8 @@ extension ModelRouter {
                             }
                         }
                     }
-                    if let reason = finishReason {
+                    if finishReason != nil || usage != nil {
+                        let reason = finishReason ?? "stop"
                         let metadata = GenerationResponse.cloudReply(
                             text: "",
                             promptTokens: usage?.promptTokens ?? 0,
@@ -346,7 +350,7 @@ extension ModelRouter: CloudFallback {
 
     static func cloudMessages(_ request: GenerationRequest) -> [OpenRouterClient.ChatRequest.Message] {
         guard let messages = request.messages, !messages.isEmpty else {
-            return [.init(role: "user", content: request.prompt)]
+            return [.init(role: "user", content: SecretRedactor.redact(request.prompt))]
         }
         let turns: [ChatMessageInput]
         if let split = ChatMessageInput.splittingPrefill(messages) {
@@ -359,12 +363,13 @@ extension ModelRouter: CloudFallback {
         return turns.map { message in
             switch message.role {
             case .tool:
-                return .init(role: "user", content: "Result of \(message.toolName ?? "the tool"): \(message.text)")
+                return .init(role: "user", content: SecretRedactor.redact("Result of \(message.toolName ?? "the tool"): \(message.text)"))
             case .assistant:
                 let calls = (message.toolCalls ?? []).map { "\($0.name)(\($0.arguments))" }
-                return .init(role: "assistant", content: ([message.text] + calls).filter { !$0.isEmpty }.joined(separator: "\n"))
+                let joined = ([message.text] + calls).filter { !$0.isEmpty }.joined(separator: "\n")
+                return .init(role: "assistant", content: SecretRedactor.redact(joined))
             case .system, .user:
-                return .init(role: message.role.rawValue, content: message.text)
+                return .init(role: message.role.rawValue, content: SecretRedactor.redact(message.text))
             }
         }
     }

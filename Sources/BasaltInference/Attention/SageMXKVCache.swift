@@ -107,7 +107,7 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
                 q: queries, k: kExp, v: vExp,
                 options: SageMXAttentionMetal.Options(scale: scale, causal: isCausal))
         case .moba(let topBlocks):
-            guard queries.dim(2) == 1, let centroids, indexedBlocks > topBlocks + 2 else {
+            guard queries.dim(2) == 1, topBlocks > 0, let centroids, indexedBlocks > topBlocks + 2 else {
                 return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
             }
             kernelSteps += 1

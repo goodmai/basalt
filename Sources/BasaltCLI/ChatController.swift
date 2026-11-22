@@ -53,7 +53,7 @@ actor ChatController {
         let modelInfo = await orchestrator.modelInfo
         await terminal.updateInfo(model: modelInfo)
         
-        for try await event in terminal.readEvents() {
+        eventLoop: for try await event in terminal.readEvents() {
             guard isRunning else { break }
             
             switch event {
@@ -62,7 +62,7 @@ actor ChatController {
                 if trimmed.lowercased() == "exit" || trimmed.lowercased() == "quit" {
                     isRunning = false
                     activeTask?.cancel()
-                    break
+                    break eventLoop
                 }
                 
                 if trimmed.lowercased() == "/clear" {
@@ -92,12 +92,12 @@ actor ChatController {
             case .exit:
                 isRunning = false
                 activeTask?.cancel()
-                break
+                break eventLoop
                 
             case .EOF:
                 isRunning = false
                 activeTask?.cancel()
-                break
+                break eventLoop
             }
         }
     }
