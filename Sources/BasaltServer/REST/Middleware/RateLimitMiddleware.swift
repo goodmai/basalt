@@ -78,21 +78,21 @@ final class RateLimiterState: Sendable {
     }
 }
 
-/// Rejects requests with 429 once the server-wide budget of `requestsPerMinute` is spent.
-/// Mounted after the authenticator, so unauthenticated traffic is refused with 401 before
-/// it can drain the budget of the key holder.
 public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     private let limiter: RateLimiterState
+    private let authenticated: Bool
     private let clock: @Sendable () -> Double
 
     public init(
         requestsPerMinute: Int,
         burst: Int? = nil,
         maxClients: Int = 4096,
+        authenticated: Bool = true,
         clock: @escaping @Sendable () -> Double
     ) {
         let perMinute = Double(max(1, requestsPerMinute))
         let burstCapacity = Double(max(1, burst ?? max(1, min(requestsPerMinute, 10))))
+        self.authenticated = authenticated
         self.clock = clock
         self.limiter = RateLimiterState(
             capacity: burstCapacity,
@@ -106,6 +106,7 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     }
 
     private func clientKey(from request: Request) -> String {
+        guard authenticated else { return "127.0.0.1" }
         if let budgetKey = request.headers[APIKeyAuthenticator<Context>.budgetKeyHeader] {
             return budgetKey
         }
@@ -117,9 +118,6 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
         }
         if let customKey = request.headers[values: HTTPField.Name("x-api-key")!].first {
             return customKey
-        }
-        if let forwarded = request.headers[values: HTTPField.Name("x-forwarded-for")!].first {
-            return forwarded.split(separator: ",").first?.trimmingCharacters(in: .whitespaces) ?? forwarded
         }
         return "127.0.0.1"
     }

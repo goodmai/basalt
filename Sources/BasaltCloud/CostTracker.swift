@@ -56,7 +56,8 @@ public actor CostTracker: Sendable {
     private var scopeLimits: [BudgetScope: Double] = [:]
     private var defaultSessionLimit: Double?
     static let maxTrackedSessions = 4_096
-    private var sessionUsage: [String: Double] = [:]
+    private var sessionUsage: [String: (cost: Double, tick: UInt64)] = [:]
+    private var sessionTick: UInt64 = 0
     
     private let logger = Logger()
     
@@ -113,7 +114,7 @@ public actor CostTracker: Sendable {
 
     public func spent(in scope: BudgetScope) -> Double {
         switch scope {
-        case .session(let id): sessionUsage[id] ?? 0
+        case .session(let id): sessionUsage[id]?.cost ?? 0
         case .virtualKey(let id): stats.virtualKeyUsage?[id] ?? 0
         }
     }
@@ -133,15 +134,19 @@ public actor CostTracker: Sendable {
     }
 
     public func recordUsage(model: String, cost: Double, scopes: [BudgetScope] = []) throws {
-        guard cost > 0 else { return }
+        guard cost.isFinite, cost > 0 else { return }
         
         resetCountersIfNeeded()
 
         for scope in Set(scopes) {
             switch scope {
             case .session(let id):
-                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions { sessionUsage.removeAll() }
-                sessionUsage[id, default: 0] += cost
+                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions {
+                    evictOldestSessions()
+                }
+                sessionTick &+= 1
+                let previous = sessionUsage[id]?.cost ?? 0
+                sessionUsage[id] = (previous + cost, sessionTick)
             case .virtualKey(let id): stats.virtualKeyUsage = (stats.virtualKeyUsage ?? [:]).merging([id: cost], uniquingKeysWith: +)
             }
         }
@@ -167,6 +172,13 @@ public actor CostTracker: Sendable {
         }
     }
     
+    private func evictOldestSessions() {
+        let dropCount = max(1, sessionUsage.count / 4)
+        for entry in sessionUsage.sorted(by: { $0.value.tick < $1.value.tick }).prefix(dropCount) {
+            sessionUsage.removeValue(forKey: entry.key)
+        }
+    }
+
     public func getStats() -> UsageStats {
         resetCountersIfNeeded()
         return stats

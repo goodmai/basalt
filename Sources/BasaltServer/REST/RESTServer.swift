@@ -149,11 +149,16 @@ package struct RESTServer: Sendable {
     private func addMiddleware(to router: Router<BasicRequestContext>) {
         router.add(middleware: LogRequestsMiddleware(.info))
         router.add(middleware: RequestGuardMiddleware(bindHost: config.host, bindPort: config.restPort, allowedOrigins: config.allowedOrigins))
-        if !(config.apiKey ?? "").isEmpty || !config.virtualKeys.isEmpty {
+        let hasAuth = !(config.apiKey ?? "").isEmpty || !config.virtualKeys.isEmpty
+        if hasAuth {
             router.add(middleware: APIKeyAuthenticator(apiKey: config.apiKey ?? "", virtualKeys: config.virtualKeys))
         }
         if let limit = config.rateLimitPerMinute {
-            router.add(middleware: RateLimitMiddleware(requestsPerMinute: limit, burst: config.rateBurst, clock: rateClock))
+            router.add(middleware: RateLimitMiddleware(
+                requestsPerMinute: limit,
+                burst: config.rateBurst,
+                authenticated: hasAuth,
+                clock: rateClock))
         }
         router.add(middleware: JSONNestingLimitMiddleware(zeroCopyBody: config.experimentalZeroCopyBody))
         router.add(middleware: RetryAfterMiddleware())
