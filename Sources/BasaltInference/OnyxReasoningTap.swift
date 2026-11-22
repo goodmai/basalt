@@ -3,7 +3,11 @@ import MLXLMCommon
 import Synchronization
 import BasaltCore
 
-struct OnyxReasoningStateMachine {
+protocol ReasoningTokenParser {
+    mutating func push(_ token: Int) -> OnyxReasoningStateMachine.Step
+}
+
+struct OnyxReasoningStateMachine: ReasoningTokenParser {
     struct Controls: Equatable, Sendable {
         let start: Int
         let message: Int
@@ -170,12 +174,12 @@ final class OnyxReasoningBox: Sendable {
     }
 }
 
-struct OnyxReasoningTapIterator<Base: TokenIteratorProtocol>: TokenIteratorProtocol {
+struct OnyxReasoningTapIterator<Base: TokenIteratorProtocol, Parser: ReasoningTokenParser>: TokenIteratorProtocol {
     private var base: Base
-    private var parser: OnyxReasoningStateMachine
+    private var parser: Parser
     private let box: OnyxReasoningBox
 
-    init(base: consuming Base, parser: OnyxReasoningStateMachine, box: OnyxReasoningBox) {
+    init(base: consuming Base, parser: Parser, box: OnyxReasoningBox) {
         self.base = base
         self.parser = parser
         self.box = box

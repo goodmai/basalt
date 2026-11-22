@@ -90,6 +90,8 @@ public final class Inkling2Model: Module, LLMModel, LoRAModel {
 
     public var loraLayers: [Module] { model.languageModel.layers }
 
+    public var toolCallFormat: ToolCallFormat? { .inkling }
+
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
         let hidden = model.languageModel(inputs, cache: cache)
         let logits = lmHead(hidden).asType(.float32)
