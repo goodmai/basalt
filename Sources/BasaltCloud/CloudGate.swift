@@ -156,6 +156,9 @@ public struct CloudAnswer: AnswerTarget {
     public func unavailable() async -> String? { await gate.refusal(model)?.reason }
 
     public func answer(_ request: GenerationRequest) async throws(BasaltError) -> AnswerReply {
+        if let refusal = await gate.refusal(model) {
+            throw .modelInferenceError(details: "cloud answer: \(refusal.reason)")
+        }
         let turns = request.messages ?? [ChatMessageInput(role: .user, text: request.prompt)]
         var chat = OpenRouterClient.ChatRequest(
             model: model, messages: turns.map { .init(role: $0.role.rawValue, content: SecretRedactor.redact($0.text)) },

@@ -176,6 +176,7 @@ package actor HTTPClusterTransport: ClusterTransport {
         await withTaskCancellationShield {
             var req = URLRequest(url: base.appending(path: "v1/cluster/disconnect"))
             req.httpMethod = "POST"
+            req.timeoutInterval = 1.0
             req.setValue(bind, forHTTPHeaderField: "X-Basalt-Bind-Host")
             req.httpBody = Data(peerId.utf8)
             _ = try? await sess.data(for: req)
@@ -345,9 +346,16 @@ package actor ClusterCoordinatorActor {
         }
     }
 
+    private var epochInFlight = false
+
     package func executeEpoch(
         workByPeer: [String: ClusterWorkRequest]
     ) async throws(ClusterError) -> (epoch: UInt64, responses: [String: ClusterWorkResponse]) {
+        guard !epochInFlight else {
+            throw .staleEpoch(expected: core.topology.stepEpoch, actual: core.topology.stepEpoch)
+        }
+        epochInFlight = true
+        defer { epochInFlight = false }
         let prepared = try core.sealWorkFrames(workByPeer: workByPeer)
         let dispatchedEpoch = prepared.epoch
         let runId = core.topology.runId
@@ -374,11 +382,12 @@ package actor ClusterCoordinatorActor {
     }
 
     package func evictDisconnectedPeer(_ failedPeerId: String) async throws(ClusterError) -> ClusterTopology {
+        let updated = try core.evictPeer(failedPeerId)
         let transportRef = transport
         await withTaskCancellationShield {
             await transportRef.disconnect(peerId: failedPeerId)
         }
-        return try core.evictPeer(failedPeerId)
+        return updated
     }
 
     package func shutdown() async {
