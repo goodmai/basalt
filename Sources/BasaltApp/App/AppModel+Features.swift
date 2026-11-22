@@ -73,6 +73,8 @@ extension AppModel {
 
     @discardableResult
     public func applyComposeFile(_ url: URL, client override: EngineClient? = nil) async throws -> Bool {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         let yaml = try String(contentsOf: url, encoding: .utf8)
         return try await applyComposeYAML(yaml, base: url.deletingLastPathComponent().path, filePath: url.path, client: override)
     }

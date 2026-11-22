@@ -198,11 +198,12 @@ extension EngineClient {
             pending.removeAll(keepingCapacity: true)
         }
         if !pending.isEmpty {
-            pending.append(contentsOf: [UInt8(ascii: "\n"), UInt8(ascii: "\n")])
-            for event in parser.feed(pending) {
-                let done = try await emitImageOutcome(event, endpoint: endpoint, call: call, session: session, to: continuation)
-                if done { return }
-            }
+            pending.append(UInt8(ascii: "\n"))
+        }
+        pending.append(UInt8(ascii: "\n"))
+        for event in parser.feed(pending) {
+            let done = try await emitImageOutcome(event, endpoint: endpoint, call: call, session: session, to: continuation)
+            if done { return }
         }
     }
 

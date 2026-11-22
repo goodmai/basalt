@@ -38,14 +38,16 @@ extension AppModel {
                         }
                         guard !Task.isCancelled else { return }
                         let current = await supervisor.launch
-                        UserDefaults.standard.set(id, forKey: EngineChoice.composeKey)
+                        let freshEnv = CloudKeys.environment(defaults: .standard, keychain: .live())
                         await supervisor.relaunch(
                             HelperLaunch(
                                 executable: current.executable,
                                 arguments: ["serve", "--compose", id],
-                                environment: current.environment
+                                environment: freshEnv
                             )
                         )
+                        guard !Task.isCancelled else { return }
+                        UserDefaults.standard.set(id, forKey: EngineChoice.composeKey)
                         await send(.activated(id))
                     }
                 }
