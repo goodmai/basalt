@@ -260,12 +260,16 @@ extension BasisTransformConverter {
             fqModules: fqManifest?.modules,
             lirModules: lirManifest?.modules,
             perLayer: perLayer)
+        var companions = ShardCompanions(shards: shardNames.map { source.appending(component: $0) })
         for name in shardNames {
-            let arrays = try loadArrays(url: source.appending(component: name))
+            let shard = source.appending(component: name)
+            let arrays = try loadArrays(url: shard)
             for key in arrays.keys.sorted() where !isCompanionSuffix(key) {
                 guard let tensor = arrays[key] else { continue }
+                let base = key.hasSuffix(".weight") ? String(key.dropLast(".weight".count)) : key
+                let scope = try companions.scope(companionSuffixes.map { base + $0 }, over: arrays, shard: shard)
                 let (outTensor, consumed) = decodeShardEntry(
-                    key: key, tensor: tensor, arrays: arrays, dtype: dtype, context: decodeCtx)
+                    key: key, tensor: tensor, arrays: scope, dtype: dtype, context: decodeCtx)
                 eval(outTensor)
                 summary.tensors += consumed
                 summary.outputTensors += 1
@@ -284,12 +288,13 @@ extension BasisTransformConverter {
         var perLayer: BaseConfiguration.PerLayerQuantization?
     }
 
+    private static let companionSuffixes = [
+        ".scales", ".biases", ".p1", ".p2", ".clip_bounds",
+        ".row_scale", ".perm", ".givens_pairs", ".givens_angles", ".diag_scale",
+    ]
+
     private static func isCompanionSuffix(_ key: String) -> Bool {
-        let suffixes = [
-            ".scales", ".biases", ".p1", ".p2", ".clip_bounds",
-            ".row_scale", ".perm", ".givens_pairs", ".givens_angles", ".diag_scale",
-        ]
-        return suffixes.contains { key.hasSuffix($0) }
+        companionSuffixes.contains { key.hasSuffix($0) }
     }
 
     private static func decodeShardEntry(

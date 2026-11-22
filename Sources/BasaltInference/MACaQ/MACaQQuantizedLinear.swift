@@ -67,6 +67,20 @@ package final class MACaQQuantizedLinear: QuantizedLinear {
     package var useQ3Kernel: Bool = false
     @ParameterInfo(key: "pre_scale") package var preScale: MLXArray
     @ParameterInfo(key: "row_scale") package var rowScale: MLXArray?
+    private var trainable = TrainableQuantizedKeys()
+
+    func allowTraining(_ keys: [String]) {
+        trainable.unfrozen(keys)
+    }
+
+    package override func didSetNoGrad(_ noGrad: Set<String>) {
+        super.didSetNoGrad(noGrad)
+        trainable.frozen(nil)
+    }
+
+    package override func noGrad() -> Set<String> {
+        super.noGrad().subtracting(trainable.keys)
+    }
 
     package init(
         packed: MACaQPackedWeights,

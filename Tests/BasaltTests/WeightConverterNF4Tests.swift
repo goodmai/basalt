@@ -41,7 +41,29 @@ struct WeightConverterNF4Tests {
         let requantized = try WeightConverterTests.weights(scratch.url("q4-nf4"))
         #expect(requantized[WeightConverterTests.attention + ".biases"] == nil && requantized[WeightConverterTests.attention + ".weight"]?.dtype == .uint32)
         let affineBlock = try #require(try WeightConverterTests.config(scratch.url("q4-nf4"))["quantization"] as? [String: Any])
-        #expect(affineBlock["mode"] as? String == "nf4" && affineBlock["group_size"] as? Int == 64)
+        #expect(affineBlock["mode"] as? String == "nf4" && affineBlock["bits"] as? Int == 4 && affineBlock["group_size"] as? Int == 32)
+        #expect(requantized[WeightConverterTests.attention + ".scales"]?.dim(-1) == 128 / 32)
+    }
+
+    @Test("Canonical NF4 decode finds a weight's scales in another shard and writes the dense weight, not raw uint32 codes (#705)")
+    func nf4DecodeAcrossShards() async throws {
+        let scratch = try WeightConverterTests.Scratch()
+        try WeightConverter(precision: .nf4(groupSize: 32)).run(source: scratch.source, output: scratch.url("nf4"))
+        let packed = try WeightConverterTests.weights(scratch.url("nf4"))
+        let split = scratch.url("split")
+        try FileManager.default.createDirectory(at: split, withIntermediateDirectories: true)
+        for name in try FileManager.default.contentsOfDirectory(atPath: scratch.url("nf4").path) where !name.hasSuffix(".safetensors") && name != "model.safetensors.index.json" {
+            try FileManager.default.copyItem(at: scratch.url("nf4").appending(component: name), to: split.appending(component: name))
+        }
+        let scalesKey = WeightConverterTests.attention + ".scales"
+        try save(arrays: packed.filter { $0.key != scalesKey }, url: split.appending(component: "model-00001-of-00002.safetensors"))
+        try save(arrays: [scalesKey: try #require(packed[scalesKey])], url: split.appending(component: "model-00002-of-00002.safetensors"))
+        let decoded = scratch.url("decoded")
+        _ = try await UniversalSourceReader.exportCanonicalDense(from: split, to: decoded)
+        let weight = try #require(try WeightConverterTests.weights(decoded)[WeightConverterTests.attention + ".weight"])
+        let expected = NF4Metal.dequantized(try #require(packed[WeightConverterTests.attention + ".weight"]), scales: try #require(packed[scalesKey]), groupSize: 32, dtype: .bfloat16)
+        #expect(weight.dtype == .bfloat16 && weight.shape == [64, 128])
+        #expect(WeightConverterTests.maxDifference(weight, expected) == 0)
     }
 
     @Test("A source with quantized layers that carry no biases (mxfp4) is refused for nf4, since the loader would read them as nf4")
