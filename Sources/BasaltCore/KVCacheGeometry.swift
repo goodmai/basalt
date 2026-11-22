@@ -179,7 +179,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
               headDim > 0, kvHeads > 0 else { return nil }
 
         let shared = min(layers, max(0, c["num_kv_shared_layers"] as? Int ?? 0))
-        let kinds = Self.layerKinds(c, layers: layers).prefix(layers - shared)
+        let kinds = Self.visits(Array(Self.layerKinds(c, layers: layers).prefix(layers - shared)), c)
         let full = kinds.filter { $0 == .full }.count
         let windowedLayers = kinds.filter { $0 == .windowed }.count
         let linear = kinds.filter { $0 == .linear }.count
@@ -190,8 +190,8 @@ public struct KVCacheGeometry: Sendable, Equatable {
         windowedElementsPerToken = Self.kvBytesPerToken(
             layers: windowedLayers, kvHeads: kvHeads, headDim: headDim, bytesPerElement: 1
         )
-        window = c["sliding_window"] as? Int ?? 0
-        fixedStateBytes = Int64(linear) * Self.linearStateBytes(c)
+        window = c["sliding_window"] as? Int ?? c["sliding_window_size"] as? Int ?? 0
+        fixedStateBytes = Int64(linear) * Self.linearStateBytes(c) + Self.shortConvStateBytes(c, visits: kinds.count, kvHeads: kvHeads, headDim: headDim)
         quantizedGroupSize = Self.quantizedGroupSize(keyDim: global.keyDim, valueDim: global.valueDim)
             ?? Self.defaultQuantizedGroupSize
         isFromConfig = true
@@ -310,6 +310,7 @@ extension KVCacheGeometry {
     }
 
     static func layerKinds(_ c: [String: Any], layers: Int) -> [LayerKind] {
+        if let local = localLayerKinds(c, layers: layers) { return local }
         if let blockTypes = c["layers_block_type"] as? [String], !blockTypes.isEmpty {
             return blockTypes.map(kind(of:)) + Array(repeating: .cacheless, count: max(0, layers - blockTypes.count))
         }

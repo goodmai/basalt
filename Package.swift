@@ -185,7 +185,7 @@ let package = Package(
                 .product(name: "RealModule", package: "swift-numerics"),
             ],
             path: "Tests/BasaltTests",
-            exclude: ["Fixtures/ReferenceLogits", "Fixtures/golden", "Fixtures/VisualGoldens"],
+            exclude: ["Fixtures/ReferenceLogits", "Fixtures/golden", "Fixtures/VisualGoldens", "Fixtures/Inkling2"],
             swiftSettings: swiftSettings
         ),
         .executableTarget(

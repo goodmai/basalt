@@ -162,6 +162,7 @@ extension ModelFitAnalyzer {
     private static func isStackedExpertKey(_ key: String) -> Bool {
         key.contains(".switch_mlp.") || key.contains(".switch_glu.")
             || key.contains(".experts.gate_proj.") || key.contains(".experts.up_proj.") || key.contains(".experts.down_proj.")
+            || key.contains(".experts.gate_up_proj.") || key.contains(".experts.w13.") || key.contains(".experts.w2.")
     }
 
     private static func inspectStackedShard(at url: URL) -> (fileSize: Int64, expertBytes: Int64, weightCount: Int)? {
