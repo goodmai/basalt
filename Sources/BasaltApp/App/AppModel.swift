@@ -110,8 +110,11 @@ public final class AppModel {
     nonisolated static let pendingKey = "pendingDownloads"
 
     public func restart() async {
-        await supervisor.shutdown()
-        await supervisor.start()
+        let current = await supervisor.launch
+        let freshEnv = CloudKeys.environment(defaults: .standard, keychain: .live())
+        await supervisor.relaunch(
+            HelperLaunch(executable: current.executable, arguments: current.arguments, environment: freshEnv)
+        )
     }
 
     func engineChanged(_ state: EngineState) async {

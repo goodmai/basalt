@@ -232,8 +232,8 @@ public actor ChatterboxSynthesizer: SpeechSynthesizer {
         owner: ChatterboxSynthesizer,
         plan: S3GenPlan
     ) -> AsyncThrowingStream<AudioChunk, any Error> {
-        let rate = owner.config.sampleRate
         let vocoder = owner.aneVocoder
+        let rate = vocoder?.sampleRate ?? owner.config.sampleRate
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {

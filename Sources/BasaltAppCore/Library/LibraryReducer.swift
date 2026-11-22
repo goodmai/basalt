@@ -37,6 +37,7 @@ public struct Download: Sendable, Equatable {
 public struct LibraryState: Sendable, Equatable {
     public var models: [LibraryModel] = []
     public var fits: [String: ModelFit] = [:]
+    public var fitAttempted: Set<String> = []
     public var downloads: [String: Download] = [:]
     public var conversions: [String: ConversionJobState] = [:]
     public var publishes: [String: PublishJobState] = [:]
@@ -119,7 +120,9 @@ public enum LibraryReducer {
             return [.list] + resume(&state)
         case .listed(let models):
             state.models = models
-            return models.map(\.id).filter { state.fits[$0] == nil }.map(LibraryEffect.fit)
+            let pending = models.map(\.id).filter { state.fits[$0] == nil && !state.fitAttempted.contains($0) }
+            state.fitAttempted.formUnion(pending)
+            return pending.map(LibraryEffect.fit)
         case .fitted(let id, let fit):
             state.fits[id] = fit
             return []

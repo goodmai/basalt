@@ -50,6 +50,9 @@ actor CoreMLSpeechRunner {
                 if let f32 = output.featureValue(for: key)?.shapedArrayValue(of: Float.self) {
                     return f32.withUnsafeShapedBufferPointer { ptr, _, _ in Array(ptr) }
                 }
+                if let f16 = output.featureValue(for: key)?.shapedArrayValue(of: Float16.self) {
+                    return f16.withUnsafeShapedBufferPointer { ptr, _, _ in ptr.map(Float.init) }
+                }
             }
             throw BasaltError.inferenceError("speech: CoreML vocoder returned no audio feature")
         } catch let error as BasaltError {

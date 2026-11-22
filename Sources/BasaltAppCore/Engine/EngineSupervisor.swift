@@ -26,6 +26,8 @@ public actor EngineSupervisor {
     private let environment: EngineEnvironment
     private var process: Process?
     private var adoptedPID: Int32?
+    private var stoppingPID: Int32?
+    private var graceKillTasks: [Int32: Task<Void, Never>] = [:]
     private var ended: Set<Int32> = []
     private var endWaiters: [Int32: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -76,16 +78,16 @@ public actor EngineSupervisor {
     public func shutdown() async {
         await withTaskCancellationShield {
             if process == nil, let adopted = adoptedPID { return await stopAdopted(adopted) }
+            if process == nil, let pid = stoppingPID {
+                await end(of: pid)
+                return
+            }
             guard let process else { return send(.stop) }
             let pid = process.processIdentifier
+            stoppingPID = pid
             send(.stop)
-            let sleep = environment.sleep
-            let deadline = Task {
-                guard (try? await sleep(HelperLaunch.stopGrace)) != nil else { return }
-                kill(pid, SIGKILL)
-            }
             await end(of: pid)
-            deadline.cancel()
+            if stoppingPID == pid { stoppingPID = nil }
         }
     }
 
@@ -177,6 +179,8 @@ public actor EngineSupervisor {
 
     func exited(_ epoch: Int, pid: Int32) {
         ended.insert(pid)
+        graceKillTasks.removeValue(forKey: pid)?.cancel()
+        if stoppingPID == pid { stoppingPID = nil }
         for waiter in endWaiters.removeValue(forKey: pid) ?? [] { waiter.resume() }
         if epoch == state.epoch { process = nil }
         send(.exited(epoch: epoch, at: environment.now(), log: log))
@@ -217,12 +221,14 @@ extension EngineSupervisor {
             kill(pid, SIGINT)
             adoptedPID = nil
         }
-        guard let process, process.isRunning else { return }
+        guard let process else { return }
         self.process = nil
+        guard process.isRunning else { return }
         process.interrupt()
         let (sleep, isAlive) = (environment.sleep, environment.isAlive)
         let pid = process.processIdentifier
-        Task {
+        graceKillTasks[pid]?.cancel()
+        graceKillTasks[pid] = Task {
             guard (try? await sleep(HelperLaunch.stopGrace)) != nil, isAlive(pid) else { return }
             kill(pid, SIGKILL)
         }

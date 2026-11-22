@@ -110,10 +110,17 @@ public actor AudioCaptureActor {
         }
         (player, delegate, playbackContinuation) = (audioPlayer, finishDelegate, continuation)
         defer { cleanupPlayback(epoch: epoch) }
+        var succeeded = false
         await withTaskCancellationHandler {
-            for await _ in stream { break }
+            for await flag in stream {
+                succeeded = flag
+                break
+            }
         } onCancel: {
             continuation.finish()
+        }
+        if !Task.isCancelled && !succeeded {
+            throw AudioCaptureError.playbackFailed
         }
     }
 

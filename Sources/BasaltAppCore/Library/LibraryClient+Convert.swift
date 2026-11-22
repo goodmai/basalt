@@ -66,7 +66,11 @@ extension LibraryClient {
             }
             pending.removeAll(keepingCapacity: true)
         }
-        for event in parser.feed([UInt8(ascii: "\n")]) {
+        if !pending.isEmpty {
+            pending.append(UInt8(ascii: "\n"))
+        }
+        pending.append(UInt8(ascii: "\n"))
+        for event in parser.feed(pending) {
             if let result = try handleConversionEvent(event, decoder: decoder, onProgress: onProgress) {
                 return result
             }

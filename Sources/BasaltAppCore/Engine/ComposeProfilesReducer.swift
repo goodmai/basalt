@@ -121,6 +121,7 @@ public enum ComposeProfilesReducer {
             state.problem = nil
             return [.applyProfile(id)]
         case .activated(let id):
+            guard state.applyingID == nil || state.applyingID == id else { return [] }
             state.applyingID = nil
             state.activeCompose = id
             state.problem = nil

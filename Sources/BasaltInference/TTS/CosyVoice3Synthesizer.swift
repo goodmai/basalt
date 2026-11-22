@@ -98,8 +98,8 @@ public actor CosyVoice3Synthesizer: SpeechSynthesizer {
         owner: CosyVoice3Synthesizer,
         plan: ChunkPlan
     ) -> AsyncThrowingStream<AudioChunk, any Error> {
-        let rate = owner.config.sampleRate
         let vocoder = owner.aneVocoder
+        let rate = vocoder?.sampleRate ?? owner.config.sampleRate
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {

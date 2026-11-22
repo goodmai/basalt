@@ -200,6 +200,7 @@ extension Zonos3MiniConfig {
             throw .modelConfigurationInvalid(path: path, reason: "Zonos3MiniConfig.lm dimensions are invalid")
         }
         guard codec.codebookSize > 0, codec.codebookDim > 0, codec.residualCodebooks >= 0,
+              lm.nCodebooks == 1 + codec.residualCodebooks,
               codec.latentDim > 0, codec.hop > 0, codec.headHop > 0,
               codec.resampleOrig > 0, codec.resampleNew > 0,
               !codec.nFFTs.isEmpty, codec.nFFTs.allSatisfy({ $0 > 0 }) else {

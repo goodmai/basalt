@@ -174,7 +174,7 @@ public final class NemotronHMTPDraftModel: Module, StatefulMTPDrafterModel {
         }
         let col = input.lastToken.reshaped(1, 1)
         let mtpHidden = mtp(inputsEmbeds: embed(col), hiddenStates: input.lastHidden, cache: state.cache)
-        state.proposalAppended = 0
+        state.proposalAppended = 1
         state.nextPosition += 1
         return Self.projectAndSample(mtpHidden[0..., (-1)..., 0...], embed: embed, lmHead: lmHead, sampler: sampler)
     }
