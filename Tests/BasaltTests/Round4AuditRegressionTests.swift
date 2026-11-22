@@ -11,7 +11,9 @@ struct Round4ModelQuantRegressionTests {
     @Test("RoPE2D preserves vector norm at off-diagonal positions where row != col (#687)")
     func rope2DPreservesNormOffDiagonal() {
         let (cos, sin) = RoPE2D.frequencies(gridH: 3, gridW: 4, headDim: 16)
-        let values = (0 ..< (12 * 16)).map { Float(($0 % 7) - 3) * 0.25 + 0.1 }
+        let values: [Float] = (0 ..< 192).map { i -> Float in
+            Float((i % 7) - 3) * 0.25 + 0.1
+        }
         let x = MLXArray(values, [1, 1, 12, 16])
         let rotated = RoPE2D.apply(x, cos: cos, sin: sin)
         let normBefore = sum(x * x, axis: -1)
