@@ -167,7 +167,7 @@ private let polarScoresKernel = MLXFast.metalKernel(
 )
 
 enum PolarGeometry {
-    static let halfSplitRoPE: Set<String> = ["qwen3", "qwen3_moe", "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "lfm2", "lfm2_moe"]
+    static let halfSplitRoPE: Set<String> = ["qwen3", "qwen3_moe", "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_next", "lfm2", "lfm2_moe"]
 
     static func rotatedDims(config: [String: Any]) -> Int? {
         let text = config["text_config"] as? [String: Any] ?? config
