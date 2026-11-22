@@ -61,6 +61,20 @@ public struct QwenProfile: ModelProfile {
     public var defaultMinP: Float? { nil }
 }
 
+public struct QwenInstructProfile: ModelProfile {
+    public let name = "qwen3-instruct"
+
+    public init() {}
+
+    public func templateContext(for reasoning: ReasoningPolicy) -> [String: any Sendable] { [:] }
+
+    public var thinkingMarkers: ThinkingMarkers { .none }
+
+    public var defaultMaxTokens: Int { 8192 }
+
+    public var defaultMinP: Float? { nil }
+}
+
 public struct GemmaProfile: ModelProfile {
     public let name = "gemma"
 
@@ -264,7 +278,7 @@ public struct SamplingDefaults: Sendable, Equatable {
 public enum ModelProfileRegistry {
     public static func profile(forModelType modelType: String?, chatTemplate: String? = nil) -> any ModelProfile {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
-        if t.hasPrefix("qwen3") { return QwenProfile() }
+        if t.hasPrefix("qwen3") { return qwenProfile(t, chatTemplate: chatTemplate) }
         if t.hasPrefix("gemma") { return GemmaProfile() }
         if t.hasPrefix("lfm2") { return LiquidProfile() }
         if t == "flint" { return FlintProfile() }
@@ -276,6 +290,11 @@ public enum ModelProfileRegistry {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)
         }
         return GenericProfile()
+    }
+
+    private static func qwenProfile(_ modelType: String, chatTemplate: String?) -> any ModelProfile {
+        guard modelType == "qwen3_next", chatTemplate?.contains("<think>") != true else { return QwenProfile() }
+        return QwenInstructProfile()
     }
 
     public static func profile(forModelAt path: String) -> any ModelProfile {

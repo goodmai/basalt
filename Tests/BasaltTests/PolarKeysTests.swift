@@ -66,6 +66,7 @@ struct PolarKeysTests {
         let qwen = ["model_type": "qwen3_5", "text_config": ["model_type": "qwen3_5_text", "head_dim": 256, "num_attention_heads": 24, "partial_rotary_factor": 0.25]] as [String: Any]
         #expect(PolarGeometry.rotatedDims(config: qwen) == 64)
         #expect(PolarGeometry.rotatedDims(config: ["model_type": "lfm2_moe", "hidden_size": 2048, "num_attention_heads": 32]) == 64)
+        #expect(PolarGeometry.rotatedDims(config: ["model_type": "qwen3_next", "head_dim": 256, "num_attention_heads": 16, "partial_rotary_factor": 0.25]) == 64)
         #expect(PolarGeometry.rotatedDims(config: ["model_type": "gemma4_text", "head_dim": 256, "num_attention_heads": 8]) == nil)
     }
 

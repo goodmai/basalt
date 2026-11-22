@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -26,7 +26,7 @@ enum TinyModel {
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop: try multimodalModel(config, decoder: decoder)
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -40,6 +40,7 @@ enum TinyModel {
         private func multimodalModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
             if self == .gemma4Unified { return try TinyGemma4Unified.model(config) }
             if self == .inkling2Loop { return try Inkling2Model(configurationData: config) }
+            if self == .qwen3Next { return Qwen3NextModel(try decoder.decode(Qwen3NextConfiguration.self, from: config)) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
             if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
@@ -51,6 +52,7 @@ enum TinyModel {
             case .qwen3Small: 56
             case .qwen3, .qwen3HeadDim32: 36
             case .qwen35, .qwen35Moe: 79
+            case .qwen3Next: 642
             case .gemma3: 103
             case .gemma4, .gemma4Moe, .qwen3Moe, .sigmoidMoe: 228
             case .gemma4Unified: 274
@@ -75,7 +77,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
             }
         }
 
@@ -99,6 +101,15 @@ enum TinyModel {
             case .qwen35Moe: Self.qwen35.config.replacingOccurrences(
                 of: "\"tie_word_embeddings\": false",
                 with: "\"tie_word_embeddings\": false, \"num_experts\": 4, \"num_experts_per_tok\": 2, \"moe_intermediate_size\": 32, \"shared_expert_intermediate_size\": 32")
+            case .qwen3Next: """
+                {"model_type": "qwen3_next", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 32, "partial_rotary_factor": 0.25,
+                 "linear_num_value_heads": 4, "linear_num_key_heads": 2,
+                 "linear_key_head_dim": 16, "linear_value_head_dim": 16, "linear_conv_kernel_dim": 4,
+                 "full_attention_interval": 4, "num_experts": 16, "num_experts_per_tok": 4, "moe_intermediate_size": 32,
+                 "shared_expert_intermediate_size": 32, "decoder_sparse_step": 1, "mlp_only_layers": [], "norm_topk_prob": true,
+                 "rms_norm_eps": 1e-6, "vocab_size": 256, "rope_theta": 10000.0, "tie_word_embeddings": false}
+                """
             case .gemma3: """
                 {"model_type": "gemma3_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
                  "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
