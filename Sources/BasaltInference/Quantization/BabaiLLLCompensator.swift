@@ -29,16 +29,22 @@ package enum BabaiLLLCompensator {
         var passes = 0
         while k < n && passes < maxPasses * n {
             passes += 1
+            var overflowed = false
             for j in stride(from: k - 1, through: 0, by: -1) {
-                let q = Int32(rintf(mu[k * n + j]))
+                let muVal = mu[k * n + j]
+                guard muVal.isFinite else { overflowed = true; break }
+                let rounded = rintf(muVal)
+                guard abs(rounded) <= Float(Int32.max - 128) else { overflowed = true; break }
+                let q = Int32(rounded)
                 if q != 0 {
-                    for r in 0 ..< n {
-                        b[r * n + k] -= Float(q) * b[r * n + j]
-                        u[r * n + k] -= q * u[r * n + j]
+                    if !applyColumnReduction(b: &b, u: &u, dim: n, k: k, j: j, q: q) {
+                        overflowed = true
+                        break
                     }
                     (gs, mu, bNormSq) = gramSchmidt(b, dim: n)
                 }
             }
+            if overflowed { break }
             let lhs = bNormSq[k]
             let rhs = (delta - mu[k * n + (k - 1)] * mu[k * n + (k - 1)]) * bNormSq[k - 1]
             if lhs >= rhs - 1e-7 {
@@ -57,6 +63,23 @@ package enum BabaiLLLCompensator {
         return LLLReductionResult(
             reducedBasis: b, unimodularTransform: u, dimension: n,
             defectBefore: defBefore, defectAfter: defAfter)
+    }
+
+    private static func applyColumnReduction(
+        b: inout [Float], u: inout [Int32], dim n: Int, k: Int, j: Int, q: Int32
+    ) -> Bool {
+        var nextU = [Int32](repeating: 0, count: n)
+        for r in 0 ..< n {
+            let (prod, mulOv) = q.multipliedReportingOverflow(by: u[r * n + j])
+            let (diff, subOv) = u[r * n + k].subtractingReportingOverflow(prod)
+            if mulOv || subOv { return false }
+            nextU[r] = diff
+        }
+        for r in 0 ..< n {
+            b[r * n + k] -= Float(q) * b[r * n + j]
+            u[r * n + k] = nextU[r]
+        }
+        return true
     }
 
     private static func gramSchmidt(_ b: [Float], dim n: Int) -> (gs: [Float], mu: [Float], normSq: [Float]) {

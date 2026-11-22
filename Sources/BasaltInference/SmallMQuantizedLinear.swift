@@ -69,15 +69,15 @@ enum SmallMQuantizedMatmul {
             for (int mt = 0; mt < MT; mt++) {
                 const int r0 = mt * 8 + sn;
                 for (int t = 0; t < 8; t++) {
-                    xa[mt][t] = r0 < M ? float(x[r0 * K + kx + 2 * t]) : 0.0f;
-                    xb[mt][t] = (r0 + 1) < M ? float(x[(r0 + 1) * K + kx + 2 * t]) : 0.0f;
+                    xa[mt][t] = r0 < M ? float(x[size_t(r0) * size_t(K) + size_t(kx + 2 * t)]) : 0.0f;
+                    xb[mt][t] = (r0 + 1) < M ? float(x[size_t(r0 + 1) * size_t(K) + size_t(kx + 2 * t)]) : 0.0f;
                 }
             }
             for (int j = 0; j < NT; j++) {
                 const int n = n0 + 8 * j + sm;
-                const uint2 q = *((const device uint2*)(wb + n * KB + kw / 2));
-                const float s = scales[n * KG + kw / G];
-                const float b = biases[n * KG + kw / G];
+                const uint2 q = *((const device uint2*)(wb + size_t(n) * size_t(KB) + size_t(kw / 2)));
+                const float s = scales[size_t(n) * size_t(KG) + size_t(kw / G)];
+                const float b = biases[size_t(n) * size_t(KG) + size_t(kw / G)];
                 for (int t = 0; t < 8; t++) {
                     const uint word = t < 4 ? q.x : q.y;
                     const uint shift = 8u * uint(t % 4);
@@ -112,7 +112,7 @@ enum SmallMQuantizedMatmul {
                         }
                         const int row = mt * 8 + sn + e;
                         if (row < M) {
-                            out[row * N + n0 + 8 * j + sm] = static_cast<T>(v);
+                            out[size_t(row) * size_t(N) + size_t(n0 + 8 * j + sm)] = static_cast<T>(v);
                         }
                     }
                 }

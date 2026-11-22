@@ -31,15 +31,15 @@ enum ComposeFile {
         let root = try compose(resolved.text, file: file)
         var walk = Walk(declared: resolved.declared, active: resolved.active)
         walk.issues = resolved.issues
-        let spec = root.flatMap { walk.root($0) }.map { relative($0, base: context.base) }
-        if let spec, walk.issues.isEmpty {
-            walk.issues += spec.issues.map { ServeConfigError.Issue(path: $0.path, line: walk.line($0.path), message: $0.message) }
+        let rawSpec = root.flatMap { walk.root($0) }
+        if let rawSpec, walk.issues.isEmpty {
+            walk.issues += rawSpec.issues.map { ServeConfigError.Issue(path: $0.path, line: walk.line($0.path), message: $0.message) }
         }
-        guard let spec, walk.issues.isEmpty else {
+        guard let rawSpec, walk.issues.isEmpty else {
             let fallback = [ServeConfigError.Issue(path: "", message: "the file is empty")]
             throw .invalid(file: file, issues: walk.issues.isEmpty ? fallback : walk.issues)
         }
-        return spec
+        return relative(rawSpec, base: context.base)
     }
 
     struct Walk {

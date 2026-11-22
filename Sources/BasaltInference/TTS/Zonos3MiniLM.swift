@@ -417,7 +417,9 @@ final class Zonos3MiniLMModule: Module {
         let hi = lo + nRows
         var updated = x
         if let row = conditioning.speakerRow, let emb = conditioning.speakerEmbedding, lo <= row, row < hi {
-            let proj = speakerProjection(emb.asType(speakerProjection.weight.dtype).reshaped(1, -1)).asType(x.dtype)
+            let projDType = (speakerProjection as? QuantizedLinear)?.scales.dtype ?? speakerProjection.weight.dtype
+            let safeDType = projDType.isFloatingPoint ? projDType : emb.dtype
+            let proj = speakerProjection(emb.asType(safeDType).reshaped(1, -1)).asType(x.dtype)
             updated = Self.replaceSingleRow(updated, index: row - lo, replacement: proj)
         }
         for (table, entry) in conditioning.conditions.sorted(by: { $0.row < $1.row }).enumerated()

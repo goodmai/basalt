@@ -42,7 +42,7 @@ struct ComposeRecord: Codable, Sendable, Equatable {
     }
 
     static func alive(_ record: ComposeRecord) -> Bool {
-        guard kill(record.pid, 0) == 0 else { return false }
+        guard record.pid > 0, kill(record.pid, 0) == 0 else { return false }
         return record.started.map { $0 == startTime(record.pid) } ?? true
     }
 

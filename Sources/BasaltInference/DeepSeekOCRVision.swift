@@ -67,10 +67,10 @@ enum DeepSeekOCRCLIP {
 
         func callAsFunction(_ samFeatures: MLXArray) -> MLXArray {
             let (b, side) = (samFeatures.dim(0), samFeatures.dim(1))
-            let dtype = positionEmbedding.weight.dtype
+            let table = positionEmbedding(MLXArray(Int32(0) ..< Int32(positionEmbedding.weight.dim(0))))
+            let dtype = table.dtype
             let patches = samFeatures.reshaped(b, side * side, -1)
             let cls = broadcast(classEmbedding, to: [b, 1, classEmbedding.dim(0)]).asType(dtype)
-            let table = positionEmbedding.weight
             let source = Int(Double(table.dim(0) - 1).squareRoot())
             let grid = DeepSeekOCRResample.positions(table[1...].reshaped(source, source, -1), side: side)
             let positions = concatenated([table[..<1], grid.reshaped(side * side, -1)], axis: 0)

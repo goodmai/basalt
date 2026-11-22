@@ -91,7 +91,7 @@ struct TrainSubcommand: AsyncParsableCommand {
         request.dpoPairsPath = dpoPairs
         request.quantizedBaseBits = quantizedBaseBits
         request.adaLoRATargetRank = adaLoRATargetRank
-        request.learningRate = request.effectiveLearningRate
+        request.learningRate = try QuantizedLRPolicy.effectiveLearningRate(baseLR: learningRate, weightBits: quantizedBaseBits)
 
         let report = try await GPULock.withLock(timeout: .seconds(300)) { [request] in
             let engine = MLXInferenceEngine()

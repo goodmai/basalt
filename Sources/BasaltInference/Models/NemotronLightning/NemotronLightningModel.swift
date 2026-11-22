@@ -105,7 +105,7 @@ package final class NemotronMoEGateModule: Module {
         let dropCount = nGroup - topkGroup
         if dropCount > 0 {
             let dropIdx = stopGradient(argPartition(groupScores, kth: dropCount - 1, axis: -2)[.ellipsis, ..<dropCount, 0...])
-            let masked = putAlong(unflat, dropIdx, values: MLXArray(Float(0.0)), axis: -2)
+            let masked = putAlong(unflat, dropIdx, values: MLXArray(-Float.infinity), axis: -2)
             scores = masked.reshaped(scores.shape)
         }
         let inds = stopGradient(argSort(-scores, axis: -1)[.ellipsis, ..<topK]).asType(.int32)

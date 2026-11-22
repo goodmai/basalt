@@ -107,7 +107,9 @@ package final class SharedBasisSwitchLinear: Module {
 
     package func callAsFunction(_ x: MLXArray, routerIndices: MLXArray, routerWeights: MLXArray) -> MLXArray {
         let origType = x.dtype
-        let hShared = sharedBasis(x.asType(sharedBasis.weight.dtype))
+        let targetDType = (sharedBasis as? QuantizedLinear)?.scales.dtype ?? sharedBasis.weight.dtype
+        let safeDType = targetDType.isFloatingPoint ? targetDType : origType
+        let hShared = sharedBasis(x.asType(safeDType))
         let tokens = hShared.size / rank
         let topK = routerIndices.dim(-1)
         let flatH = hShared.reshaped(tokens, 1, 1, rank)

@@ -148,14 +148,16 @@ public actor OnboardingFlow {
     
     private func loadState() -> OnboardingState? {
         let url = URL(fileURLWithPath: configPath)
-        
         guard FileManager.default.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let state = try? JSONDecoder().decode(OnboardingState.self, from: data) else {
+              let data = try? Data(contentsOf: url) else {
             return nil
         }
-        
-        return state
+        let isoDecoder = JSONDecoder()
+        isoDecoder.dateDecodingStrategy = .iso8601
+        if let state = try? isoDecoder.decode(OnboardingState.self, from: data) {
+            return state
+        }
+        return try? JSONDecoder().decode(OnboardingState.self, from: data)
     }
     
     private func saveState(_ state: OnboardingState) throws {
