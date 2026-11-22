@@ -132,15 +132,19 @@ public actor CostTracker: Sendable {
         return ([budget.dailyLimit - stats.dailyUsage, budget.monthlyLimit - stats.monthlyUsage] + scoped).min()!
     }
 
+    func evictCheapestSessions() {
+        for (id, _) in sessionUsage.sorted(by: { $0.value < $1.value }).prefix(Self.maxTrackedSessions / 4) { sessionUsage[id] = nil }
+    }
+
     public func recordUsage(model: String, cost: Double, scopes: [BudgetScope] = []) throws {
-        guard cost > 0 else { return }
+        guard cost.isFinite, cost > 0 else { return }
         
         resetCountersIfNeeded()
 
         for scope in Set(scopes) {
             switch scope {
             case .session(let id):
-                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions { sessionUsage.removeAll() }
+                if sessionUsage[id] == nil, sessionUsage.count >= Self.maxTrackedSessions { evictCheapestSessions() }
                 sessionUsage[id, default: 0] += cost
             case .virtualKey(let id): stats.virtualKeyUsage = (stats.virtualKeyUsage ?? [:]).merging([id: cost], uniquingKeysWith: +)
             }

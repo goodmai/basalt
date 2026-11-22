@@ -84,13 +84,16 @@ final class RateLimiterState: Sendable {
 public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     private let limiter: RateLimiterState
     private let clock: @Sendable () -> Double
+    private let authenticated: Bool
 
     public init(
         requestsPerMinute: Int,
         burst: Int? = nil,
         maxClients: Int = 4096,
+        authenticated: Bool = false,
         clock: @escaping @Sendable () -> Double
     ) {
+        self.authenticated = authenticated
         let perMinute = Double(max(1, requestsPerMinute))
         let burstCapacity = Double(max(1, burst ?? max(1, min(requestsPerMinute, 10))))
         self.clock = clock
@@ -106,22 +109,8 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
     }
 
     private func clientKey(from request: Request) -> String {
-        if let budgetKey = request.headers[APIKeyAuthenticator<Context>.budgetKeyHeader] {
-            return budgetKey
-        }
-        if let authHeader = request.headers[.authorization] {
-            let parts = authHeader.split(separator: " ", maxSplits: 1)
-            if parts.count == 2 && parts[0].lowercased() == "bearer" {
-                return String(parts[1])
-            }
-        }
-        if let customKey = request.headers[values: HTTPField.Name("x-api-key")!].first {
-            return customKey
-        }
-        if let forwarded = request.headers[values: HTTPField.Name("x-forwarded-for")!].first {
-            return forwarded.split(separator: ",").first?.trimmingCharacters(in: .whitespaces) ?? forwarded
-        }
-        return "127.0.0.1"
+        guard authenticated, let budgetKey = request.headers[APIKeyAuthenticator<Context>.budgetKeyHeader] else { return "server" }
+        return budgetKey
     }
 
     public func handle(

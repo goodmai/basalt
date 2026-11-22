@@ -34,6 +34,19 @@ struct ModelsConvertController: Sendable {
 
     static let validRecipes: Set<String> = ["rtn", "sinq", "a-sinq", "moe-rw"]
 
+    static let localPathRefused = "\"source\" and \"pv_teacher\" must be Hugging Face repo ids (org/name), and \"adapter\" is not accepted over REST. Local paths are accepted only by `basalt models convert`."
+
+    static func repoSources(_ req: ModelConversionRequest) -> ModelConversionRequest? {
+        guard let source = ModelsController.restModel(from: req.source).repoId, (req.adapter ?? "").isEmpty else { return nil }
+        var normalized = req
+        normalized.source = source
+        if let teacher = req.pvTeacher, !teacher.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let teacherId = ModelsController.restModel(from: teacher).repoId else { return nil }
+            normalized.pvTeacher = teacherId
+        }
+        return normalized
+    }
+
     private static func isSupportedRecipe(_ raw: String?) -> Bool {
         guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
         return validRecipes.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
@@ -63,7 +76,9 @@ struct ModelsConvertController: Sendable {
         }
         let budgetGB = request.uri.queryParameters.get("budget_gb").flatMap { Double($0) }
         let pvTune = request.uri.queryParameters.get("pv_tune").map { $0 == "true" || $0 == "1" } ?? false
-        let sourceId = ModelsController.hfRepoId(from: String(rawSource))
+        guard let sourceId = ModelsController.restModel(from: String(rawSource)).repoId else {
+            return ProviderErrorResponse.response(status: .badRequest, message: ModelsController.repoIdRequired, shape: .openAI)
+        }
         do {
             let plan = try await converter.plan(
                 source: sourceId, target: target, budgetGB: budgetGB, pvTune: pvTune, cacheRoot: operations.cacheRoot)
@@ -71,9 +86,9 @@ struct ModelsConvertController: Sendable {
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: ByteBuffer(bytes: data)))
         } catch let err as BasaltError {
             let status: HTTPResponse.Status = if case .modelNotFound = err { .notFound } else { .unprocessableContent }
-            return ProviderErrorResponse.response(status: status, message: err.localizedDescription, shape: .openAI)
+            return ProviderErrorResponse.response(status: status, message: ModelsController.publicMessage(for: err), shape: .openAI)
         } catch {
-            return ProviderErrorResponse.response(status: .unprocessableContent, message: error.localizedDescription, shape: .openAI)
+            return ProviderErrorResponse.response(status: .unprocessableContent, message: ModelsController.publicMessage(for: error), shape: .openAI)
         }
     }
 
@@ -100,8 +115,9 @@ struct ModelsConvertController: Sendable {
             return ProviderErrorResponse.response(
                 status: .badRequest, message: "Unsupported recipe '\(req.recipe ?? "")'. Expected rtn, sinq, a-sinq, or moe-rw.", shape: .openAI)
         }
-        var normalized = req
-        normalized.source = ModelsController.hfRepoId(from: req.source)
+        guard let normalized = Self.repoSources(req) else {
+            return ProviderErrorResponse.response(status: .badRequest, message: Self.localPathRefused, shape: .openAI)
+        }
         guard let jobId = await operations.conversionCoordinator.tryBegin() else {
             return ProviderErrorResponse.response(
                 status: .conflict, message: "Another model conversion is currently running.", shape: .openAI)
@@ -129,8 +145,7 @@ struct ModelsConvertController: Sendable {
             let encoded = try JSONEncoder().encode(result)
             return Response(status: .ok, headers: [.contentType: "application/json"], body: ResponseBody(byteBuffer: ByteBuffer(bytes: encoded)))
         } catch {
-            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            return ProviderErrorResponse.response(status: .unprocessableContent, message: msg, shape: .openAI)
+            return ProviderErrorResponse.response(status: .unprocessableContent, message: ModelsController.publicMessage(for: error), shape: .openAI)
         }
     }
 
@@ -160,7 +175,7 @@ struct ModelsConvertController: Sendable {
                         continuation.yield(ByteBuffer(string: "event: done\ndata: \(String(decoding: doneData, as: UTF8.self))\n\n"))
                     }
                 } catch {
-                    let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    let msg = ModelsController.publicMessage(for: error)
                     let errObj: [String: Any] = ["message": msg, "error": ["message": msg]]
                     let errData = (try? JSONSerialization.data(withJSONObject: errObj)) ?? Data()
                     continuation.yield(ByteBuffer(string: "event: error\ndata: \(String(decoding: errData, as: UTF8.self))\n\n"))

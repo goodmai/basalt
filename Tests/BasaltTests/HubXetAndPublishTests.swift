@@ -69,6 +69,29 @@ struct HubXetAndPublishTests {
         #expect(resolved.standardizedFileURL == root.standardizedFileURL)
     }
 
+    @Test("A link inside the model directory publishes; a link to a file outside it is refused, except into the HF cache blobs of a snapshot (#664)")
+    func publishRefusesLinksOutsideTheModel() throws {
+        let base = FileManager.default.temporaryDirectory.appending(path: "basalt-pub-links-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let files = FileManager.default
+        let snapshot = base.appending(path: "models--org--m/snapshots/abc")
+        let blobs = base.appending(path: "models--org--m/blobs")
+        for directory in [snapshot, blobs] { try files.createDirectory(at: directory, withIntermediateDirectories: true) }
+        try Data("{}".utf8).write(to: blobs.appending(path: "b1"))
+        try files.createSymbolicLink(at: snapshot.appending(path: "config.json"), withDestinationURL: blobs.appending(path: "b1"))
+        try Data(repeating: 1, count: 8).write(to: snapshot.appending(path: "model.safetensors"))
+        try files.createSymbolicLink(at: snapshot.appending(path: "copy.safetensors"), withDestinationURL: snapshot.appending(path: "model.safetensors"))
+        #expect(try HuggingFaceHub.collectPublishableFiles(in: snapshot).map(\.relativePath) == ["config.json", "copy.safetensors", "model.safetensors"])
+        let secret = base.appending(path: "id_rsa")
+        try Data("key".utf8).write(to: secret)
+        try files.createSymbolicLink(at: snapshot.appending(path: "notes.txt"), withDestinationURL: secret)
+        #expect(throws: HFError.self) { _ = try HuggingFaceHub.collectPublishableFiles(in: snapshot) }
+        let plain = base.appending(path: "plain")
+        try files.createDirectory(at: plain, withIntermediateDirectories: true)
+        try files.createSymbolicLink(at: plain.appending(path: "config.json"), withDestinationURL: blobs.appending(path: "b1"))
+        #expect(throws: HFError.self) { _ = try HuggingFaceHub.collectPublishableFiles(in: plain) }
+    }
+
     @Test("HuggingFaceHub native client builder, repo parser, catalog search, and LibraryEffects Hub runners work end-to-end")
     func nativeHubClientSearchAndEffects() async throws {
         let repo = try HuggingFaceHub.parseNativeRepoID("goodmai/Flint-40B-A2.5B-PV-MACaQ-3bit-MLX")

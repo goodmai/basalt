@@ -570,6 +570,7 @@ package enum HFError: Error, LocalizedError {
     case digestMismatch(file: String, expected: String, actual: String)
     case digestMissing(String)
     case unverifiedSnapshot(path: String, files: [String])
+    case linkOutsideModel(String)
 
     package var errorDescription: String? {
         switch self {
@@ -584,6 +585,8 @@ package enum HFError: Error, LocalizedError {
             return "The server sent no digest for \(file), and --require-verified refuses a file it cannot verify"
         case .unverifiedSnapshot(let path, let files):
             return "Refusing to load \(path): not verified: \(files.joined(separator: ", ")). Run `basalt models inspect \(path) --verify` to see each file's verdict, or re-download with `basalt models download <repo> --require-verified`"
+        case .linkOutsideModel(let file):
+            return "Refusing to publish \(file): it is a link to a file outside the model directory"
         }
     }
 }

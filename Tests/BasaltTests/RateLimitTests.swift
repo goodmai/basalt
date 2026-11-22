@@ -96,6 +96,23 @@ struct RateLimitTests {
         }
     }
 
+    @Test("Without authentication, forged X-Forwarded-For, bearer, X-Api-Key or budget-key headers share one bucket and cannot bypass the limit (#664)")
+    func forgedHeadersShareOneBucket() async throws {
+        let config = try ServerConfig(modelPath: "stub", host: "127.0.0.1", access: .init(rateLimitPerMinute: 2))
+        let router = RESTServer(orchestrator: ModelOrchestratorActor(engine: MockInferenceEngine()), config: config, rateClock: { 0 }).makeRouter()
+        try await Application(router: router).test(.router) { client in
+            var statuses: [HTTPResponse.Status] = []
+            for i in 0..<4 {
+                let headers: HTTPFields = [
+                    HTTPField.Name("x-forwarded-for")!: "10.0.0.\(i)", .authorization: "Bearer r\(i)",
+                    HTTPField.Name("x-api-key")!: "k\(i)", HTTPField.Name("x-basalt-budget-key")!: "b\(i)",
+                ]
+                statuses.append(try await client.execute(uri: "/v1/models", method: .get, headers: headers) { $0.status })
+            }
+            #expect(statuses == [.ok, .ok, .tooManyRequests, .tooManyRequests])
+        }
+    }
+
     @Test("Without a configured limit the router never answers 429")
     func testNoLimitNo429() async throws {
         let app = Application(router: try router(rateLimit: 0))

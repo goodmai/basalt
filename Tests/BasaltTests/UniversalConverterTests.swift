@@ -122,6 +122,31 @@ struct UniversalConverterTests {
         }
     }
 
+    @Test("REST convert refuses a local path as source or pv_teacher with 400, so it is neither a path oracle nor a local reader (#664)")
+    func restConvertRefusesLocalPaths() async throws {
+        let orch = ModelOrchestratorActor(engine: MockInferenceEngine())
+        let hub = ModelHubOperations(converter: StubConversionService()) { _, _ in URL(fileURLWithPath: "/tmp") }
+        let app = Application(router: RESTServer(orchestrator: orch, config: try ServerConfig(modelPath: "mock")).withModelHub(hub).makeRouter())
+        try await app.test(.router) { client in
+            for source in ["/Users/victim/.ssh", "~/.ssh", "../secrets"] {
+                let status = try await client.execute(uri: "/v1/models/convert/plan?source=\(source)", method: .get) { $0.status }
+                #expect(status == .badRequest, "\(source)")
+            }
+            var local = ModelConversionRequest(source: "/etc", outputId: "local/x", target: .macaqAffine(bits: 4, groupSize: 64))
+            var teacher = ModelConversionRequest(source: "org/model", outputId: "local/x", target: .macaqAffine(bits: 4, groupSize: 64))
+            teacher.pvTeacher = "~/models/teacher"
+            var adapter = ModelConversionRequest(source: "org/model", outputId: "local/x", target: .macaqAffine(bits: 4, groupSize: 64))
+            adapter.adapter = "/Users/victim/lora"
+            local.stream = false
+            for request in [local, teacher, adapter] {
+                let status = try await client.execute(
+                    uri: "/v1/models/convert", method: .post, headers: [.contentType: "application/json"],
+                    body: ByteBuffer(bytes: try JSONEncoder().encode(request))) { $0.status }
+                #expect(status == .badRequest)
+            }
+        }
+    }
+
     @Test("ModelConvertReducer transitions through open, draft update, progress KL tracking, and completion")
     func reducerStateTransitions() {
         var state = LibraryState()

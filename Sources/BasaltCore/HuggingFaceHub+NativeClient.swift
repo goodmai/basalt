@@ -206,6 +206,7 @@ extension HuggingFaceHub {
         ) else {
             return []
         }
+        let allowed = publishRoots(root)
         var result: [PublishableFile] = []
         for case let itemURL as URL in enumerator {
             let rel = itemURL.standardizedFileURL.path.hasPrefix(prefix)
@@ -220,9 +221,19 @@ extension HuggingFaceHub {
                   !isDir.boolValue else {
                 continue
             }
+            guard allowed.contains(where: resolved.path.hasPrefix) else { throw HFError.linkOutsideModel(rel) }
             let size = (try? FileManager.default.attributesOfItem(atPath: resolved.path)[.size] as? Int64) ?? 0
             result.append(PublishableFile(relativePath: rel, url: resolved, size: size))
         }
         return result.sorted { $0.relativePath < $1.relativePath }
+    }
+
+    static func publishRoots(_ root: URL) -> [String] {
+        let canonical = root.resolvingSymlinksInPath()
+        var roots = [canonical]
+        if canonical.deletingLastPathComponent().lastPathComponent == "snapshots" {
+            roots.append(canonical.deletingLastPathComponent().deletingLastPathComponent().appending(path: "blobs").resolvingSymlinksInPath())
+        }
+        return roots.map { $0.path.hasSuffix("/") ? $0.path : $0.path + "/" }
     }
 }

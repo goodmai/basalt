@@ -229,6 +229,19 @@ struct ModelRouterCloudFallbackTests {
         #expect(prefilled.map(\.role) == ["user", "assistant"])
         #expect(prefilled.last?.content == "Sunny, ")
     }
+
+    @Test("Secrets in the prompt, turns, tool results and tool-call arguments are redacted before they reach the cloud (#664)")
+    func cloudMessagesRedactSecrets() {
+        let key = "sk-ant-" + String(repeating: "a", count: 24)
+        let request = GenerationRequest(prompt: "flat", messages: [
+            ChatMessageInput(role: .user, text: "use \(key)"),
+            ChatMessageInput(role: .assistant, text: "", toolCalls: [ToolCallOutput(id: "1", name: "deploy", arguments: "{\"token\":\"\(key)\"}")]),
+            ChatMessageInput(role: .tool, text: "echo \(key)", toolCallId: "1", toolName: "deploy"),
+        ])
+        let sent = ModelRouter.cloudMessages(request) + ModelRouter.cloudMessages(GenerationRequest(prompt: "key \(key)"))
+        #expect(sent.count == 4)
+        #expect(sent.allSatisfy { !$0.content.contains(key) && $0.content.contains("[REDACTED:anthropic_key]") })
+    }
 }
 
 enum FallbackTierTestFixtures {

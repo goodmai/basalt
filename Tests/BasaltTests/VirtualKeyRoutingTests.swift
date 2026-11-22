@@ -172,6 +172,22 @@ struct VirtualKeyRoutingTests {
         #expect(await tracker.trackedSessionCount <= CostTracker.maxTrackedSessions)
     }
 
+    @Test("A flood of new session ids keeps the spend of a session near its limit, and an infinite cost is ignored without breaking persistence (#664)")
+    func sessionFloodKeepsSpendAndInfinityIsIgnored() async throws {
+        let costURL = FileManager.default.temporaryDirectory.appendingPathComponent("cost-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: costURL) }
+        let tracker = try CostTracker(storageURL: costURL, budget: .init(dailyLimit: 1e9, monthlyLimit: 1e9))
+        try await tracker.recordUsage(model: "m", cost: 5, scopes: [.session("heavy")])
+        try await tracker.recordUsage(model: "m", cost: .infinity, scopes: [.session("heavy")])
+        for i in 0...CostTracker.maxTrackedSessions {
+            try await tracker.recordUsage(model: "m", cost: 0.001, scopes: [.session("s\(i)")])
+        }
+        #expect(await tracker.spent(in: .session("heavy")) == 5)
+        #expect(await tracker.trackedSessionCount <= CostTracker.maxTrackedSessions)
+        let reloaded = try CostTracker(storageURL: costURL, budget: .init(dailyLimit: 1e9, monthlyLimit: 1e9))
+        #expect(await reloaded.remaining(scopes: []).isFinite)
+    }
+
     @Test("Through the real router a virtual key's request keeps its body and reaches the engine tagged with the key and session")
     func endToEnd() async throws {
         let engine = MockInferenceEngine()
