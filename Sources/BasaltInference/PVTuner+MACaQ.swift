@@ -27,17 +27,21 @@ final class PVPrologueDenseLinear: Linear {
 final class PVMACaQDenseLinear: Linear {
     let preScale: MLXArray
     let hadamardBlock: Int
+    let rowScale: MLXArray?
 
-    init(denseRot: MLXArray, bias: MLXArray?, preScale: MLXArray, hadamardBlock: Int) {
+    init(denseRot: MLXArray, bias: MLXArray?, preScale: MLXArray, hadamardBlock: Int, rowScale: MLXArray? = nil) {
         self.preScale = preScale
         self.hadamardBlock = hadamardBlock
+        self.rowScale = rowScale
         super.init(weight: denseRot.asType(.float32), bias: bias)
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let rotated = MACaQFusedKernels.differentiableBlockHadamard(
             x.asType(.float32), scaleVector: preScale, blockSize: hadamardBlock)
-        var y = matmul(rotated, weight.T).asType(x.dtype)
+        var raw = matmul(rotated, weight.T)
+        if let rowScale { raw = raw * rowScale.asType(.float32) }
+        var y = raw.asType(x.dtype)
         if let bias { y = y + bias.asType(x.dtype) }
         return y
     }
@@ -203,7 +207,8 @@ extension PVTuner {
                     denseRot: dense, bias: target.bias, preScale: pre, hadamardBlock: blk)
             }
             return PVMACaQDenseLinear(
-                denseRot: dense, bias: target.bias, preScale: pre, hadamardBlock: blk)
+                denseRot: dense, bias: target.bias, preScale: pre, hadamardBlock: blk,
+                rowScale: (target.module as? MACaQQuantizedLinear)?.rowScale)
         }
         if target.isSwitch {
             return SwitchLinear(
@@ -247,8 +252,9 @@ extension PVTuner {
         spec.scaleDType = "\(q.scales.dtype)"
         spec.hasBias = mac.bias != nil
         let pre = mac.preScale + MLXArray(0, dtype: mac.preScale.dtype)
+        let rowCopy = mac.rowScale.map { $0 + MLXArray(0, dtype: $0.dtype) }
         return MACaQQuantizedLinear(
             packed: MACaQPackedWeights(weight: q.wq, scales: q.scales, biases: q.biases),
-            bias: mac.bias, preScale: pre, spec: spec)
+            bias: mac.bias, preScale: pre, spec: spec, rowScale: rowCopy)
     }
 }

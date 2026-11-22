@@ -112,7 +112,20 @@ final class Inkling2MessageGate: Module {
     }
 
     func callAsFunction(_ hidden: MLXArray, message: MLXArray) -> MLXArray {
-        compiledMessageGate([hidden, message, downProj.weight, forgetProj.weight, messageProj.weight])[0]
+        if !(downProj is any Quantized), !(forgetProj is any Quantized), !(messageProj is any Quantized) {
+            return compiledMessageGate([hidden, message, downProj.weight, forgetProj.weight, messageProj.weight])[0]
+        }
+        func unit(_ x: MLXArray) -> MLXArray {
+            let states = x.asType(.float32)
+            return states * rsqrt((states * states).mean(axis: -1, keepDims: true) + 1e-6)
+        }
+        let downDType = (downProj as? QuantizedLinear)?.scales.dtype ?? downProj.weight.dtype
+        let targetDType = downDType.isFloatingPoint ? downDType : .float32
+        let joined = concatenated([unit(hidden), unit(message)], axis: -1).asType(targetDType)
+        let reduced = downProj(joined)
+        let forget = forgetProj(reduced).asType(.float32)
+        let gain = messageProj(reduced).asType(.float32)
+        return (1 - tanh(forget)) * hidden.asType(.float32) + tanh(gain) * message.asType(.float32)
     }
 }
 

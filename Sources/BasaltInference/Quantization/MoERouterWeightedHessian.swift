@@ -153,6 +153,7 @@ extension MoERouterWeightedHessian {
         package var packedWeight: MLXArray
         package var scales: MLXArray
         package var biases: MLXArray?
+        package var columnBalance: MLXArray
         package var flips: Int
         package var lossBefore: Float
         package var lossAfter: Float
@@ -200,9 +201,10 @@ extension MoERouterWeightedHessian {
         let deq = accept
             ? grid.dequantizedValues()
             : (MLX.dequantized(wqInit, scales: sInit, biases: bInit, groupSize: groupSize, bits: bits, mode: .affine, dtype: .float32) * invBal.reshaped(1, cols))
-        eval(deq, packed)
+        eval(deq, packed, balance)
         return ExpertQuantResult(
             dequantized: deq, packedWeight: packed, scales: sInit, biases: bInit,
+            columnBalance: balance,
             flips: accept ? res.flips : 0, lossBefore: res.lossBefore, lossAfter: accept ? res.lossAfter : res.lossBefore)
     }
 }

@@ -312,7 +312,7 @@ public final class QuantizedOFTLinear: QuantizedLinear, OFTAdapterLayer {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let targetDType = scales.dtype
+        let targetDType = scales.dtype.isFloatingPoint ? scales.dtype : (x.dtype.isFloatingPoint ? x.dtype : .float32)
         let baseInput = x.asType(targetDType)
         if !loraEnabled { return super.callAsFunction(baseInput) }
         let rotated = OFTMath.rotateInput(

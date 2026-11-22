@@ -30,18 +30,23 @@ enum ThreeBitQMV {
 
     static func matmul(_ x: MLXArray, indices: MLXArray?, weight: MLXArray, scales: MLXArray, biases: MLXArray, groupSize: Int) -> MLXArray {
         let inputs = x.dim(-1)
-        let tasks = x.size / inputs
         let outputs = weight.dim(-2)
+        let outShape = Array(x.shape.dropLast()) + [outputs]
+        guard inputs > 0, outputs > 0, x.size > 0 else {
+            return MLXArray.zeros(outShape, dtype: x.dtype)
+        }
+        let tasks = x.size / inputs
+        let numExperts = indices != nil ? weight.dim(0) : 1
         let index = indices?.asType(.int32).reshaped(tasks) ?? MLXArray.zeros([1], dtype: .int32)
         let simdgroups = (outputs + rowsPerSimdgroup - 1) / rowsPerSimdgroup
         let result = kernel(
-            [x.reshaped(tasks, inputs), index, weight, scales, biases, MLXArray([Int32(outputs), Int32(inputs)])],
+            [x.reshaped(tasks, inputs), index, weight, scales, biases, MLXArray([Int32(outputs), Int32(inputs), Int32(numExperts)])],
             template: [("T", x.dtype), ("G", groupSize), ("GATHER", indices != nil)],
             grid: (32, 2 * ((simdgroups + 1) / 2), tasks),
             threadGroup: (32, 2, 1),
             outputShapes: [[tasks, outputs]],
             outputDTypes: [x.dtype])[0]
-        return result.reshaped(Array(x.shape.dropLast()) + [outputs])
+        return result.reshaped(outShape)
     }
 
     static let header = """
@@ -76,10 +81,19 @@ enum ThreeBitQMV {
         const int task = int(threadgroup_position_in_grid.z);
         const int n0 = (int(threadgroup_position_in_grid.y) * 2 + sg) * 4;
         if (n0 >= N) { return; }
+        const int E = int(shapes[2]);
         const int e = GATHER ? int(idx[task]) : 0;
         const int KB = K * 3 / 8;
         const int KG = K / G;
         const int last = min(3, N - 1 - n0);
+        if (GATHER && (e < 0 || e >= E)) {
+            if (lane == 0) {
+                for (int r = 0; r <= last; r++) {
+                    out[size_t(task) * size_t(N) + size_t(n0 + r)] = static_cast<T>(0.0f);
+                }
+            }
+            return;
+        }
         const size_t row0 = size_t(e) * size_t(N) + size_t(n0);
         const device uchar* wb = (const device uchar*)w + row0 * size_t(KB) + lane * 6;
         const device T* sb = scales + row0 * size_t(KG);
