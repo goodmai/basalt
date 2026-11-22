@@ -83,8 +83,18 @@ final class Inkling2Query: Module {
     }
 }
 
-private let compiledMessageBlend = MLXLMCommon.compile(shapeless: true) { (hidden: MLXArray, message: MLXArray, forget: MLXArray, gain: MLXArray) -> MLXArray in
-    (1 - tanh(forget)) * hidden.asType(.float32) + tanh(gain) * message.asType(.float32)
+private let compiledMessageGate = compile { (arrays: [MLXArray]) -> [MLXArray] in
+    let (hidden, message, down, forget, gain) = (arrays[0], arrays[1], arrays[2], arrays[3], arrays[4])
+    func unit(_ x: MLXArray) -> MLXArray {
+        let states = x.asType(.float32)
+        return states * rsqrt((states * states).mean(axis: -1, keepDims: true) + 1e-6)
+    }
+    let joined = concatenated([unit(hidden), unit(message)], axis: -1).asType(down.dtype)
+    let reduced = matmul(joined, down.transposed()).asType(.float32)
+    let gates = matmul(reduced, concatenated([forget, gain], axis: 0).asType(.float32).transposed())
+    let width = forget.dim(0)
+    let blended = (1 - tanh(gates[.ellipsis, ..<width])) * hidden.asType(.float32) + tanh(gates[.ellipsis, width...]) * message.asType(.float32)
+    return [blended]
 }
 
 final class Inkling2MessageGate: Module {
@@ -99,9 +109,7 @@ final class Inkling2MessageGate: Module {
     }
 
     func callAsFunction(_ hidden: MLXArray, message: MLXArray) -> MLXArray {
-        let joined = concatenated([Inkling2Ops.unitRMS(hidden), Inkling2Ops.unitRMS(message)], axis: -1)
-        let reduced = downProj(joined.asType(downProj.weight.dtype)).asType(.float32)
-        return compiledMessageBlend(hidden, message, forgetProj(reduced), messageProj(reduced))
+        compiledMessageGate([hidden, message, downProj.weight, forgetProj.weight, messageProj.weight])[0]
     }
 }
 
