@@ -194,10 +194,10 @@ struct AuditSecurityAndCloudRegressionTests {
 struct AuditInferenceAndAppRegressionTests {
     @Test("SageMXAttentionMetal aligns causal mask to bottom-right when LQ < LK (#666)")
     func sageMXCausalMaskWithKVOffset() {
-        MLXRandom.seed(42)
-        let q = MLXRandom.normal([1, 2, 3, 64]).asType(.float32)
-        let k = MLXRandom.normal([1, 2, 8, 64]).asType(.float32)
-        let v = MLXRandom.normal([1, 2, 8, 64]).asType(.float32)
+        let q = MLXArray.ones([1, 2, 3, 64], type: Float.self)
+        let k = MLXArray.ones([1, 2, 8, 64], type: Float.self)
+        let positions = MLXArray(Array(0 ..< 8).map(Float.init)).reshaped(1, 1, 8, 1)
+        let v = broadcast(positions, to: [1, 2, 8, 64])
         let scale: Float = 1.0 / sqrt(64.0)
         let opts = SageMXAttentionMetal.Options(scale: scale, causal: true, usePNQ: false, meanCenter: false)
 
@@ -216,8 +216,8 @@ struct AuditInferenceAndAppRegressionTests {
 
         let cpuDiff = Float(max(abs(cpu - ref)).item(Float.self))
         let gpuDiff = Float(max(abs(gpu - ref)).item(Float.self))
-        #expect(cpuDiff < 0.15)
-        #expect(gpuDiff < 0.15)
+        #expect(cpuDiff < 1e-4)
+        #expect(gpuDiff < 1e-4)
     }
 
     @Test("HeadSplitKVCache.trim works on streaming-only layers and short prompts under sinkTokens (#666)")
