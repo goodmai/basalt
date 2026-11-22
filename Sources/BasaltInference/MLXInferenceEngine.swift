@@ -212,10 +212,10 @@ extension MLXInferenceEngine {
     func unloadCurrentModel() async {
         await persistPromptCache(within: Self.modelSwitchPersistDeadline)
         state = .reduce(state, .unloaded)
-        await releaseWiredMemory()
         batchDecoder = nil
         dropPromptCaches()
         cacheBlend = nil
+        await releaseWiredMemory()
         Memory.clearCache()
         if let telemetry, let delta = promptCaches.takeTelemetryDelta() { await telemetry.recordCache(delta) }
         logger.info("Previous model unloaded, GPU cache cleared.")

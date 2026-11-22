@@ -91,7 +91,7 @@ extension ComposeFile.Walk {
 
     mutating func number(_ node: Node?, _ path: String) -> Double? {
         guard let node else { return nil }
-        guard let value = node.int.map(Double.init) ?? node.float else {
+        guard let value = node.int.map(Double.init) ?? node.float, value.isFinite else {
             issue(path, node, "must be a number")
             return nil
         }
@@ -107,8 +107,12 @@ extension ComposeFile.Walk {
         guard let text = node.scalar?.string, let unit = text.last, let value = Int(text.dropLast()) else { return nil }
         switch unit {
         case "s": return value
-        case "m": return value * 60
-        case "h": return value * 3600
+        case "m":
+            let (prod, overflow) = value.multipliedReportingOverflow(by: 60)
+            return overflow ? nil : prod
+        case "h":
+            let (prod, overflow) = value.multipliedReportingOverflow(by: 3600)
+            return overflow ? nil : prod
         default: return nil
         }
     }

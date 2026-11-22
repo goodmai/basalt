@@ -232,15 +232,16 @@ extension MLXInferenceEngine {
         guard !modelFacts.deltas.keys.contains(where: { $0 == request.tensor || $0.hasPrefix(owner) }) else {
             throw .invalidRequestStructure(details: "tensor_pack: \(request.tensor) or its layer already carries an active delta or pack; undo it first")
         }
-        record(.learned(modelEpoch) { $0.deltas[request.tensor] = AppliedDelta() })
+        let epoch = modelEpoch
+        record(.learned(epoch) { $0.deltas[request.tensor] = AppliedDelta() })
         let outcome: TensorPacker.Outcome
         do throws(BasaltError) {
             outcome = try await Self.labRun(container, "the pack") { context in try TensorPacker.pack(request, in: context.model) }
         } catch {
-            record(.learned(modelEpoch) { $0.deltas[request.tensor] = nil })
+            record(.learned(epoch) { $0.deltas[request.tensor] = nil })
             throw error
         }
-        guard self.container === container else {
+        guard self.container === container, modelEpoch == epoch else {
             throw .inferenceHardwareFailure(reason: "the model was replaced while the tensor was packed; nothing is applied")
         }
         let info = register(nil, description: "tensor_pack \(request.tensor): \(outcome.from) → \(TensorPacker.describe(request.format))")

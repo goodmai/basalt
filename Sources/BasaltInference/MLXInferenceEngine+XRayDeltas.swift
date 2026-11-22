@@ -33,7 +33,8 @@ extension MLXInferenceEngine {
         guard !modelFacts.deltas.values.contains(where: { $0.pack.map { delta.tensor.hasPrefix($0.path + ".") } == true }) else {
             throw .invalidRequestStructure(details: "weights_delta: the layer of \(delta.tensor) is packed; undo the pack first")
         }
-        record(.learned(modelEpoch) { $0.deltas[delta.tensor] = AppliedDelta() })
+        let epoch = modelEpoch
+        record(.learned(epoch) { $0.deltas[delta.tensor] = AppliedDelta() })
         let written = await container.performEvaluating(nonSendable: delta) { context, delta in
             Result { () throws(BasaltError) in try Self.add(delta, to: context.model) }
         }
@@ -42,10 +43,10 @@ extension MLXInferenceEngine {
         case .success(let value):
             applied = value
         case .failure(let error):
-            record(.learned(modelEpoch) { $0.deltas[delta.tensor] = nil })
+            record(.learned(epoch) { $0.deltas[delta.tensor] = nil })
             throw error
         }
-        guard self.container === container else {
+        guard self.container === container, modelEpoch == epoch else {
             throw .inferenceHardwareFailure(reason: "the model was replaced while the delta was written; nothing is applied")
         }
         let info = register(nil, description: Self.describe(delta))
@@ -58,12 +59,17 @@ extension MLXInferenceEngine {
     @discardableResult
     func undoDelta(_ id: OverlayID) async throws(BasaltError) -> Bool {
         guard let container, let (tensor, applied) = modelFacts.deltas.first(where: { $0.value.info?.id == id }) else { return false }
+        let epoch = modelEpoch
+        record(.learned(epoch) { $0.deltas[tensor] = nil })
         let restored = await container.performEvaluating(nonSendable: applied) { context, applied in
             Result { () throws(BasaltError) in try Self.restore(applied, of: tensor, in: context.model) }
         }
-        if case .failure(let error) = restored { throw error }
-        guard self.container === container, modelFacts.deltas[tensor]?.info?.id == id else { return true }
-        weightsChanged { $0.deltas[tensor] = nil }
+        if case .failure(let error) = restored {
+            record(.learned(epoch) { $0.deltas[tensor] = applied })
+            throw error
+        }
+        guard self.container === container, modelEpoch == epoch else { return true }
+        weightsChanged { _ in }
         return true
     }
 
