@@ -138,13 +138,13 @@ extension ImagesController {
         defaultSteps: Int
     ) throws(BasaltError) -> ImageGenerationRequest {
         let parsed: ImageGenerationRequest
-        if let media = contentType.flatMap(MediaType.init(from:)), media.isType(.multipartForm) {
-            guard let param = media.parameter, param.name.lowercased() == "boundary" else {
+        if let parsedType = contentType.map(MultipartForm.parameters), parsedType.kind == "multipart/form-data" {
+            guard let boundary = parsedType.parameters["boundary"], !boundary.isEmpty else {
                 throw .invalidRequestStructure(details: "image: multipart/form-data requires a boundary parameter")
             }
             parsed = try WireImageRequest.parseMultipartEdit(
                 data,
-                boundary: param.value,
+                boundary: boundary,
                 defaultModel: defaultModel,
                 defaultSteps: defaultSteps
             )

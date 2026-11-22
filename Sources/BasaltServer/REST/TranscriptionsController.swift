@@ -60,11 +60,11 @@ struct TranscriptionsController: Sendable {
     }
 
     static func upload(_ body: Data, contentType: String?) throws(BasaltError) -> Upload {
-        guard let type = contentType.flatMap(MediaType.init(from:)), type.isType(.multipartForm),
-              let parameter = type.parameter, parameter.name.lowercased() == "boundary" else {
+        guard let parsed = contentType.map(MultipartForm.parameters), parsed.kind == "multipart/form-data",
+              let boundary = parsed.parameters["boundary"], !boundary.isEmpty else {
             throw .invalidRequestStructure(details: "send the audio as multipart/form-data with a boundary")
         }
-        let form = try MultipartForm(body, boundary: parameter.value)
+        let form = try MultipartForm(body, boundary: boundary)
         guard let file = form.parts["file"] else { throw .invalidRequestStructure(details: "the form needs a file field with the audio") }
         if let model = try form.text("model"), model.count > 256 {
             throw .invalidRequestStructure(details: "model must be at most 256 characters")

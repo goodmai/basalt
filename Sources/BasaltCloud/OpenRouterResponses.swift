@@ -37,7 +37,7 @@ extension OpenRouterClient {
 
             public struct Message: Codable, Sendable {
                 public let role: String
-                public let content: String
+                public let content: String?
             }
 
             public enum CodingKeys: String, CodingKey {

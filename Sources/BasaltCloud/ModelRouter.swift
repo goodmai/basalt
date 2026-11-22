@@ -219,9 +219,16 @@ extension ModelRouter {
         return fallback
     }
 
-    func recordCloudCost(model: String, response: GenerationResponse, context: RoutingContext) async {
+    func recordCloudCost(
+        model: String, response: GenerationResponse, context: RoutingContext, reportedCost: Double? = nil
+    ) async {
         guard let costTracker else { return }
-        let cost = state.catalog.estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
+        let cost: Double
+        if let reported = reportedCost, reported.isFinite, reported >= 0 {
+            cost = reported
+        } else {
+            cost = state.catalog.estimateCost(model: model, promptTokens: response.promptTokens, completionTokens: response.completionTokens)
+        }
         do {
             try await costTracker.recordUsage(model: model, cost: cost, scopes: context.budgetScopes)
         } catch {
@@ -235,8 +242,8 @@ extension ModelRouter {
         try await callCloudChain(ModelCatalog.cloudModels(for: modelId), context: context, localFallback: localFallback) { path in
             try await self.localOrchestrator.generate(request: request, modelId: path)
         } cloud: { client, model in
-            let response = try await self.routeToCloud(client: client, model: model, request: request)
-            await self.recordCloudCost(model: model, response: response, context: context)
+            let (response, reportedCost) = try await self.routeToCloudWithCost(client: client, model: model, request: request)
+            await self.recordCloudCost(model: model, response: response, context: context, reportedCost: reportedCost)
             return response
         }
     }
@@ -265,19 +272,26 @@ extension ModelRouter {
     func routeToCloud(
         client: OpenRouterClient, model: String, request: GenerationRequest
     ) async throws -> GenerationResponse {
+        try await routeToCloudWithCost(client: client, model: model, request: request).0
+    }
+
+    private func routeToCloudWithCost(
+        client: OpenRouterClient, model: String, request: GenerationRequest
+    ) async throws -> (GenerationResponse, Double?) {
         let startTime = ContinuousClock.now
         let chatResponse = try await client.chat(request: Self.chatRequest(request, model: model, stream: false))
         let elapsed = startTime.duration(to: ContinuousClock.now)
         guard let choice = chatResponse.choices.first else {
             throw BasaltError.modelInferenceError(details: "No response from cloud model")
         }
-        return .cloudReply(
-            text: choice.message.content,
+        let reply = GenerationResponse.cloudReply(
+            text: choice.message.content ?? "",
             promptTokens: chatResponse.usage?.promptTokens ?? 0,
             completionTokens: chatResponse.usage?.completionTokens ?? 0,
             finishReason: choice.finishReason,
             elapsed: elapsed
         )
+        return (reply, chatResponse.usage?.cost)
     }
 
     private func routeToCloudStream(
@@ -285,9 +299,9 @@ extension ModelRouter {
     ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let startTime = ContinuousClock.now
         let sourceStream = try await client.chatStream(request: Self.chatRequest(request, model: model, stream: true))
-        return Self.relayCloudStream(sourceStream, startTime: startTime) { [weak self] metadata in
-            await self?.recordCloudCost(model: model, response: metadata, context: context)
-        }
+        return Self.relayCloudStream(sourceStream, startTime: startTime, onUsageWithCost: { [weak self] metadata, cost in
+            await self?.recordCloudCost(model: model, response: metadata, context: context, reportedCost: cost)
+        })
     }
 
     static func chatRequest(_ request: GenerationRequest, model: String, stream: Bool) -> OpenRouterClient.ChatRequest {
@@ -298,14 +312,15 @@ extension ModelRouter {
             maxTokens: request.maxTokens,
             stream: stream
         )
-        if stream { req.usage = .init(include: true) }
+        req.usage = .init(include: true)
         return req
     }
 
     static func relayCloudStream(
         _ source: AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error>,
         startTime: ContinuousClock.Instant,
-        onUsage: @escaping @Sendable (GenerationResponse) async -> Void = { _ in }
+        onUsage: @escaping @Sendable (GenerationResponse) async -> Void = { _ in },
+        onUsageWithCost: (@Sendable (GenerationResponse, Double?) async -> Void)? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -332,7 +347,11 @@ extension ModelRouter {
                             finishReason: reason,
                             elapsed: startTime.duration(to: ContinuousClock.now)
                         )
-                        await onUsage(metadata)
+                        if let onUsageWithCost {
+                            await onUsageWithCost(metadata, usage?.cost)
+                        } else {
+                            await onUsage(metadata)
+                        }
                         continuation.yield(.metadata(metadata))
                     }
                     continuation.finish()

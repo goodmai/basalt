@@ -107,6 +107,9 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
 
     private func clientKey(from request: Request) -> String {
         guard authenticated else { return "127.0.0.1" }
+        if let rateKey = request.headers[APIKeyAuthenticator<Context>.rateKeyHeader] {
+            return rateKey
+        }
         if let budgetKey = request.headers[APIKeyAuthenticator<Context>.budgetKeyHeader] {
             return budgetKey
         }

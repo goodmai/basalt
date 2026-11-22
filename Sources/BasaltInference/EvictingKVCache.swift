@@ -92,10 +92,16 @@ final class EvictingKVCache: KVCache {
         evictedCount += overflow - kept
         let tokens = exact.state
         let moved = start..<(start + overflow)
-        let (keptKeys, keptValues) = Self.keepingLowestKeyNorms(
-            keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...], count: kept)
-        exact.state = zip(tokens, [keptKeys, keptValues]).map { all, middle in
-            concatenated([all[.ellipsis, ..<start, 0...], middle, all[.ellipsis, moved.upperBound..., 0...]], axis: 2)
+        if kept <= 0 {
+            exact.state = tokens.map { all in
+                concatenated([all[.ellipsis, ..<start, 0...], all[.ellipsis, moved.upperBound..., 0...]], axis: 2)
+            }
+        } else {
+            let (keptKeys, keptValues) = Self.keepingLowestKeyNorms(
+                keys: tokens[0][.ellipsis, moved, 0...], values: tokens[1][.ellipsis, moved, 0...], count: kept)
+            exact.state = zip(tokens, [keptKeys, keptValues]).map { all, middle in
+                concatenated([all[.ellipsis, ..<start, 0...], middle, all[.ellipsis, moved.upperBound..., 0...]], axis: 2)
+            }
         }
         eval(exact.innerState())
     }

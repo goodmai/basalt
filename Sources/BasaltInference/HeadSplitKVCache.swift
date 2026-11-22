@@ -128,9 +128,10 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         }
         if let index = heads.streaming, let queryIndex = heads.streamingQueries {
             let (k, v) = stream.update(keys: keys[0..., index], values: values[0..., index])
+            let streamMask = queries.dim(2) == 1 ? .none : ZonedKVCache.trailingColumns(of: mask, keys: k.dim(2))
             parts.append(MLXFast.scaledDotProductAttention(
                 queries: queries[0..., queryIndex], keys: k, values: v, scale: scale,
-                mask: queries.dim(2) == 1 ? .none : .causal))
+                mask: streamMask))
             dropMiddle()
         }
         let output = parts.count == 1 ? parts[0] : concatenated(parts, axis: 1)
@@ -143,17 +144,19 @@ final class HeadSplitKVCache: KVCacheAttentionProtocol {
         offset += keys.dim(2)
         let retrieved = heads.retrieval.map { full.update(keys: keys[0..., $0], values: values[0..., $0]) }
         let streamed = heads.streaming.map { stream.update(keys: keys[0..., $0], values: values[0..., $0]) }
+        if streamed != nil { dropMiddle() }
         guard let retrieved, let streamed else { return retrieved ?? streamed ?? (keys, values) }
+        let targetLen = max(retrieved.0.dim(2), streamed.0.dim(2))
         func padded(_ part: MLXArray) -> MLXArray {
-            let missing = retrieved.0.dim(2) - part.dim(2)
+            let missing = targetLen - part.dim(2)
             guard missing > 0 else { return part }
             var shape = part.shape
             shape[2] = missing
             return concatenated([MLXArray.zeros(shape, dtype: part.dtype), part], axis: 2)
         }
         let kvInverse = heads.kvInverse ?? MLXArray(Array(0 ..< Int32(keys.dim(1))))
-        let k = concatenated([retrieved.0, padded(streamed.0)], axis: 1)[0..., kvInverse]
-        let v = concatenated([retrieved.1, padded(streamed.1)], axis: 1)[0..., kvInverse]
+        let k = concatenated([padded(retrieved.0), padded(streamed.0)], axis: 1)[0..., kvInverse]
+        let v = concatenated([padded(retrieved.1), padded(streamed.1)], axis: 1)[0..., kvInverse]
         return (k, v)
     }
 

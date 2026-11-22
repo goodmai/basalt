@@ -108,6 +108,7 @@ struct ModelCatalog: Sendable {
     ]
 
     private(set) var models = Self.defaultModels
+    private(set) var pricingByModel: [String: (input: Double, output: Double)] = [:]
 
     static func cloudModels(for modelId: String) -> [String] {
         cloudAliases[modelId] ?? [modelId]
@@ -126,9 +127,12 @@ struct ModelCatalog: Sendable {
 
     mutating func merge(_ fetched: [OpenRouterClient.OpenRouterModel]) {
         for model in fetched {
-            let promptPrice = Double(model.pricing.prompt) ?? 0.0
-            let completionPrice = Double(model.pricing.completion) ?? 0.0
-            let averagePer1M = (promptPrice + completionPrice) / 2.0 * 1_000_000.0
+            let inputPer1M = (Double(model.pricing.prompt) ?? 0.0) * 1_000_000.0
+            let outputPer1M = (Double(model.pricing.completion) ?? 0.0) * 1_000_000.0
+            let averagePer1M = (inputPer1M + outputPer1M) / 2.0
+            if inputPer1M > 0 || outputPer1M > 0 {
+                pricingByModel[model.id] = (inputPer1M, outputPer1M)
+            }
             models[model.id] = ModelRouter.ModelInfo(
                 id: model.id, displayName: model.name,
                 location: .cloud(provider: .openrouter, models: [model.id]),
@@ -140,6 +144,11 @@ struct ModelCatalog: Sendable {
 
     func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
         let mappedId = Self.cloudModels(for: model).first ?? model
+        if let price = pricingByModel[mappedId] {
+            let inputCost = Double(promptTokens) / 1_000_000.0 * price.input
+            let outputCost = Double(completionTokens) / 1_000_000.0 * price.output
+            return inputCost + outputCost
+        }
         if let cost = models[mappedId]?.costPer1MTokens {
             return (Double(promptTokens + completionTokens) / 1_000_000.0) * cost
         }
@@ -309,8 +318,8 @@ extension GenerationResponse {
     static func cloudReply(
         text: String, promptTokens: Int, completionTokens: Int, finishReason: String?, elapsed: Duration
     ) -> GenerationResponse {
-        let seconds = Double(elapsed.components.seconds)
-        let durationSeconds = seconds > 0 ? seconds : 0.001
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) * 1e-18
+        let durationSeconds = max(0.001, seconds)
         return GenerationResponse(
             generatedText: text,
             promptTokens: promptTokens,

@@ -42,16 +42,29 @@ struct PipelineRunner: Sendable {
         return nil
     }
 
-    func run(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
-        guard let swap = stages.swap else { return try await runStages(request, origin: origin, sessionId: sessionId) }
+    struct RoutingIdentity: Sendable {
+        let sessionId: String?
+        let budgetKey: String?
+    }
+
+    func run(
+        _ request: PipelineRequest, origin: RequestOrigin, sessionId: String?, budgetKey: String? = nil
+    ) async throws(BasaltError) -> PipelineResponse {
+        guard let swap = stages.swap else {
+            return try await runStages(request, origin: origin, sessionId: sessionId, budgetKey: budgetKey)
+        }
         do {
-            return try await swap.serial.boundedExclusively { try await self.runStages(request, origin: origin, sessionId: sessionId) }
+            return try await swap.serial.boundedExclusively {
+                try await self.runStages(request, origin: origin, sessionId: sessionId, budgetKey: budgetKey)
+            }
         } catch {
             throw error as? BasaltError ?? .cancelled
         }
     }
 
-    func runStages(_ request: PipelineRequest, origin: RequestOrigin, sessionId: String?) async throws(BasaltError) -> PipelineResponse {
+    func runStages(
+        _ request: PipelineRequest, origin: RequestOrigin, sessionId: String?, budgetKey: String? = nil
+    ) async throws(BasaltError) -> PipelineResponse {
         let perceivers = await perceivers()
         if let missing = PipelineCore.missingStage(request, perceivers: perceivers, hasDecisions: decisions != nil) { throw .invalidRequestStructure(details: missing) }
         if stages.epistemic?.enabled == true, decisions == nil {
@@ -68,7 +81,9 @@ struct PipelineRunner: Sendable {
         let decided = try await decideWithEpistemic(
             request, context: decideCtx,
             by: typed || share ? decisions : decisions?.onDevice, origin: origin, sessionId: sessionId)
-        let executed = try await executeRoute(request, state: state, typed: typed, decided: decided, origin: origin, sessionId: sessionId)
+        let executed = try await executeRoute(
+            request, state: state, typed: typed, decided: decided, origin: origin,
+            routing: RoutingIdentity(sessionId: sessionId, budgetKey: budgetKey))
         var receipt = PipelineCore.receipt(
             perception.receipts + [decided.receipt].compactMap { $0 }, replies: executed.replies, answers: executed.answers, ms: Self.elapsed(since: started))
         receipt.swapMs = stages.swap == nil && stages.onDemand.isEmpty ? nil : PipelineCore.milliseconds(perception.swap)

@@ -86,6 +86,14 @@ package enum KVarNTileCodec {
             headDim: d)
     }
 
+    package static func decodeTile(_ tile: KVarNEncodedTile, dtype: DType = .float32) -> MLXArray {
+        let codes = PVCodeGrid.unpackCodes(tile.packedCodes, bits: 2).asType(.int32)
+        let table = MLXArray(lloydMax2Bit)
+        let kRot = (table.take(codes) * tile.channelScale.reshaped(1, tile.headDim)) * tile.tokenScale.reshaped(tile.tokens, 1)
+        let ones = MLXArray.ones([tile.headDim], dtype: .float32)
+        return MACaQFusedKernels.blockHadamard(kRot, scaleVector: ones, blockSize: 32, isInverse: true).asType(dtype)
+    }
+
     package static func cpuEstimateScores(
         query: [Float],
         tile: KVarNEncodedTile,
