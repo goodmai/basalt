@@ -75,7 +75,7 @@ public struct BenchmarkRunner: Sendable {
                 task: task, defaults: defaults, endpoint: request.endpoint
             )
             let output = try await adapter.run(context: context)
-            allSamples += output.samples
+            allSamples += Self.taggedSamples(output.samples, index: index, multiTask: suite.tasks.count > 1)
             totalExtraCost += output.extraCostUSD
             for (k, v) in output.metrics { mergedMetrics[k] = v }
             let taskCard = BenchmarkScorecard.evaluate(
@@ -186,6 +186,17 @@ public struct BenchmarkRunner: Sendable {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             let data = try encoder.encode(artifact)
             try data.write(to: directory.appendingPathComponent("artifact.json"), options: .atomic)
+        }
+    }
+}
+
+private extension BenchmarkRunner {
+    static func taggedSamples(_ samples: [BenchmarkSampleRecord], index: Int, multiTask: Bool) -> [BenchmarkSampleRecord] {
+        guard multiTask else { return samples }
+        return samples.map { sample in
+            var tagged = sample
+            tagged.id = "task[\(index)].\(sample.id)"
+            return tagged
         }
     }
 }

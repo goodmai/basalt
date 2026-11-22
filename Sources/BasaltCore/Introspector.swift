@@ -176,8 +176,13 @@ public struct Introspector: Sendable {
         guard tools.contains(where: { $0.name == call.name }) else {
             return "error: \(call.name) is not one of the tools offered in this session"
         }
-        if call.name == "overlay_undo", let id = Self.overlayID(call), protected.contains(id) {
-            return "error: overlay \(id.rawValue) existed before this introspection; only overlays made during it can be undone"
+        if call.name == "overlay_undo" {
+            guard let id = Self.overlayID(call) else {
+                return "error: overlay_undo requires a valid integer id"
+            }
+            if protected.contains(id) {
+                return "error: overlay \(id.rawValue) existed before this introspection; only overlays made during it can be undone"
+            }
         }
         let run = self.run
         do throws(BasaltError) {
@@ -210,7 +215,8 @@ public struct Introspector: Sendable {
     }
 
     static func overlayID(_ call: ToolCallOutput) -> OverlayID? {
-        let arguments = (try? JSONSerialization.jsonObject(with: Data(call.arguments.utf8))) as? [String: Any]
+        let repaired = ToolCallRepairer.repairJSON(call.arguments) ?? call.arguments
+        let arguments = (try? JSONSerialization.jsonObject(with: Data(repaired.utf8))) as? [String: Any]
         return (arguments?["id"] as? Int).map { OverlayID($0) }
     }
 

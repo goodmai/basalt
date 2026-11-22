@@ -262,7 +262,15 @@ extension SessionLogWriter {
 
     static func sanitized(_ id: String?) -> String? {
         guard let id, !id.isEmpty else { return nil }
-        let safe = String(id.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0) ? Character($0) : "_" })
+        let safe = String(id.unicodeScalars.prefix(128).map { scalar in
+            let ascii = scalar.isASCII && (
+                (scalar.value >= 0x30 && scalar.value <= 0x39)
+                || (scalar.value >= 0x41 && scalar.value <= 0x5A)
+                || (scalar.value >= 0x61 && scalar.value <= 0x7A)
+                || scalar == "-" || scalar == "_" || scalar == "."
+            )
+            return ascii ? Character(scalar) : "_"
+        })
         return safe.hasPrefix(".") ? "_" + safe.dropFirst() : safe
     }
 
@@ -292,9 +300,10 @@ extension SessionLogWriter {
         prime(session, request: id)
         let digests = request.messages.map(SessionConversations.digests)
         let parent = digests.flatMap { state.conversations.parent(of: $0, in: session) }
-        state = SessionLogState.reduce(state, .remembered(id: id, session: session, digests: digests))
         let record = format.request(request, id: id, origin: origin, modelRequested: modelRequested, parent: parent, at: stamp(session))
-        append(record, session: session)
+        if append(record, session: session) {
+            state = SessionLogState.reduce(state, .remembered(id: id, session: session, digests: digests))
+        }
     }
 
     public func logResponse(
@@ -412,9 +421,11 @@ extension SessionLogWriter {
         writePending()
     }
 
-    func append(_ record: some Encodable, session: String) {
+    @discardableResult
+    func append(_ record: some Encodable, session: String) -> Bool {
         let line = state.pending.count < bufferLimit ? SessionLogFormat.line(record) : nil
         state = SessionLogState.reduce(state, .appended(session: session, line: line, limit: bufferLimit))
+        return line != nil
     }
 
     private func writePending() {

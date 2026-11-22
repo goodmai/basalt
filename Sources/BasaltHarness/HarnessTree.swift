@@ -383,7 +383,13 @@ public enum HarnessLoader {
                 return
             }
             guard files.count < limits.maxFiles else { throw HarnessLoadError.tooManyFiles(limit: limits.maxFiles) }
-            let data = (try? handle.read(upToCount: limits.maxFileBytes + 1)) ?? Data()
+            let data: Data
+            do {
+                data = try handle.read(upToCount: limits.maxFileBytes + 1) ?? Data()
+            } catch {
+                skipped.append(HarnessSkippedFile(path: path, reason: "unreadable"))
+                return
+            }
             totalBytes += data.count
             guard totalBytes <= limits.maxTotalBytes else { throw HarnessLoadError.tooManyBytes(limit: limits.maxTotalBytes) }
             guard data.count <= limits.maxFileBytes else {

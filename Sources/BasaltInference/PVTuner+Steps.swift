@@ -275,6 +275,14 @@ extension PVTuner {
         let origDTypes = Dictionary(uniqueKeysWithValues: flatInit.map { ($0.0, $0.1.dtype) })
         let saved = Dictionary(uniqueKeysWithValues: flatInit.map { ($0.0, ($0.1 + MLXArray(0, dtype: $0.1.dtype)).asType($0.1.dtype)) })
         eval(Array(saved.values))
+        var accepted = false
+        defer {
+            if !accepted {
+                root.update(parameters: ModuleParameters.unflattened(Array(saved)))
+                eval(root)
+                root.invalidateCompiledTraces()
+            }
+        }
         let evalTrain = Array(train.prefix(min(4, train.count)))
         let gateVal = val.isEmpty ? evalTrain : val
         let (beforeTrainKL, beforeValKL) = (meanKL(model, evalTrain), meanKL(model, gateVal))
@@ -303,10 +311,8 @@ extension PVTuner {
             eval(Array(master.values) + Array(mState.values) + Array(vState.values) + castedUpdates.map(\.1) + vals)
         }
         let (afterTrainKL, afterValKL) = (meanKL(model, evalTrain), meanKL(model, gateVal))
-        if !afterValKL.isFinite || !afterTrainKL.isFinite || afterValKL > beforeValKL || afterTrainKL > beforeTrainKL {
-            root.update(parameters: ModuleParameters.unflattened(Array(saved)))
-            eval(root)
-            root.invalidateCompiledTraces()
+        if afterValKL.isFinite && afterTrainKL.isFinite && afterValKL <= beforeValKL && afterTrainKL <= beforeTrainKL {
+            accepted = true
         }
     }
 }

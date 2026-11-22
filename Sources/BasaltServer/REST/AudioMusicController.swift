@@ -197,7 +197,7 @@ extension AudioMusicController {
     ) -> Response {
         let forces24k = request.responseFormat == .pcm24k
         let declaredRate = forces24k ? 24_000 : active.descriptor.defaultSampleRate
-        let body = AsyncStream<ByteBuffer> { continuation in
+        let body = AsyncThrowingStream<ByteBuffer, any Error> { continuation in
             let task = Task {
                 do {
                     for try await chunk in stream where !chunk.samples.isEmpty {
@@ -206,8 +206,10 @@ extension AudioMusicController {
                         buffer.writeBytes(outChunk.encodePCM16LE())
                         continuation.yield(buffer)
                     }
-                } catch {}
-                continuation.finish()
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -244,13 +246,15 @@ extension AudioMusicController {
     ) async {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
+        let forces24k = request.responseFormat == .pcm24k
         var totalSamples = 0
-        var rate = active.descriptor.defaultSampleRate
+        var rate = forces24k ? 24_000 : active.descriptor.defaultSampleRate
         do {
             for try await chunk in stream where !chunk.samples.isEmpty {
-                if chunk.sampleRate > 0 { rate = chunk.sampleRate }
-                totalSamples += chunk.samples.count
-                let delta = MusicDeltaEvent(audio: chunk.encodePCM16LE().base64EncodedString(), sampleRate: rate)
+                let outChunk = forces24k && chunk.sampleRate != 24_000 ? chunk.resampled(to: 24_000) : chunk
+                if outChunk.sampleRate > 0 { rate = outChunk.sampleRate }
+                totalSamples += outChunk.samples.count
+                let delta = MusicDeltaEvent(audio: outChunk.encodePCM16LE().base64EncodedString(), sampleRate: rate)
                 if let json = try? encoder.encode(delta) {
                     continuation.yield(ByteBuffer(string: "event: music.delta\ndata: \(String(decoding: json, as: UTF8.self))\n\n"))
                 }

@@ -162,6 +162,14 @@ extension PVTuner {
         guard baseValKL > 1e-7 else { return 0 }
         let savedWeights = qtipTargets.map { ($0.path, $0.layer.weight + MLXArray(UInt32(0))) }
         eval(savedWeights.map(\.1))
+        var accepted = false
+        defer {
+            if !accepted {
+                root.update(parameters: ModuleParameters.unflattened(savedWeights.map { ("\($0.0).weight", $0.1) }))
+                eval(root)
+                root.invalidateCompiledTraces()
+            }
+        }
         for stepSize in qtipDiscreteStepSizes {
             var updates: [(String, MLXArray)] = []
             var reencodedTiles = 0
@@ -177,12 +185,13 @@ extension PVTuner {
             root.invalidateCompiledTraces()
             let candValKL = meanKL(model, gateBatches)
             if candValKL.isFinite && candValKL <= (1.0 - qtipDiscreteMinRelativeKLGain) * baseValKL {
+                accepted = true
                 return reencodedTiles
             }
+            root.update(parameters: ModuleParameters.unflattened(savedWeights.map { ("\($0.0).weight", $0.1) }))
+            eval(root)
+            root.invalidateCompiledTraces()
         }
-        root.update(parameters: ModuleParameters.unflattened(savedWeights.map { ("\($0.0).weight", $0.1) }))
-        eval(root)
-        root.invalidateCompiledTraces()
         return 0
     }
 

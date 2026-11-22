@@ -311,7 +311,9 @@ extension BasaltTranscriptBridge {
                 )
             }
             let encoded = try BasaltFoundationSchemaAdapter.encodeGenerationSchema(schema)
-            out.responseFormat = .jsonSchema(encoded, strict: false)
+            if out.responseFormat == nil {
+                out.responseFormat = .jsonSchema(encoded, strict: false)
+            }
             out.enableThinking = false
         } else if !model.capabilities.contains(.reasoning) {
             out.enableThinking = false

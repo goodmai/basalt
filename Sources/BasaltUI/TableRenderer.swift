@@ -91,7 +91,8 @@ struct TableLayout: Sendable, Equatable {
     }
 
     func fill(_ row: [String]) -> [String] {
-        (row.count..<widths.count).map { String(repeating: " ", count: widths[$0]) }
+        guard row.count < widths.count else { return [] }
+        return (row.count..<widths.count).map { String(repeating: " ", count: max(0, widths[$0])) }
     }
 }
 
@@ -174,7 +175,9 @@ public final class TableBuilder {
             if widths == nil {
                 widths = Array(repeating: 0, count: headers.count - 1)
             }
-            widths?.append(width)
+            widths?.append(max(0, width))
+        } else if widths != nil {
+            widths?.append(header.count)
         }
         return self
     }

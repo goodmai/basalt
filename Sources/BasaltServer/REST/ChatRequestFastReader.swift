@@ -405,7 +405,8 @@ extension ChatRequestFastReader {
         let regex = strField(root, "guided_regex")
         let grammar = strField(root, "guided_grammar")
         let count = (regex != nil ? 1 : 0) + (grammar != nil ? 1 : 0)
-        guard count <= 1, count == 0 || rawField(root, "response_format") == nil else {
+        let hasResponseFormat = rawField(root, "response_format").map { !yyjson_is_null($0) } ?? false
+        guard count <= 1, count == 0 || !hasResponseFormat else {
             throw OpenAIController.InvalidResponseFormat(message: "give one of response_format, guided_regex or guided_grammar")
         }
         return regex.map(ResponseFormat.regex) ?? grammar.map(ResponseFormat.grammar)

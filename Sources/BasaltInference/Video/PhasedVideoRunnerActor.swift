@@ -43,6 +43,7 @@ public actor PhasedVideoRunnerActor: VideoSynthesizer {
     private let sharedTextEmbedder: (@Sendable (String) async throws -> [Float])?
     private let phaseObserver: (@Sendable (VideoPhaseLifecycleEvent) async -> Void)?
     private var epoch: Int = 0
+    private var isGenerating: Bool = false
     private var residentTextEncoder: TextConditioningEncoder?
     private var residentDiT: CausalVideoDiTModule?
     private var residentVAE: Causal3DVAEDecoder?
@@ -76,9 +77,16 @@ public actor PhasedVideoRunnerActor: VideoSynthesizer {
         _ request: VideoGenerationRequest
     ) async throws -> AsyncThrowingStream<VideoGenerationEvent, any Error> {
         try request.validate()
+        guard !isGenerating else {
+            throw BasaltError.serverBusy(retryAfterSeconds: 1)
+        }
+        isGenerating = true
+        var handedOff = false
+        defer { if !handedOff { isGenerating = false } }
         let sessionEpoch = epoch
         let plan = await resolveExecutionPlan(for: request)
         recordedPhaseEvents.removeAll(keepingCapacity: true)
+        handedOff = true
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -462,6 +470,7 @@ extension PhasedVideoRunnerActor {
     }
 
     fileprivate func finishSessionCleanup() async {
+        isGenerating = false
         Memory.clearCache()
         await recordEvent(.sessionCleanedUp)
     }

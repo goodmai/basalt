@@ -311,7 +311,10 @@ public struct TieredKVHierarchyCore: Sendable, Equatable {
     }
 
     private mutating func rebalanceOffloading() {
-        demoteOverflow(from: .l0GPU, to: .l1HostRAM)
+        let l0Next: KVCacheTier? = config.l1CapacityBytes > 0
+            ? .l1HostRAM
+            : (config.l2CapacityBytes > 0 ? .l2SharedNVMe : nil)
+        demoteOverflow(from: .l0GPU, to: l0Next)
         if config.topology == .unifiedMemory {
             enforceUnifiedMemoryBudget()
         }

@@ -142,7 +142,7 @@ public enum BenchmarkComparator {
                 improved: improved, regressed: regressed
             )
         }
-        let baseByID = Dictionary(uniqueKeysWithValues: baseline.samples.map { ($0.id, $0) })
+        let baseByID = Dictionary(baseline.samples.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var sampleRegressions: [String] = []
         var sampleImprovements: [String] = []
         for cand in candidate.samples {

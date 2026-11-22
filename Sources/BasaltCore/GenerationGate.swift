@@ -15,6 +15,7 @@ public actor GenerationGate {
 
     private var running: [Int: @Sendable () -> Void] = [:]
     private var queue: [(id: Int, priority: RequestPriority, continuation: CheckedContinuation<Void, Error>)] = []
+    private var pendingWaiters: Set<Int> = []
     private var cancelledBeforeQueued: Set<Int> = []
     private(set) var arriving = 0
     private var exclusiveHeld = false
@@ -63,9 +64,14 @@ public actor GenerationGate {
             return id
         }
         guard hasPlace(for: priority) else { throw BasaltError.serverBusy(retryAfterSeconds: 1) }
-        defer { cancelledBeforeQueued.remove(id) }
+        pendingWaiters.insert(id)
+        defer {
+            pendingWaiters.remove(id)
+            cancelledBeforeQueued.remove(id)
+        }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                pendingWaiters.remove(id)
                 if closed {
                     continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil))
                     return
@@ -188,7 +194,7 @@ public actor GenerationGate {
     private func cancelWaiter(_ id: Int) {
         if let index = queue.firstIndex(where: { $0.id == id }) {
             queue.remove(at: index).continuation.resume(throwing: CancellationError())
-        } else if running[id] == nil {
+        } else if pendingWaiters.contains(id) {
             cancelledBeforeQueued.insert(id)
         }
     }
@@ -258,9 +264,14 @@ extension GenerationGate {
     private func waitExclusively() async throws {
         nextId += 1
         let id = nextId
-        defer { cancelledBeforeQueued.remove(id) }
+        pendingWaiters.insert(id)
+        defer {
+            pendingWaiters.remove(id)
+            cancelledBeforeQueued.remove(id)
+        }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                pendingWaiters.remove(id)
                 if closed {
                     continuation.resume(throwing: BasaltError.serverBusy(retryAfterSeconds: nil))
                     return
@@ -278,7 +289,9 @@ extension GenerationGate {
 
     private func cancelExclusive(_ id: Int) {
         guard let index = exclusiveQueue.firstIndex(where: { $0.boundedId == id }) else {
-            cancelledBeforeQueued.insert(id)
+            if pendingWaiters.contains(id) {
+                cancelledBeforeQueued.insert(id)
+            }
             return
         }
         exclusiveQueue.remove(at: index).fail(CancellationError())

@@ -90,7 +90,7 @@ struct ComposeController: Sendable {
         guard let events else { return ProviderErrorResponse.response(status: .notFound, message: "this system has no compose events", shape: .openAI) }
         let encoder = JSONEncoder()
         (encoder.dateEncodingStrategy, encoder.outputFormatting) = (.iso8601, [.sortedKeys])
-        let body = AsyncStream<ByteBuffer> { continuation in
+        let body = AsyncStream<ByteBuffer>(bufferingPolicy: .bufferingNewest(ComposeEvents.kept)) { continuation in
             let task = Task {
                 for await event in await events.stream() {
                     guard let data = try? encoder.encode(event) else { continue }
