@@ -20,8 +20,12 @@ extension ConvertSubcommand {
     }
 
     func validateDestinationOptions() throws {
-        if out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, registerCache == nil {
+        let outEmpty = out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if outEmpty, registerCache == nil {
             throw ValidationError("specify --out <directory> or --register-cache <org/repo>")
+        }
+        if outEmpty, to == nil, !hasBasisTransformFlag {
+            throw ValidationError("--register-cache without --out requires --to, --experimental-flatquant, or --experimental-lirquant; pass --out <directory> for legacy conversion modes")
         }
         if let repo = registerCache {
             let parts = repo.split(separator: "/", omittingEmptySubsequences: false)

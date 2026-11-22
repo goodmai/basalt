@@ -28,6 +28,7 @@ extension ServeCommand {
         let embeddings = try await loadEmbeddings()
         let explicitSpeech = try await loadSpeechSynthesizer(gate: boot.orchestrator.gate, memory: memory)
         let explicitImage = try await loadImageSynthesizer(gate: boot.orchestrator.gate)
+        let explicitVideo = try await loadVideoSynthesizer()
         let slot = ComposeSlot(spec: spec, cloudGate: cloudGate(spec)) { [self] model in ProcessInfo.processInfo.environment[model?.apiKeyEnv ?? decision.keyEnvironment] ?? "" }
         let file = pipeline.compose ?? ""
         return ServerLaunch(
@@ -38,7 +39,8 @@ extension ServeCommand {
             onBind: { port in Self.recordBind(spec.name, port: port, file: file) },
             startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot, memory: memory) },
             speechSynthesizer: explicitSpeech,
-            imageSynthesizer: explicitImage)
+            imageSynthesizer: explicitImage,
+            videoSynthesizer: explicitVideo)
     }
 
     func startComposed(

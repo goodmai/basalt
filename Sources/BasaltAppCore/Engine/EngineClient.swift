@@ -96,7 +96,9 @@ extension EngineClient {
             let task = Task {
                 do {
                     let body = try JSONEncoder().encode(request)
-                    let (bytes, response) = try await session.bytes(for: endpoint.request("v1/chat/completions", method: "POST", body: body))
+                    var urlRequest = endpoint.request("v1/chat/completions", method: "POST", body: body)
+                    urlRequest.timeoutInterval = 900
+                    let (bytes, response) = try await session.bytes(for: urlRequest)
                     if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                         var data = Data()
                         for try await byte in bytes.prefix(4096) { data.append(byte) }

@@ -83,6 +83,7 @@ public enum LibraryAction: Sendable {
     case publishCompleted(String, HubPublishResult)
     case publishFailed(String, String)
     case cancelPublish(String)
+    case listFailed(String)
     case failed(String)
 }
 
@@ -141,6 +142,9 @@ public enum LibraryReducer {
              .closePublish, .startPublish, .publishProgressed, .publishCompleted,
              .publishFailed, .cancelPublish:
             return reduceHubAndPublish(&state, action)
+        case .listFailed(let message):
+            (state.problem, state.loading) = (message, nil)
+            return []
         case .failed(let message):
             (state.problem, state.loading) = (message, nil)
             return [.list]

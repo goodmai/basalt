@@ -192,7 +192,11 @@ public enum LibraryEffects {
             default: break
             }
         } catch {
-            await send(.failed(Self.describe(error)))
+            if case .list = effect {
+                await send(.listFailed(Self.describe(error)))
+            } else {
+                await send(.failed(Self.describe(error)))
+            }
         }
     }
 

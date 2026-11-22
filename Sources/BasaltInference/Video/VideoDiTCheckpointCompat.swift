@@ -234,8 +234,10 @@ extension VideoDiTCheckpointCompat {
             .write(to: output.appending(component: "config.json"))
         return (shards, bytesAfter)
     }
+}
 
-    private static func denseLinear(from sub: Module) -> Linear? {
+private extension VideoDiTCheckpointCompat {
+    static func denseLinear(from sub: Module) -> Linear? {
         if type(of: sub) == Linear.self, let lin = sub as? Linear {
             return lin
         }

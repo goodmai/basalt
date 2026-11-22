@@ -66,6 +66,7 @@ struct ChatCommand: AsyncParsableCommand {
     private static let logger = BasaltLogger(module: "ChatCommand")
 
     mutating func run() async throws {
+        BasaltLogger.globalLevel = logLevel.basaltLevel
         Self.logger.trace("ChatCommand started.")
         let (sessionId, history) = try startingSession()
         let writer = ServeCommand.sessionLogWriter(mode: sessionLog, directory: sessionLogDir, defaultSession: sessionId)
@@ -179,15 +180,21 @@ struct ChatCommand: AsyncParsableCommand {
         }
     }
     
+    static func resolvedLocalPath(for modelId: String) -> String? {
+        let expanded = (modelId as NSString).expandingTildeInPath
+        return FileManager.default.fileExists(atPath: expanded) ? expanded : nil
+    }
+
     private func resolveAndDownloadIfNeeded(modelId: String) async throws -> String {
-        // HF-style repo ID (contains "/")
+        if let localPath = Self.resolvedLocalPath(for: modelId) {
+            return localPath
+        }
         if modelId.contains("/") {
             let cached = ModelCache.cacheDir(for: modelId)
             if FileManager.default.fileExists(atPath: cached.path) {
                 return cached.path
             }
             
-            // Not cached — download it automatically
             log("Model not in local cache: \(bold(modelId)). Downloading...")
             let hub = HuggingFaceHub()
             do {
@@ -200,7 +207,6 @@ struct ChatCommand: AsyncParsableCommand {
                 throw ExitCode.failure
             }
         }
-        // Treated as a local path
         return modelId
     }
 
