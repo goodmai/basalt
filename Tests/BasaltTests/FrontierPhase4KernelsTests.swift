@@ -201,7 +201,8 @@ struct FusedMoERouterKernelTests {
             for c in 0 ..< experts {
                 let perm = ((c * 37 + r * 13 + seed * 7) % experts)
                 let raw = Float(perm) * 0.03125 - Float(step) * 0.0078125
-                values.append(raw)
+                let top = perm - (experts - 20)
+                values.append(experts <= 256 ? raw : top >= 0 ? 1 + Float(top) * 0.0625 : Float(perm) / Float(experts) - 1)
             }
         }
         return MLXArray(values, [rows, experts]).asType(dtype)
@@ -216,11 +217,11 @@ struct FusedMoERouterKernelTests {
     }
 
     @Test(
-        "Exact expert top-K indices and softmax weight parity across V in [4, 8, 64, 128, 256], K in [2, 4, 8], dtypes and modes",
-        arguments: [4, 8, 64, 128, 256], [DType.float16, .bfloat16, .float32]
+        "Exact expert top-K indices and softmax weight parity across V in [4, 8, 64, 128, 256, 300, 512, 1024], K in [2, 4, 8, 10, 16], dtypes and modes",
+        arguments: [4, 8, 64, 128, 256, 300, 512, 1024], [DType.float16, .bfloat16, .float32]
     )
     func routerTemplateMatrixParity(experts: Int, dtype: DType) {
-        let ks = [2, 4, 8, 16].filter { $0 <= experts }
+        let ks = [2, 4, 8, 10, 16].filter { $0 <= experts }
         for k in ks {
             for rows in [1, 5, 8] {
                 let logits = Self.distinctLogits(rows: rows, experts: experts, dtype: dtype, seed: k + rows)
@@ -241,7 +242,7 @@ struct FusedMoERouterKernelTests {
         }
     }
 
-    @Test("Deterministic lowest-index tie-breaking, NaN/-Inf masking, 3D preservation and V > 256 fallback")
+    @Test("Deterministic lowest-index tie-breaking, NaN/-Inf masking, 3D preservation and V > 1024 fallback")
     func tieBreakingAndFallback() {
         let tied = MLXArray([Float(1.0), 2.5, 2.5, -Float.infinity, .nan, 2.5, 0.5, 2.5], [1, 2, 4])
         let actual = FusedMoERouterKernel.route(tied, k: 3, normTopkProb: true, softmaxBeforeTopK: true)
@@ -253,7 +254,7 @@ struct FusedMoERouterKernelTests {
         #expect(actual.indices[0, 1].asArray(Int32.self) == [1, 3, 2])
         #expect(abs(actual.weights - expected.weights).max().item(Float.self) < 1e-5)
 
-        let wide = Self.distinctLogits(rows: 2, experts: 300, dtype: .float16, seed: 9)
+        let wide = Self.distinctLogits(rows: 2, experts: 1100, dtype: .float16, seed: 9)
         #expect(!FusedMoERouterKernel.supports(wide, k: 4))
         let wideOut = FusedMoERouterKernel.route(wide, k: 4)
         let wideRef = FusedMoERouterKernel.reference(wide, k: 4)
