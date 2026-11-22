@@ -176,9 +176,10 @@ enum LeJEPABackbone {
         MLXInferenceEngine.replaceLoRA(
             in: blocks, indices: indices, parameters: params, fineTuneType: container.configuration.fineTuneType)
         do {
-            try model.update(parameters: container.parameters, verify: .noUnusedKeys)
+            try model.update(parameters: container.parameters, verify: [.noUnusedKeys, .shapeMismatch])
             model.invalidateCompiledTraces()
         } catch {
+            MLXInferenceEngine.detachLoRA(from: model, blocks: blocks)
             throw .modelConfigurationInvalid(path: "adapters.safetensors", reason: error.localizedDescription)
         }
     }

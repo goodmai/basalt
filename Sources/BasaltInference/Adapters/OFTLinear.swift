@@ -191,16 +191,10 @@ public final class QuantizedOFTLinear: QuantizedLinear, OFTAdapterLayer {
         self.totalBlocks = blocks
         self.parameterization = parameterization
         self.blockShared = blockShared
-        super.init(
-            weight: linear.weight,
-            scales: linear.scales,
-            biases: linear.biases,
-            groupSize: linear.groupSize,
-            bits: linear.bits,
-            mode: linear.mode
-        )
-        if let baseBias = linear.bias {
-            update(parameters: .unflattened(["bias": baseBias]))
+        if linear.mode == .affine {
+            super.init(weight: linear.weight, bias: linear.bias, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits)
+        } else {
+            super.init(weight: linear.weight, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
         }
         train(linear.training)
         freeze()

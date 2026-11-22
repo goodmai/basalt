@@ -21,6 +21,9 @@ extension MLXInferenceEngine {
         if let request { try Self.validate(request) }
         let key = Self.describe(source)
         guard modelFacts.deltas[key] == nil else { throw .invalidRequestStructure(details: "adapter_apply: \(key) is already applied; undo it first") }
+        guard !modelFacts.deltas.values.contains(where: { $0.pack != nil }) else {
+            throw .invalidRequestStructure(details: "adapter_apply: cannot apply an adapter while a tensor_pack overlay is active; undo the pack first")
+        }
         record(.learned(modelEpoch) { $0.deltas[key] = AppliedDelta() })
         let modules: [String]
         do throws(BasaltError) {

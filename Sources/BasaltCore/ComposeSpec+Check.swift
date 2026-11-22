@@ -62,6 +62,9 @@ extension ComposeSpec {
         if deciderModels.contains(where: { models[$0]?.keep == .onDemand }), memory == .sequential || sequentialPerceiver {
             issues.append(Issue("memory", "an on-demand decider may be loaded at any time, so the set must fit resident; use memory: auto or resident"))
         }
+        if pipelines[Self.defaultPipeline] != nil {
+            issues.append(Issue("pipelines.\(Self.defaultPipeline)", "default is reserved for the top-level pipeline"))
+        }
         for (pipeline, view) in views where pipeline != Self.defaultPipeline {
             let path = "pipelines.\(pipeline)"
             if !pipeline.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" }) { issues.append(Issue(path, "a pipeline name uses lowercase letters, digits and -")) }
@@ -83,7 +86,7 @@ extension ComposeSpec {
             issues.append(Issue("pipeline.answer.routes", "the last route takes every request left: give it no when"))
         }
         for name in answerModels where models[name] == nil { issues.append(Issue("pipeline.answer.routes", "\(name) is not a declared model")) }
-        if let total = budget, !(total > 0) { issues.append(Issue("budget", "usd_per_day must be positive")) }
+        if let total = budget, !(total > 0) || !total.isFinite { issues.append(Issue("budget", "usd_per_day must be positive")) }
         return issues
     }
 
@@ -153,7 +156,7 @@ extension ComposeSpec {
         var issues = keepIssues(path, model, perceiver: perceiver, onDemandAllowed: routed || onDemandRoles.contains(name) || benchmarkModels.contains(name))
         issues += roleIssues(name, model, path: path)
         if model.budget != nil, !model.isCloud { issues.append(Issue("\(path).budget", "applies only to cloud models")) }
-        if let budget = model.budget, !(budget > 0) { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
+        if let budget = model.budget, !(budget > 0) || !budget.isFinite { issues.append(Issue("\(path).budget", "usd_per_day must be positive")) }
         switch model.source {
         case .local(let source):
             if source.isEmpty { issues.append(Issue("\(path).source", "is empty")) }

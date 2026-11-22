@@ -282,16 +282,10 @@ public final class QuantizedPHMLinear: QuantizedLinear, ParameterEfficientLayer 
         self.hypercomplexDim = hypercomplexDim
         self.factorRank = factorRank
         self.adapterScale = scale
-        super.init(
-            weight: linear.weight,
-            scales: linear.scales,
-            biases: linear.biases,
-            groupSize: linear.groupSize,
-            bits: linear.bits,
-            mode: linear.mode
-        )
-        if let baseBias = linear.bias {
-            update(parameters: .unflattened(["bias": baseBias]))
+        if linear.mode == .affine {
+            super.init(weight: linear.weight, bias: linear.bias, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits)
+        } else {
+            super.init(weight: linear.weight, scales: linear.scales, biases: linear.biases, groupSize: linear.groupSize, bits: linear.bits, mode: linear.mode)
         }
         if case .owned(let sharedBank) = basisMode {
             sharedBank.ownerBasis = { [weak self] in self?.ownedBasis }
@@ -394,7 +388,8 @@ public final class QuantizedPHMLinear: QuantizedLinear, ParameterEfficientLayer 
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let y = super.callAsFunction(x.asType(scales.dtype))
+        let targetDType = scales.dtype.isFloatingPoint ? scales.dtype : (x.dtype.isFloatingPoint ? x.dtype : .float32)
+        let y = super.callAsFunction(x.asType(targetDType))
         if !loraEnabled { return y }
         let z = PHMContraction.forward(x, basis: activeBasis, factorS: factorS, factorT: factorT)
         return y + (adapterScale * z).asType(y.dtype)

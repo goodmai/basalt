@@ -31,7 +31,7 @@ public struct TableRenderer: Sendable {
     ) -> String {
         guard !headers.isEmpty else { return "" }
         let layout = TableLayout(
-            widths: widths ?? TableLayout.columnWidths(headers: headers, rows: rows),
+            widths: (widths ?? TableLayout.columnWidths(headers: headers, rows: rows)).map { max(0, $0) },
             alignments: alignment ?? Array(repeating: .left, count: headers.count)
         )
         switch style {
@@ -61,9 +61,10 @@ struct TableLayout: Sendable, Equatable {
     }
 
     static func padCell(_ text: String, width: Int, alignment: TableRenderer.ColumnAlignment) -> String {
+        let safeWidth = max(0, width)
         let cleanText = text.replacingOccurrences(of: "\n", with: " ")
-        guard cleanText.count < width else { return String(cleanText.prefix(width)) }
-        let padding = width - cleanText.count
+        guard cleanText.count < safeWidth else { return String(cleanText.prefix(safeWidth)) }
+        let padding = safeWidth - cleanText.count
         switch alignment {
         case .left:
             return cleanText + String(repeating: " ", count: padding)

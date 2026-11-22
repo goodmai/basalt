@@ -57,7 +57,7 @@ extension HuggingFaceHub {
     ) async throws -> URL {
         let repo = try Self.parseNativeRepoID(repoId)
         let client = try makeNativeHubClient(token: token, cacheRoot: cacheRoot)
-        let details = try await modelDetails(repoId: repoId)
+        let details = try await modelDetails(repoId: repoId, token: token)
         let downloadable = Set(HubRequest.downloadable((details.siblings ?? []).map(\.rfilename), subfolder: subfolder))
         guard !downloadable.isEmpty else {
             throw HFError.modelNotFound(subfolder.map { "\(repoId)/\($0)" } ?? repoId)
