@@ -3,6 +3,16 @@ import MLX
 import MLXLMCommon
 import MLXNN
 
+private let compiledMask = compile { (bias: MLXArray, distance: MLXArray, limits: MLXArray) -> MLXArray in
+    let (batch, heads, extent) = (bias.dim(0), bias.dim(2), bias.dim(-1))
+    let (length, keys) = (distance.dim(0), distance.dim(1))
+    let visible = (distance .>= 0) .&& (distance .< limits[0])
+    let index = broadcast(clip(distance, min: 0, max: extent - 1), to: [batch, heads, length, keys])
+    let gathered = takeAlong(bias.transposed(0, 2, 1, 3), index, axis: -1).asType(.float32)
+    let positional = MLX.where(distance .< Int32(extent), gathered, MLXArray(Float(0)))
+    return MLX.where(visible, positional, MLXArray(-Float.infinity))
+}
+
 final class Inkling2RelativeLogits: Module {
     var proj: MLXArray
 
@@ -132,18 +142,31 @@ final class Inkling2Attention: Module {
     }
 
     func attend(_ q: MLXArray, _ k: MLXArray, _ v: MLXArray, bias: MLXArray, sinks: MLXArray, positions: Inkling2Positions) -> MLXArray {
-        let (queryStart, keyStart) = (positions.query, positions.key)
         let (batch, length, keysCount) = (q.dim(0), q.dim(2), k.dim(2))
-        let extent = bias.dim(-1)
-        let queryPositions = MLXArray(Int32(queryStart) ..< Int32(queryStart + length))
-        let keyPositions = MLXArray(Int32(keyStart) ..< Int32(keyStart + keysCount))
+        let mask = additiveMask(bias: bias, length: length, keysCount: keysCount, positions: positions).asType(q.dtype)
+        if length == 1, batch == 1 {
+            let out = MLXFast.scaledDotProductAttention(
+                queries: q, keys: k, values: v, scale: scale, mask: mask, sinks: sinks[0, 0].asType(q.dtype))
+            return out.transposed(0, 2, 1, 3)
+        }
+        let zero = MLXArray.zeros([batch, kvHeads, 1, headDim], dtype: k.dtype)
+        let sinkColumn = sinks.transposed(0, 2, 1).expandedDimensions(axis: -1).asType(q.dtype)
+        let out = MLXFast.scaledDotProductAttention(
+            queries: q, keys: concatenated([k, zero], axis: 2), values: concatenated([v, zero.asType(v.dtype)], axis: 2),
+            scale: scale, mask: concatenated([mask, sinkColumn], axis: -1))
+        return out.transposed(0, 2, 1, 3)
+    }
+
+    func additiveMask(bias: MLXArray, length: Int, keysCount: Int, positions: Inkling2Positions) -> MLXArray {
+        let queryPositions = MLXArray(Int32(positions.query) ..< Int32(positions.query + length))
+        let keyPositions = MLXArray(Int32(positions.key) ..< Int32(positions.key + keysCount))
         let distance = queryPositions.expandedDimensions(axis: 1) - keyPositions.expandedDimensions(axis: 0)
-        var visible = distance .>= 0
-        if window > 0 { visible = visible .&& (distance .< Int32(window)) }
-        let index = broadcast(clip(distance, min: 0, max: extent - 1), to: [batch, heads, length, keysCount])
-        let gathered = takeAlong(bias.transposed(0, 2, 1, 3), index, axis: -1).asType(.float32)
-        let positional = MLX.where(distance .< Int32(extent), gathered, MLXArray(Float(0)))
-        let mask = MLX.where(visible, positional, MLXArray(-Float.infinity)).reshaped(batch, kvHeads, -1, length, keysCount)
+        return compiledMask(bias, distance, MLXArray([window > 0 ? Int32(window) : Int32.max]))
+    }
+
+    func attendReference(_ q: MLXArray, _ k: MLXArray, _ v: MLXArray, bias: MLXArray, sinks: MLXArray, positions: Inkling2Positions) -> MLXArray {
+        let (batch, length, keysCount) = (q.dim(0), q.dim(2), k.dim(2))
+        let mask = additiveMask(bias: bias, length: length, keysCount: keysCount, positions: positions).reshaped(batch, kvHeads, -1, length, keysCount)
         let grouped = q.asType(.float32).reshaped(batch, kvHeads, -1, length, headDim)
         let scores = matmul(grouped, k.asType(.float32).expandedDimensions(axis: 2).swappedAxes(-1, -2)) * scale + mask
         let sinkLogits = sinks.asType(.float32).transposed(0, 2, 1).reshaped(batch, kvHeads, -1, length, 1)
