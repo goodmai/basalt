@@ -23,7 +23,9 @@ public struct HeterogeneousNodeProfile: Sendable, Codable, Equatable {
 
     public init(capability: PeerCapability, powerWatts: Double) {
         self.nodeId = capability.peerId
-        self.effectiveTFLOPS = capability.effectiveThroughputScore
+        let compute = max(0.05, capability.measuredTFLOPS.isFinite ? capability.measuredTFLOPS : 0.05)
+        let thermal = min(1.0, max(0.05, capability.thermalFactor.isFinite ? capability.thermalFactor : 1.0))
+        self.effectiveTFLOPS = compute * thermal
         self.powerWatts = powerWatts
         self.availableMemoryBytes = capability.unifiedMemoryBytes
         self.linkGbps = capability.linkGbps
@@ -31,7 +33,8 @@ public struct HeterogeneousNodeProfile: Sendable, Codable, Equatable {
 
     public var computeRateUnitsPerSecond: Double {
         let compute = max(0.05, effectiveTFLOPS.isFinite ? effectiveTFLOPS : 0.05)
-        let linkScale = max(0.1, linkGbps) / (max(0.1, linkGbps) + 10.0)
+        let bw = max(0.1, linkGbps.isFinite ? linkGbps : 10.0)
+        let linkScale = bw / (bw + 10.0)
         return compute * linkScale
     }
 }

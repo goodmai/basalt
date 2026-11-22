@@ -150,7 +150,7 @@ extension EngineClient {
 extension URLSession {
     public static let engine: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.httpMaximumConnectionsPerHost = 32
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 7 * 24 * 3600
         configuration.urlCache = nil

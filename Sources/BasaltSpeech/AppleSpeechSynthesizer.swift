@@ -38,6 +38,7 @@ public struct AppleSpeechSynthesizer: SpeechSynthesizer {
         return AsyncThrowingStream { continuation in
             let sink = StreamSink(continuation: continuation, targetRate: targetRate)
             let startup = Task { @MainActor in
+                guard !Task.isCancelled, !sink.isClosed else { return }
                 session.start(request: request, voice: voice, sink: sink)
             }
             continuation.onTermination = { _ in
@@ -125,6 +126,10 @@ private final class StreamSink: Sendable {
         continuation.finish(throwing: error)
     }
 
+    var isClosed: Bool {
+        closed.withLock { $0 }
+    }
+
     func cancel() {
         let shouldClose = closed.withLock { state in
             guard !state else { return false }
@@ -194,6 +199,7 @@ private final class SynthesisSession {
     init() {}
 
     func start(request: SpeechRequest, voice: AVSpeechSynthesisVoice, sink: StreamSink) {
+        guard !sink.isClosed else { return }
         let synth = AVSpeechSynthesizer()
         let cleanup: @Sendable () -> Void = { [weak self] in
             sink.finishOnce()

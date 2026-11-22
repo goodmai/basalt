@@ -440,9 +440,13 @@ public enum JSONSchemaGate {
                 throw UnsupportedJSONSchema(message: "$ref at \(path) is not local to the schema")
             }
             let pointer = OrderedJSON.Reader.decoded(quoted)
+            guard pointer == "#" || pointer.hasPrefix("#/") else {
+                throw UnsupportedJSONSchema(message: "$ref '\(pointer)' is not a JSON Pointer")
+            }
             guard followed.insert(pointer).inserted else { return }
             var target = document
-            for token in pointer.dropFirst().split(separator: "/", omittingEmptySubsequences: true) {
+            let tokens = pointer == "#" ? [] : pointer.dropFirst(2).split(separator: "/", omittingEmptySubsequences: false)
+            for token in tokens {
                 let key = token.replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~")
                 if let next = target[key] {
                     target = next

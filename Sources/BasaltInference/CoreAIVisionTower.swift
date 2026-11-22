@@ -141,6 +141,9 @@ public struct CoreAIVisionTower: Sendable {
     }
 
     static func rows(_ planar: NDArray, count: Int) throws -> MLXArray {
+        guard planar.shape.count == 4, planar.shape[0] == 1, planar.shape[2] == 1 else {
+            throw BasaltError.inferenceError("the vision tower output is not a row-major (1, C, 1, N) array")
+        }
         let (channels, length) = (planar.shape[1], planar.shape[3])
         let total = channels * length
         guard count <= length, planar.view(as: Float16.self).contiguousElements?.count == total else {

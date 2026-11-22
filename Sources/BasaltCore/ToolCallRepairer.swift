@@ -65,34 +65,24 @@ public enum ToolCallRepairer: Sendable {
         var str = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if str.isEmpty { return nil }
 
-        // 1. Strip markdown code fences
         str = stripMarkdownFences(str)
 
-        // 2. Locate outermost JSON boundaries '{' or '['
         guard let firstBrace = str.firstIndex(where: { $0 == "{" || $0 == "[" }) else {
             return nil
         }
-        str = String(str[firstBrace...])
+        str = sliceBalancedRoot(String(str[firstBrace...]))
 
-        // Valid JSON needs no repair — and must not get one: the quote and literal rewrites below
-        // would corrupt string values that contain an apostrophe, "True" or a brace.
         if (try? JSONSerialization.jsonObject(with: Data(str.utf8))) != nil {
             return str
         }
 
-        // 3. Normalize Python/JS literals
-        str = normalizeLiterals(str)
-
-        // 4. Convert single-quoted keys and strings to double quotes
         str = convertSingleQuotes(str)
-
-        // 5. Quote unquoted keys (e.g. `{command: "ls"}` -> `{"command": "ls"}`)
-        str = quoteUnquotedKeys(str)
-
-        // 6. Remove trailing commas before closing braces/brackets
-        str = removeTrailingCommas(str)
-
-        // 7. Fix unclosed strings and balance braces/brackets
+        str = transformOutsideStrings(str) { segment in
+            var s = normalizeLiterals(segment)
+            s = quoteUnquotedKeys(s)
+            s = removeTrailingCommas(s)
+            return s
+        }
         str = balanceEnclosures(str)
 
         // 8. Final verification with JSONSerialization
@@ -232,6 +222,9 @@ extension ToolCallRepairer {
 
         for ch in text {
             if isEscaped {
+                if inSingleQuotes && ch == "'" {
+                    result.removeLast()
+                }
                 result.append(ch)
                 isEscaped = false
                 continue
@@ -245,6 +238,8 @@ extension ToolCallRepairer {
             if ch == "\"" && !inSingleQuotes {
                 inDoubleQuotes.toggle()
                 result.append(ch)
+            } else if ch == "\"" && inSingleQuotes {
+                result.append("\\\"")
             } else if ch == "'" && !inDoubleQuotes {
                 inSingleQuotes.toggle()
                 result.append("\"")
@@ -314,5 +309,52 @@ extension ToolCallRepairer {
         }
 
         return repaired
+    }
+}
+
+private extension ToolCallRepairer {
+    static func sliceBalancedRoot(_ text: String) -> String {
+        var depth = 0
+        var quote: Character?
+        var escaped = false
+        for idx in text.indices {
+            let ch = text[idx]
+            if escaped { escaped = false; continue }
+            if ch == "\\" && quote != nil { escaped = true; continue }
+            if let q = quote {
+                if ch == q { quote = nil }
+                continue
+            }
+            if ch == "\"" || ch == "'" { quote = ch; continue }
+            if ch == "{" || ch == "[" { depth += 1 }
+            else if ch == "}" || ch == "]" {
+                depth -= 1
+                if depth == 0 { return String(text[...idx]) }
+            }
+        }
+        return text
+    }
+
+    static func transformOutsideStrings(_ text: String, _ transform: (String) -> String) -> String {
+        var out = ""
+        var outside = ""
+        var inString = false
+        var escaped = false
+        for ch in text {
+            if inString {
+                out.append(ch)
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+            } else if ch == "\"" {
+                if !outside.isEmpty { out.append(transform(outside)); outside = "" }
+                inString = true
+                out.append(ch)
+            } else {
+                outside.append(ch)
+            }
+        }
+        if !outside.isEmpty { out.append(transform(outside)) }
+        return out
     }
 }

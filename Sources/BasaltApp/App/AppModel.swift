@@ -143,8 +143,8 @@ public final class AppModel {
     }
 
     public func delete(_ id: ConversationID) async {
-        chats[id]?.send(.stop)
-        chats[id] = nil
+        let store = chats.removeValue(forKey: id)
+        store?.send(.stop)
         if selection == id { selection = nil }
         try? await repository.delete(id)
         await reload()

@@ -26,9 +26,10 @@ public struct QuickAskView: View {
         GlassEffectContainer(spacing: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 promptSurface
-                if let reply = assistantReply {
+                if let reply = assistantReply, !reply.parts.isEmpty || reply.state == .streaming {
                     answerSurface(reply)
-                } else if case .failed(let error) = store.state.run {
+                }
+                if case .failed(let error) = store.state.run {
                     errorSurface(error)
                 }
             }

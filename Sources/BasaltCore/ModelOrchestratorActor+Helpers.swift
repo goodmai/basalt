@@ -151,6 +151,8 @@ struct OrchestratorState: Sendable {
         case .named(let id):
             next.modelId = id
         case .unloaded:
+            next.modelPath = ""
+            next.modelId = ""
             next.modelEpoch += 1
         case .switchStarted(let id, let task):
             next.pendingSwitch = (id, task)

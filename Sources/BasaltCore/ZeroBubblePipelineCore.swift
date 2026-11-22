@@ -85,7 +85,7 @@ public enum LayerStagePartitioner {
     ) -> StagePartitionResult {
         let numLayers = layerMemoryBytes.count
         let stages = peerRAMBytes.count
-        guard numLayers > 0, stages > 0, numLayers >= stages else {
+        guard numLayers > 0, stages > 0, numLayers >= stages, safetyFraction.isFinite, safetyFraction > 0 else {
             return StagePartitionResult(stageRanges: [], stageBytes: [], fitsSafetyCeiling: false, maxUtilization: .infinity)
         }
         var prefix = [Int64](repeating: 0, count: numLayers + 1)

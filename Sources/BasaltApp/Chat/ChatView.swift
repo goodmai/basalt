@@ -216,7 +216,7 @@ struct MessageRow: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
-                    PartView(part: part, onEditImage: onEditImage)
+                    PartView(part: part, isStreaming: message.state == .streaming, onEditImage: onEditImage)
                 }
                 if message.state == .streaming, message.parts.isEmpty {
                     ProgressView().controlSize(.small).accessibilityLabel("Answering")
@@ -259,6 +259,7 @@ struct BranchSwitcherView: View {
 
 struct PartView: View {
     let part: MessagePart
+    var isStreaming: Bool = false
     var onEditImage: (GeneratedImagePart) -> Void = { _ in }
 
     var body: some View {
@@ -279,7 +280,7 @@ struct PartView: View {
         case .attachment(let attachment):
             AttachmentChip(attachment: attachment)
         case .image(let image):
-            GeneratedImageCard(part: image, onEdit: onEditImage)
+            GeneratedImageCard(part: image, isStreaming: isStreaming, onEdit: onEditImage)
         }
     }
 }

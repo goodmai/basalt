@@ -114,7 +114,13 @@ struct ConversationDetail: View {
                 ProgressView().accessibilityLabel("Loading the conversation")
             }
         }
-        .task { store = await model.store(for: id) }
+        .task {
+            if let loaded = await model.store(for: id) {
+                store = loaded
+            } else if model.selection == id {
+                model.selection = nil
+            }
+        }
         .onChange(of: activeStore?.state.draft ?? "") { _, draft in model.drafts.save(id, draft) }
     }
 }
