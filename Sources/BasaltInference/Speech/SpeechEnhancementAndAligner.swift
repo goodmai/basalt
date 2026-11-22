@@ -377,7 +377,10 @@ public actor Qwen3ForcedAligner {
         let resampled = sampleRate == 16_000
             ? samples
             : TTSWaveformMetrics.resampleLinear(samples, from: sampleRate, to: 16_000)
-        let sanitized = resampled.map { $0.isFinite ? min(1, max(-1, $0)) : 0 }
+        var sanitized = resampled.map { $0.isFinite ? min(1, max(-1, $0)) : 0 }
+        if sanitized.count < module.frameHop {
+            sanitized.append(contentsOf: repeatElement(0, count: module.frameHop - sanitized.count))
+        }
         let logProbsTensor = module.forwardLogProbs(MLXArray(sanitized).reshaped(1, sanitized.count, 1))
         eval(logProbsTensor)
         let frameCount = logProbsTensor.dim(0)

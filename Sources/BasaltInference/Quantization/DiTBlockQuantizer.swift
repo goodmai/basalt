@@ -51,6 +51,8 @@ package enum DiTBlockQuantizer {
         case .mxfp4: (4, 32, .mxfp4)
         case .affine(let b, let g): (b, g, .affine)
         }
+        let keyToShard = try buildShardIndex(for: shardURLs)
+        let allKeys = Set(keyToShard.keys)
         var writer = ShardWriter(directory: output, maxBytes: 4_500_000_000, metadata: ["format": "mlx"])
         var manifestModules: [String: MACaQLayerSpec] = [:]
         var bytesAfter: Int64 = 0
@@ -58,8 +60,8 @@ package enum DiTBlockQuantizer {
             let tensors = try MLX.loadArrays(url: shard)
             for key in tensors.keys.sorted() {
                 guard let tensor = tensors[key] else { continue }
-                if let base = quantizableDiTBase(key: key, tensor: tensor, allTensors: tensors, block: block, groupSize: groupSize) {
-                    let hasBias = tensors[base + ".bias"] != nil
+                if let base = quantizableDiTBase(key: key, tensor: tensor, allKeys: allKeys, block: block, groupSize: groupSize) {
+                    let hasBias = allKeys.contains(base + ".bias")
                     let quantized = quantizeDiTMatrix(
                         tensor,
                         bits: bits,
@@ -102,6 +104,7 @@ package enum DiTBlockQuantizer {
         }
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let shardURLs = try safetensorsFiles(in: source)
+        let keyToShard = try buildShardIndex(for: shardURLs)
         var writer = ShardWriter(directory: output, maxBytes: 4_500_000_000, metadata: ["format": "mlx"])
         var summary = WeightConverter.Summary()
         summary.bytesBefore = Int(UniversalSourceReader.directoryWeightBytes(source))
@@ -119,9 +122,9 @@ package enum DiTBlockQuantizer {
                 if key.hasSuffix(".weight"),
                    case let base = String(key.dropLast(".weight".count)),
                    let spec = manifest.modules[base],
-                   let scales = arrays[base + ".scales"],
-                   let preScale = arrays[base + ".pre_scale"] {
-                    let biases = arrays[base + ".biases"]
+                   let scales = try companionTensor(base + ".scales", in: arrays, currentShard: shard, index: keyToShard),
+                   let preScale = try companionTensor(base + ".pre_scale", in: arrays, currentShard: shard, index: keyToShard) {
+                    let biases = try companionTensor(base + ".biases", in: arrays, currentShard: shard, index: keyToShard)
                     let wRot = dequantized(
                         tensor, scales: scales, biases: biases,
                         groupSize: spec.groupSize, bits: spec.bits, mode: spec.quantizationMode
@@ -172,16 +175,37 @@ extension DiTBlockQuantizer {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
+    private static func buildShardIndex(for shardURLs: [URL]) throws -> [String: URL] {
+        var index: [String: URL] = [:]
+        for shard in shardURLs {
+            for key in try MLX.loadArrays(url: shard).keys {
+                index[key] = shard
+            }
+        }
+        return index
+    }
+
+    private static func companionTensor(
+        _ key: String,
+        in current: [String: MLXArray],
+        currentShard: URL,
+        index: [String: URL]
+    ) throws -> MLXArray? {
+        if let local = current[key] { return local }
+        guard let otherShard = index[key], otherShard != currentShard else { return nil }
+        return try MLX.loadArrays(url: otherShard)[key]
+    }
+
     private static func quantizableDiTBase(
         key: String,
         tensor: MLXArray,
-        allTensors: [String: MLXArray],
+        allKeys: Set<String>,
         block: Int,
         groupSize: Int
     ) -> String? {
         guard key.hasSuffix(".weight"), tensor.ndim == 2, tensor.dtype.isFloatingPoint else { return nil }
         let base = String(key.dropLast(".weight".count))
-        guard allTensors[base + ".scales"] == nil else { return nil }
+        guard !allKeys.contains(base + ".scales") else { return nil }
         let outF = tensor.dim(0)
         let inF = tensor.dim(1)
         guard outF >= 32, inF >= max(block, groupSize),

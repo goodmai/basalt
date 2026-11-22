@@ -217,7 +217,8 @@ public final class MuseGlimmerVLM: Module, VLMModel, KVCacheDimensionProvider, L
         if embeddings.ndim == 2 { embeddings = embeddings.expandedDimensions(axis: 0) }
         guard let pixelValues else { return embeddings }
 
-        let dtype = visionTower.patchEmbedder.patchEmbedding.weight.dtype
+        let dtype = (visionTower.patchEmbedder.patchEmbedding as? QuantizedLinear)?.scales.dtype
+            ?? visionTower.patchEmbedder.patchEmbedding.weight.dtype
         let projected = perceptionEmbNorm(visionProjection(visionAdapter(visionTower(pixelValues.asType(dtype), grid: grid))))
             .asType(embeddings.dtype)
 

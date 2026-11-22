@@ -61,6 +61,10 @@ public enum ImageSynthesizerLoader {
     ) async throws(BasaltError) -> ImageCompletedArtifact {
         var cfg = ImageGenerationConfig(guidanceScale: 2.0, seed: 42)
         cfg.previewEverySteps = 0
+        if synthesizer.descriptor.family == .seedVR2Upscaler {
+            let pixels = [UInt8](repeating: 128, count: 16 * 16 * 3)
+            cfg.referenceImages = [try ImagePNGCodec.encodePixels(pixels, width: 16, height: 16)]
+        }
         let request = try ImageGenerationRequest(
             model: synthesizer.modelIdentifier,
             prompt: "Basalt native MLX image probe",
