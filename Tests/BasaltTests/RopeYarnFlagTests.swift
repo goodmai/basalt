@@ -110,4 +110,22 @@ struct RopeYarnFlagTests {
         #expect(invalid.experimentalIssues.contains { $0.path == "experimental.rope_yarn" })
         #expect(!spec.experimentalIssues.contains { $0.path == "experimental.rope_yarn" })
     }
+
+    @Test("A staging whose source lost a file is rebuilt instead of reused, and a temporary abandoned over an hour ago is swept")
+    func stagingFollowsTheSource() throws {
+        let source = try Self.directory(Self.qwen)
+        let root = FileManager.default.temporaryDirectory.appending(path: "rope-yarn-root-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: source); try? FileManager.default.removeItem(at: root) }
+        try Data("w2".utf8).write(to: source.appending(component: "model-00002.safetensors"))
+        let staged = try RopeYarnStage.stage(directory: source, modelType: "qwen3_5", factor: 2, root: root)
+        #expect(FileManager.default.fileExists(atPath: staged.directory.appending(component: "model-00002.safetensors").path))
+        try FileManager.default.removeItem(at: source.appending(component: "model-00002.safetensors"))
+        let abandoned = root.appending(component: "\(staged.directory.lastPathComponent).\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: abandoned, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-7200)], ofItemAtPath: abandoned.path)
+        _ = try RopeYarnStage.stage(directory: source, modelType: "qwen3_5", factor: 2, root: root)
+        let entries = try FileManager.default.contentsOfDirectory(atPath: staged.directory.path)
+        #expect(!entries.contains("model-00002.safetensors"))
+        #expect(!FileManager.default.fileExists(atPath: abandoned.path))
+    }
 }

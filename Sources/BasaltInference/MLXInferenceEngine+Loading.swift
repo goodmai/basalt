@@ -159,7 +159,7 @@ extension MLXInferenceEngine {
                 ThreeBitQMV.installIfEnabled(in: $0.model, enabled: q3)
             }
             try await probe(loaded, directory: directory, modelPath: modelPath)
-            let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: directory, modelPath: modelPath) : false
+            let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: source, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
             let transcribes = await loaded.perform { $0.model is NemotronTranscribeModel }
             let facts = ModelFacts(

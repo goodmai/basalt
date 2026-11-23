@@ -35,10 +35,13 @@ struct InklingCompiledVerifyTests {
         #expect(abs(compiled.next - eager.next).max().item(Float.self) < 1e-4)
     }
 
-    @Test("A compiled 4-token round keeps its conv windows, so trimming it back to 1, 2 or 3 positions continues like the eager round trimmed the same way", arguments: [1, 2, 3])
+    @Test("A compiled 4-token round keeps its conv windows, so trimming it back to 1, 2 or 3 positions continues like the eager round; a compiled 1-token step can be taken back too", arguments: [1, 2, 3])
     func compiledRoundRewinds(keep: Int) throws {
         let compiled = try Self.run(eager: false, keep: keep)
         let eager = try Self.run(eager: true, keep: keep)
         #expect(abs(compiled.next - eager.next).max().item(Float.self) < 1e-4)
+        let single = try Self.run(eager: false, length: 1, keep: 0)
+        let singleEager = try Self.run(eager: true, length: 1, keep: 0)
+        #expect(abs(single.next - singleEager.next).max().item(Float.self) < 1e-4)
     }
 }

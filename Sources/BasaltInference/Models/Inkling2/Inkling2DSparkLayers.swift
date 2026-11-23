@@ -43,13 +43,15 @@ struct Inkling2DSparkConfiguration: Decodable, Sendable, Equatable {
         targetLayerIDs = try c.decode([Int].self, forKey: .targetLayerIDs)
     }
 
+    static let maximumBlockSize = 16
+
     func validated(for target: Inkling2Configuration) throws(Inkling2Configuration.Invalid) -> Self {
         guard markovHeadType == "rnn_hidden" else { throw .init(description: "DSpark Markov head '\(markovHeadType)' is not rnn_hidden") }
         guard hiddenSize == target.hiddenSize, targetLayerIDs.last == target.visitOrder.count, targetLayerIDs == (target.draftTaps ?? []) else {
             throw .init(description: "DSpark reads \(targetLayerIDs) at width \(hiddenSize); the target has \(target.visitOrder.count) visits at width \(target.hiddenSize)")
         }
-        guard hiddenLayers > 0, kvHeads > 0, attentionHeads.isMultiple(of: kvHeads), blockSize > 1, markovRank > 0, slidingWindow > 0 else {
-            throw .init(description: "DSpark dimensions")
+        guard hiddenLayers > 0, kvHeads > 0, attentionHeads.isMultiple(of: kvHeads), (2 ... Self.maximumBlockSize).contains(blockSize), markovRank > 0, slidingWindow > 0 else {
+            throw .init(description: "DSpark dimensions, or a block_size outside 2...\(Self.maximumBlockSize) (the conv states rewind at most \(Self.maximumBlockSize) positions)")
         }
         return self
     }

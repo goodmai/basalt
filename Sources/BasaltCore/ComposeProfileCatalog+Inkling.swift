@@ -14,7 +14,7 @@ extension ComposeProfileCatalog {
             archetype: .codingAgent,
             primaryModel: pack,
             estimatedPeakGB: peakGB,
-            badges: ["Inkling 2", "Tool calls", context],
+            badges: ["Inkling 2", "Tool calls", "sized for \(context)"],
             yaml: """
                 version: "2.2"
                 name: \(id)
