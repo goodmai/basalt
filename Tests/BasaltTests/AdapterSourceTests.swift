@@ -21,13 +21,16 @@ struct AdapterSourceTests {
         #expect(throws: AdapterSource.Invalid.self) { try AdapterSource.parse([spec], fileExists: { _ in false }) }
     }
 
-    @Test("A repeated name is refused, and a three-part path is a directory, not a repository")
+    @Test("A repeated name is refused; a three-part path, . or .. segments, whitespace and control characters never make a repository id")
     func repeatsAndDepth() throws {
         #expect(throws: AdapterSource.Invalid.self) { try AdapterSource.parse(["a=x/y", "a=z/w"], fileExists: { _ in false }) }
         #expect(try AdapterSource.parse(["a=x/y/z"], fileExists: { _ in false })["a"] == .directory(URL(fileURLWithPath: "x/y/z")))
+        for value in ["foo/..", "../foo", "foo/.", "my org/repo", "org/re\tpo"] {
+            #expect(try AdapterSource.parse(["a=\(value)"], fileExists: { _ in false })["a"] != .repository(value), "\(value)")
+        }
     }
 
-    @Test("A directory with adapter_config.json is an adapter directory; one with only config.json is not")
+    @Test("A cached adapter needs adapter_config.json and its weights: config.json alone or adapter_config.json alone, as an interrupted download leaves it, is not one")
     func cachedAdapter() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "adapter-source-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -35,6 +38,8 @@ struct AdapterSourceTests {
         try Data("{}".utf8).write(to: directory.appending(component: "config.json"))
         #expect(!AdapterSource.isAdapterDirectory(directory))
         try Data("{}".utf8).write(to: directory.appending(component: "adapter_config.json"))
+        #expect(!AdapterSource.isAdapterDirectory(directory))
+        try Data("w".utf8).write(to: directory.appending(component: "adapter_model.safetensors"))
         #expect(AdapterSource.isAdapterDirectory(directory))
     }
 }

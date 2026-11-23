@@ -22,14 +22,17 @@ public enum AdapterSource: Sendable, Equatable {
     }
 
     public static func isAdapterDirectory(_ directory: URL) -> Bool {
-        FileManager.default.fileExists(atPath: directory.appending(component: "adapter_config.json").path)
+        let present = { (name: String) in FileManager.default.fileExists(atPath: directory.appending(component: name).path) }
+        return present("adapter_config.json") && (present("adapter_model.safetensors") || present("adapters.safetensors"))
     }
 
     static func source(_ value: String, fileExists: (String) -> Bool) -> AdapterSource {
         let expanded = (value as NSString).expandingTildeInPath
         let pathLike = value.hasPrefix("/") || value.hasPrefix(".") || value.hasPrefix("~")
         let components = value.split(separator: "/", omittingEmptySubsequences: false)
-        guard !pathLike, !fileExists(expanded), components.count == 2, components.allSatisfy({ !$0.isEmpty }) else {
+        let segmentsValid = components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+        let charactersValid = value.unicodeScalars.allSatisfy { !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.controlCharacters.contains($0) }
+        guard !pathLike, !fileExists(expanded), components.count == 2, segmentsValid, charactersValid else {
             return .directory(URL(fileURLWithPath: expanded))
         }
         return .repository(value)
