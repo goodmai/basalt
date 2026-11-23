@@ -7,6 +7,7 @@
   - its message frames split into reasoning, text and JSON tool calls (#686);
   - a second agent turn that reuses the first turn's prompt cache, with window and conv states restored bit for bit (#712).
 - **`--mtp` drafts with the checkpoint's DSpark head** (`mtp.safetensors`, #728). On `mlx-community/Inkling-2-Mini-oQ3e-mtp` (M4 Pro, 24 GB, 256 tokens), decode goes 28.0 → 49.8 tok/s on code at T 0 and 26.8 → 38.4 at T 0.7, and stays even with plain decoding on prose. Each round's draft depth follows how many drafts were accepted so far.
+- **32K prompts fit in 24 GB** (#740). The prefill chunk shrinks with the key count so the relative-bias mask stays within 256 MB. A 37.5K-token passkey prompt peaks at 14.5 GB with no swap and recalls 5/5 depths; before, `serve` was killed by a Metal OOM. Prefill at 32K runs at about 155 tok/s until the fused kernel (K1) lands.
 - **`basalt fit` and Compose.**
   - `basalt fit` ranks the oQ2.5e and oQ3e packs.
   - New Compose profiles on oQ3e: `24gb-agent-inkling` (32K context), `36gb-agent-inkling` (64K) and `48gb-agent-inkling` (128K).
