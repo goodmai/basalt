@@ -168,7 +168,7 @@ extension MLXInferenceEngine {
     static func attachAnyAdapterDirectory(_ directory: URL, to model: any LanguageModel) throws(BasaltError) -> [String] {
         func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "adapter_apply \(directory.path): \(reason)") }
         guard let custom = try loadCustomAdapter(at: directory, refused: refused) else {
-            return try attachContainer(try loraContainer(at: directory, refused), to: model, refused)
+            return try attachContainer(try loraContainer(at: directory, for: model, refused), to: model, refused)
         }
         guard loraModules(of: model).isEmpty else {
             throw refused("another adapter is applied; undo it first")
@@ -190,7 +190,7 @@ extension MLXInferenceEngine {
         refused: (String) -> BasaltError
     ) throws(BasaltError) -> any ModelAdapter {
         guard let custom = try loadCustomAdapter(at: directory, refused: refused) else {
-            let weights = try loraContainer(at: directory, refused)
+            let weights = try loraContainer(at: directory, for: model, refused)
             _ = try attachContainer(weights, to: model, refused)
             weights.unload(from: model)
             settle(model)

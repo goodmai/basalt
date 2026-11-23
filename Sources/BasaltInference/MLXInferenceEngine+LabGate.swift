@@ -219,11 +219,18 @@ extension MLXInferenceEngine {
         try attachAnyAdapterDirectory(directory, to: model)
     }
 
-    static func loraContainer(at directory: URL, _ refused: (String) -> BasaltError) throws(BasaltError) -> LoRAContainer {
+    static func loraContainer(at directory: URL, for model: Module, _ refused: (String) -> BasaltError) throws(BasaltError) -> LoRAContainer {
+        if PEFTLoRAReader.isPEFT(directory) {
+            do throws(PEFTLoRAReader.Refused) {
+                return try PEFTLoRAReader.container(at: directory, for: model)
+            } catch {
+                throw refused(error.reason)
+            }
+        }
         do {
             return try LoRAContainer.from(directory: directory)
         } catch {
-            throw refused("not an mlx-lm adapter directory (adapter_config.json and adapters.safetensors): \(briefly(error))")
+            throw refused("not an mlx-lm adapter directory (adapter_config.json and adapters.safetensors) nor a PEFT one (adapter_model.safetensors): \(briefly(error))")
         }
     }
 
