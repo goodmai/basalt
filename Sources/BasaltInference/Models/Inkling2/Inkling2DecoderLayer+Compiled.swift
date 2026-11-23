@@ -57,20 +57,24 @@ extension Inkling2DecoderLayer {
         if print != steps.fingerprint { steps.reset(to: print) }
         let hasMessages = messages != nil
         let start = cache?.offset ?? 0
+        let length = hidden.dim(1)
         let states: [MLXArray?] = (0 ..< 4).map { conv?[$0] }
         let kvDims = attention.kvHeads * attention.headDim
         let zeros = { (channels: Int) in MLXArray.zeros([hidden.dim(0), self.kernel - 1, channels], dtype: .float32) }
         var preArgs = [hidden] + (index > 0 ? [blocks!] : []) + (messages.map { [$0] } ?? [])
-        preArgs += [states[0] ?? zeros(kvDims), states[1] ?? zeros(kvDims), Inkling2Attention.positions(start, 1)]
+        preArgs += [states[0] ?? zeros(kvDims), states[1] ?? zeros(kvDims), Inkling2Attention.positions(start, length)]
         let pre = preStep(hasMessages)(preArgs)
         let (keys, values, keyStart) = Inkling2Attention.store(pre[1], pre[2], in: cache, start: start)
         let prepared = Inkling2Prepared(queries: pre[0], keys: keys, values: values, bias: pre[3], sinks: pre[4], gate: pre[5])
-        let attended = attention.finish(prepared, keys: keys, values: values, distance: Inkling2Attention.distance(query: start, length: 1, key: keyStart, count: keys.dim(2)))
+        let attended = attention.finish(prepared, keys: keys, values: values, distance: Inkling2Attention.distance(query: start, length: length, key: keyStart, count: keys.dim(2)))
         var postArgs = [attended, hidden, pre[8]]
         postArgs += (index > 0 ? [blocks!] : []) + (messages.map { [$0] } ?? [])
         postArgs += [states[2] ?? zeros(hidden.dim(-1)), states[3] ?? zeros(hidden.dim(-1))]
         let post = postStep(hasMessages)(postArgs)
-        if let conv { Inkling2Ops.commit([pre[6], pre[7], post[2], post[3]], windows: nil, count: 1, to: conv) }
+        if let conv {
+            let windows = [pre[6], pre[7], post[2], post[3]]
+            Inkling2Ops.commit(windows.map { Inkling2Ops.convState($0, kernel: kernel) }, windows: length > 1 ? windows : nil, count: length, to: conv)
+        }
         return (post[0], post[1])
     }
 
@@ -87,7 +91,7 @@ extension Inkling2DecoderLayer {
             let (prepared, keyWindow, valueWindow) = self.attention.prepare(inputs, keyState: keyState, valueState: valueState, positions: positions)
             return [
                 prepared.queries, prepared.keys, prepared.values, prepared.bias, prepared.sinks, prepared.gate,
-                Inkling2Ops.convState(keyWindow, kernel: self.kernel), Inkling2Ops.convState(valueWindow, kernel: self.kernel), normed,
+                keyWindow, valueWindow, normed,
             ]
         }
         steps.pre[hasMessages] = step
@@ -115,7 +119,7 @@ extension Inkling2DecoderLayer {
             let (afterMLP, mlpWindow) = self.postMLPConv(self.mlp(self.postAttentionNorm(x).asType(hidden.dtype)), state: mlpState)
             return [
                 (residual + afterMLP.asType(.float32)).asType(hidden.dtype), blocks!,
-                Inkling2Ops.convState(attentionWindow, kernel: self.kernel), Inkling2Ops.convState(mlpWindow, kernel: self.kernel),
+                attentionWindow, mlpWindow,
             ]
         }
         steps.post[hasMessages] = step
