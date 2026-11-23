@@ -1,6 +1,6 @@
 # Gemini Decision 1 を使ったクラウド判断
 
-> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · **日本語** · [Deutsch](../de/cloud-decisions.md)
+> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · **日本語** · [Deutsch](../de/cloud-decisions.md) · [한국어](../ko/cloud-decisions.md) · [Bahasa Indonesia](../id/cloud-decisions.md)
 
 Google の `gemini-decision-1` は、テキスト、画像、音声、動画、PDF を対象に 1 パスで System One の質問（`noul`、`choice`、`score`）に回答します。ワイヤーフォーマットは basalt 自身の `/v1/systemone` と一致しているため、ローカル判断モデルの前段に置くクラウドステージとして機能します：
 

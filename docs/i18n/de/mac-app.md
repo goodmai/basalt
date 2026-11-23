@@ -1,6 +1,6 @@
 # Basalt für Mac
 
-> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · **Deutsch**
+> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · **Deutsch** · [한국어](../ko/mac-app.md) · [Bahasa Indonesia](../id/mac-app.md)
 
 Eine native App rund um Basalt: ein Chat-Fenster und ein Monitor-Fenster auf Basis einer lokalen Engine, die von der App gestartet und überwacht wird. Design und Phasen sind in #434 beschrieben. Dies ist Phase 1.
 

@@ -1,6 +1,6 @@
 # 集成指南
 
-> Languages: [English](../../integrations.md) · [Русский](../ru/integrations.md) · **中文** · [Español](../es/integrations.md) · [Français](../fr/integrations.md) · [日本語](../ja/integrations.md) · [Deutsch](../de/integrations.md)
+> Languages: [English](../../integrations.md) · [Русский](../ru/integrations.md) · **中文** · [Español](../es/integrations.md) · [Français](../fr/integrations.md) · [日本語](../ja/integrations.md) · [Deutsch](../de/integrations.md) · [한국어](../ko/integrations.md) · [Bahasa Indonesia](../id/integrations.md)
 
 ## 在现有工具中使用
 

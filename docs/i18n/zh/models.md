@@ -1,6 +1,6 @@
 # 模型
 
-> Languages: [English](../../models.md) · [Русский](../ru/models.md) · **中文** · [Español](../es/models.md) · [Français](../fr/models.md) · [日本語](../ja/models.md) · [Deutsch](../de/models.md)
+> Languages: [English](../../models.md) · [Русский](../ru/models.md) · **中文** · [Español](../es/models.md) · [Français](../fr/models.md) · [日本語](../ja/models.md) · [Deutsch](../de/models.md) · [한국어](../ko/models.md) · [Bahasa Indonesia](../id/models.md)
 
 ## 已验证模型
 

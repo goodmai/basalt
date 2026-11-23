@@ -1,6 +1,6 @@
 # Basalt の数学的・科学的研究基盤
 
-> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · [中文](../zh/research-foundations.md) · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · **日本語** · [Deutsch](../de/research-foundations.md)
+> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · [中文](../zh/research-foundations.md) · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · **日本語** · [Deutsch](../de/research-foundations.md) · [한국어](../ko/research-foundations.md) · [Bahasa Indonesia](../id/research-foundations.md)
 
 Basalt は世界のオープンサイエンス・コミュニティの肩の上に立っています。Basalt におけるすべての Metal カーネル、量子化コーデック、KV キャッシュ圧縮器、投機的検証器、認識論的ゲート（epistemic gate）、および事後学習目的関数は、**北米・欧州・中国・ロシア・韓国・日本**の科学研究コミュニティにわたる査読付き数理理論とオープンアクセスプレプリントに裏打ちされています。
 

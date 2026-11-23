@@ -1,6 +1,6 @@
 # Preajustes de pipeline y modos de memoria
 
-> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · **Español** · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md)
+> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · **Español** · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md) · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline` (MCP `basalt_pipeline`) ejecuta percibir (OCR, voz) → decidir (System One) → responder (el modelo de chat) en un único proceso. Un preajuste rellena las opciones de `serve` para un perfil predefinido; cualquier opción que especifiques explícitamente tiene prioridad:
 

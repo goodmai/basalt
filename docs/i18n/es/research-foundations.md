@@ -1,6 +1,6 @@
 # Fundamentos matemáticos y científicos de la investigación de Basalt
 
-> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · [中文](../zh/research-foundations.md) · **Español** · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md)
+> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · [中文](../zh/research-foundations.md) · **Español** · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md) · [한국어](../ko/research-foundations.md) · [Bahasa Indonesia](../id/research-foundations.md)
 
 Basalt se apoya sobre los hombros de la comunidad global de ciencia abierta. Cada kernel Metal, códec de cuantización, compresor de caché KV, verificador especulativo, puerta epistémica y objetivo de postentrenamiento en Basalt se fundamenta en teoría matemática revisada por pares y preprints de acceso abierto procedentes de ecosistemas científicos internacionales, abarcando las escuelas científicas **norteamericana, europea, china, rusa, surcoreana y japonesa**.
 

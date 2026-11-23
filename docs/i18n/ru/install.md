@@ -1,6 +1,6 @@
 # Установка
 
-> Languages: [English](../../install.md) · **Русский** · [中文](../zh/install.md) · [Español](../es/install.md) · [Français](../fr/install.md) · [日本語](../ja/install.md) · [Deutsch](../de/install.md)
+> Languages: [English](../../install.md) · **Русский** · [中文](../zh/install.md) · [Español](../es/install.md) · [Français](../fr/install.md) · [日本語](../ja/install.md) · [Deutsch](../de/install.md) · [한국어](../ko/install.md) · [Bahasa Indonesia](../id/install.md)
 
 ## Готовый бинарник (две строки, без Xcode)
 

@@ -1,0 +1,467 @@
+# Referensi basalt compose
+
+> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · [中文](../zh/compose.md) · [Español](../es/compose.md) · [Français](../fr/compose.md) · [日本語](../ja/compose.md) · [Deutsch](../de/compose.md) · [한국어](../ko/compose.md) · **Bahasa Indonesia**
+
+> Dokumen ini disinkronkan dari sumber bahasa Inggris ([`docs/compose.md`](../../compose.md)) melalui kerangka terjemahan otomatis (`swift scripts/translate_docs.swift --locales id`).
+
+`basalt compose` serves a model system described in one YAML file. The file lists local and cloud models and how each is kept in memory. It also describes the pipelines that route a request between them. Each pipeline runs perceive (OCR, speech), then decide (System One), then answer (a chat model). This is a mixture of models, in the style of a docker-compose file for models.
+
+```bash
+basalt compose plan -f basalt.yaml        # validate and show the compute plan on this Mac
+basalt compose up -f basalt.yaml          # serve it; run it again with a changed file to apply the diff
+basalt compose ps                         # what is loaded, when on-demand models unload, cloud spend
+basalt compose down <name>                # stop it
+basalt compose up document-qa             # legacy bundled files: document-qa, voice-agent, zonos-voice
+basalt compose up 24gb-voice-zonos        # 84 hardware-tiered profiles: <tier>-<archetype>
+```
+
+`compose up` starts `basalt serve` with the flags the file expands to; it prints them at start. It serves the same REST and MCP surfaces. Flags after `--` are passed to serve, for example `basalt compose up -f basalt.yaml -- --port 8090`.
+
+The server binds its port first and loads the models after. While they load, `compose ps` shows them as `loading`, `GET /v1/health/ready` answers 503, and the run record already exists, so a second `compose up` finds the system instead of starting another. Once the models are loaded, each gets a startup probe:
+- the chat model and each local answer model generate one token;
+- each local decision model answers one question;
+- an on-demand model's files are checked without loading it.
+
+A model that fails its probe shows as `failed`, with the reason, in `compose ps`. `/v1/health/ready` stays 503 until a `compose up` replaces the model. A model that `compose up` loads or reloads gets the same probe. With `--mcp` the models load before the server starts, as before.
+
+## The file
+
+```yaml
+version: 1
+name: support-desk            # the system's name, used by ps, down and up-as-diff
+memory: auto                  # resident | sequential | auto
+budget: { usd_per_day: 2 }    # optional cap on all cloud spend
+
+models:
+  chat:     { source: mlx-community/gemma-4-12B-it-qat-4bit }
+  big:      { source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly, keep: on-demand, idle_unload: 10m }
+  ocr:      { source: mlx-community/PaddleOCR-VL-1.5-8bit, keep: on-demand, idle_unload: 2m }
+  asr:      { source: divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX, keep: sequential }
+  jev:      { source: "cloud:openrouter/~typesafe/jev-latest", api_key_env: OPENROUTER_API_KEY }
+  frontier: { source: "cloud:openrouter/anthropic/claude-haiku-5.5", api_key_env: OPENROUTER_API_KEY, budget: { usd_per_day: 1 } }
+
+pipeline:                     # the default pipeline: /v1/pipeline and MCP basalt_pipeline
+  perceive:
+    documents: [ocr, apple-vision]     # the first available reads pdf and image attachments
+    audio: [asr, speech-analyzer]
+  decide:
+    cascade: [jev, chat]               # up to four stages, cloud and local in any order, the last one local
+    escalate_below: 0.6
+    abstain_below: 0.75                # questions below this confidence go to the answer model
+  answer:
+    routes:                            # the first matching rule wins
+      - when: { decide: { route: code }, cost_left: true }
+        model: frontier
+        fallback: chat
+      - when: { prompt_tokens: { over: 8000 } }
+        model: big
+      - model: chat                    # the last rule has no when and names a local model
+
+pipelines:                    # more pipelines, served at /v1/pipelines/<name>
+  triage:
+    decide: { cascade: [chat] }
+    answer: chat
+```
+
+### Models
+- **`source`:** a Hugging Face repo, a local path (`./`, `/` or `~`), `cloud:openrouter/<model>`, or `cloud:gemini/<model>` for Google's decision models such as `gemini-decision-1` (decide cascades only, key usually in `GEMINI_API_KEY`).
+- **`keep`** applies to local models:
+  - `resident` is the default and stays loaded;
+  - `on-demand` loads on the first request that needs the model and unloads after `idle_unload`. Durations look like `30s`, `5m` or `1h`, and the default is 120 s;
+  - `sequential` loads a perceiver for its stage only. In the default pipeline it can also unload the chat model around the perceiver, if the two don't fit together.
+- **Cloud models:**
+  - Name the environment variable that holds the key with `api_key_env`. A key written in the file is refused, and so is `${…}` interpolation.
+  - `budget: { usd_per_day }` caps one model's spend.
+  - `data: no-perceived` is the default: text read from documents or audio never goes to a cloud model.
+  - `data: media`, only for `cloud:gemini` decision models, sends a pipeline's attached files themselves (PDFs, images, audio as WAV) and their perceived text to that model for the decision. Use it only for documents that may leave this Mac.
+
+### Memory and the plan
+`compose plan` adds up the resident bytes of every local model. It counts an on-demand model as resident, because it can be loaded at any time.
+
+- `memory: resident` needs the sum to fit the working set.
+- `memory: sequential` needs only the largest stage plus 2 GB.
+- `memory: auto` picks resident when it fits.
+
+A system that does not fit is refused with the numbers before anything loads. A model that is not downloaded is reported as size unknown.
+
+### Decide
+- **Order:** `cascade` lists the decision models in order. Each stage answers the questions it is confident about (at least `escalate_below`) and passes the rest on.
+- **Stages in any order:** up to four stages, cloud and local in any order. An example is a small local judge first, a cloud model next and a larger local model last: `[laya, jev, chat]`.
+  - The last stage is local.
+  - Every local stage is held as a decision engine: the chat model, read out as `self`, or a decision model such as a Laya Core AI bundle or an OpenJev bundle. A dedicated local decision model may set `keep: on-demand` (and `idle_unload`) so it loads on the first decision that reaches it and unloads when idle.
+  - Each pipeline names its own stages. A decision model that several pipelines name is loaded once.
+  - A decision model only decides; only the chat model both answers and decides.
+- **Calibration:** a readout decision model takes its temperatures from a `basalt_readout.json` in its folder (`{"temperature": …, "noul_temperature": …, "noul_bias": …}`), if there is one. Otherwise it uses the known values for its name, and otherwise none. #448 plans to fit these files against Gemini Decision 1.
+- **Sizes:** `compose plan` sizes an OpenJev head bundle as its base model plus its adapter, because the LoRA is applied unmerged on the base as it is stored, 4-bit included. serve's own plan does the same.
+  - Measured on OpenJev-0.6B: 100 labelled states, 300 questions, M4 Pro, commit 066da0a. The reference is the merged float32 path, which matches PyTorch within 1e-4 (#406).
+
+    | Base, LoRA unmerged | Accuracy | Same top answer as float32 | Active memory | Median per state |
+    |---|---|---|---|---|
+    | merged float32 (reference) | 176/300 | — | 2,273 MB | 185 ms |
+    | bf16, as the bundle names it (the default) | 175/300 | 288/300 | 1,141 MB | 181 ms |
+    | 8-bit | 176/300 | 279/300 | 608 MB | 184 ms |
+    | 4-bit | 149/300 | 215/300 | 324 MB | 185 ms |
+
+  - A 4-bit base costs this 0.6B model 9 points, while 8-bit keeps its accuracy at a quarter of the memory. serve and compose load the base the bundle names, so a quantized base is only reached through `JevEvaluator` directly.
+  - Rerun it with `BASALT_E2E=1 BASALT_E2E_JEV_MODEL=<bundle> BASALT_E2E_JEV_BASE=<bf16 base> BASALT_E2E_JEV_BASE_8BIT=… BASALT_E2E_JEV_BASE_4BIT=… swift test --filter JevRealModelTests/unmergedArms`.
+- **A 9B judge beside Gemma 4 12B on 24 GB:** measured with `openjev/OpenJev-Flash-9B-MLX` (8-bit, 9.5 GB) and `openjev/OpenJev-Flash-9B-MLX-4bit` (5.9 GB). Gemma 4 12B (`gemma-4-12B-it-qat-4bit`) answers the escalations. The set is 60 labelled states, 180 decisions, on an M4 Pro 24 GB at 8294bf7.
+  - Use the 4-bit judge. Beside Gemma it holds 15.3 GB active (peak 15.9 GB) of 24 GB.
+  - The 8-bit judge holds about 21 GB together with the chat model and a 0.6B head. It decides fine on its own (92.8% with no abstain, 1.85 s), but once Gemma decodes the escalations, the KV cache pushes the Mac into swap. A two-minute arm then ran for over 24 minutes and was stopped.
+
+    | Decider beside Gemma 4 12B (4-bit judge) | Accuracy | Sent to the LLM | LLM tokens saved | Decide p50 |
+    |---|---|---|---|---|
+    | LLM only | 97.8% | 180 | — | — |
+    | OpenJev-Flash-9B 4-bit, no abstain | 96.7% | 0 | 100% | 2.0 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.6 | 98.9% | 20 | 88.7% | 2.2 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.75 | 98.9% | 41 | 76.7% | 2.4 s |
+    | OpenJev-Flash-9B 4-bit, abstain below 0.9 | 97.8% | 74 | 58.5% | 2.5 s |
+    | readout of Gemma itself (`self`), abstain below 0.75 | 99.4% | 1 | 99.4% | 1.9 s |
+    | OpenJev-0.6B head (8-bit judge run), abstain below 0.75 | 82.8% | 86 | 48% | 0.26 s |
+
+  - Deciding while Gemma decodes a long answer drops decode from 21 to 3 tok/s (−86%). The wall time is 341 s against 202 s run one after the other. The GPU deciders therefore stay gated between generations.
+  - Rerun it with `BASALT_E2E=1 BASALT_E2E_BUDGET_CHAT_MODEL=<chat> BASALT_E2E_BUDGET_FLASH=<judge dir> swift test --filter SystemOneBudgetBenchmarkTests`.
+- **What the cloud gets:** requests with documents or audio skip the cloud stages and go only to the local ones, in their order.
+- **Thresholds:** questions whose confidence is below `abstain_below`, or whose top two options are closer than `min_margin`, go to the answer model.
+- **Epistemic gate (version 2):** `epistemic` classifies `(support, refutation, needs_tool)` before decoding a single answer token: `enabled`, `support_threshold`, `refutation_threshold`, `tool_threshold`, `on_no_evidence` (`abstain` or `escalate`), `on_conflict` (`report` or `escalate`), and optional `abstain_message`.
+
+### Answer routes
+- **Matching:** a rule's `when` matches when every condition holds. Conditions:
+  - `modality`: documents, audio or text;
+  - `decide`: question ID to label, from System One;
+  - `prompt_tokens: { over: N }`: estimated at 4 bytes per token;
+  - `escalated`: the decide stage escalated, or a question went to the answer model;
+  - `cost_left`: the rule's model still has budget.
+- **Order of tries:** the rule's `model` first, then its `fallback`, then the pipeline's default local model.
+- **Skips:** a cloud model is skipped for perceived text, without budget, after a refused key, or while rate limited. Each skip is named in the receipt.
+
+### Speak (`#493`, `#525`)
+A pipeline may declare an optional `speak` stage to synthesize audio (`Kokoro-82M`, `Qwen3-TTS`, `Fun-CosyVoice3`, `Chatterbox`, `Zyphra/ZONOS3-Mini-hf`) with deterministic GPU → Neural Engine → system-voice fallback:
+
+```yaml
+pipeline:
+  answer: chat
+  speak:
+    chain: [tts_zonos, tts_ane, apple-speech]
+    voice: Savannah
+    language: en_us
+    reference_audio: ./speaker.wav
+    on_gpu_busy: fallback_ane
+    sentence_streaming: true
+    format: wav
+    exaggeration: 0.5
+    max_ttfa_ms: 80
+```
+
+- **`speak`:** accepts a single name (`speak: apple-speech`), a fallback list (`speak: [tts_zonos, tts_ane, apple-speech]`), or the full mapping.
+- **`chain`:** ordered local TTS models ending optionally with the zero-weight `apple-speech` system synthesizer.
+- **`voice`:** default voice identifier (`Savannah`, `alloy`, `af_heart`, or an `AVSpeechSynthesisVoice` identifier).
+- **`language`:** default language or locale code (`en_us`, `ru`, `de`, `cmn`, etc.).
+- **`reference_audio`:** optional local reference `.wav` / `.pcm` / `.caf` / `.aiff` / `.flac` clip for zero-shot voice cloning.
+- **`on_gpu_busy`:** `keep`, `fallback_ane`, or `fallback_apple_speech` when Metal is busy decoding.
+- **`sentence_streaming`:** streams full-duplex sentence chunks into TTS as tokens arrive.
+- **`format`:** output container or sample encoding (`wav`, `pcm`, `pcm_24k`, `mp3`, `opus`, `aac`, `flac`).
+- **`exaggeration`:** expressive prosody control in `0.0...2.0` where supported.
+- **`max_ttfa_ms`:** maximum first-audio latency budget before routing down the fallback chain.
+
+### Imagine (`#517`, `#539`)
+A pipeline may declare an optional `imagine` stage to synthesize or edit images on Apple Silicon across up to four explicit stages (`upsample_via` rewriter -> `share_encoder` text/vision encoder -> `chain` DiT painter -> `decoder_via` latent VAE decoder), plus TeaCache step skipping and best-of-N VLM judging:
+
+```yaml
+pipeline:
+  answer: chat
+  imagine:
+    chain: [z_turbo, sana_fast]
+    upsample_via: chat
+    share_encoder: encoder
+    decoder_via: vae
+    steps: 8
+    size: 1024x1024
+    format: png
+    teacache_threshold: 0.15
+    preview_every_steps: 2
+    candidates: 3
+    judge_via: vlm_judge
+    on_gpu_busy: fallback
+```
+
+- **`imagine`:** accepts a single generator name (`imagine: z_turbo`), a fallback list (`imagine: [z_turbo, sana_fast]`), or the full mapping.
+- **`chain`:** ordered local image synthesizers (`FLUX.2/3-klein`, `Z-Image-Turbo`, `Iris-3B`, `SANA-1.5`, `Ming-Image`, `Bonsai-4B`, `Step1X-Edit`, `SonicDiffusion`).
+- **`upsample_via`:** local LLM/VLM rewriter slot used to expand terse prompts into rich scene captions before synthesis (uses BFL's full scene-caption prompt convention when targeting `FLUX.3`).
+- **`share_encoder`:** local LLM/VLM slot (such as `Qwen3-VL-4B-Instruct` in 4-bit, 8-bit, or BF16) whose conditioning embeddings drive the image synthesizer.
+- **`decoder_via`:** optional local latent VAE decoder slot (such as distilled `black-forest-labs/FLUX.2-small-decoder` or full `unsloth/FLUX.2-VAE` / `Felldude/FLUX.2-HDR-VAE`).
+- **`steps`:** default denoising step count in `1...100`.
+- **`size`:** default output resolution `<width>x<height>` (multiples of 16, e.g. `1024x1024` or `2048x2048`).
+- **`format`:** output image format (`png`, `webp`, or `jpeg`).
+- **`teacache_threshold`:** residual L1 threshold (`>= 0`) for TeaCache interior-step skipping.
+- **`preview_every_steps`:** emits intermediate TAEF preview frames every N steps during SSE streaming (`>= 0`).
+- **`candidates`:** number of seeded candidate images (`1...64`) synthesized for best-of-N selection.
+- **`judge_via`:** local VLM/LLM slot that scores `candidates` against the prompt and returns the winning artifact.
+- **`on_gpu_busy`:** `queue` or `fallback` when Metal is busy decoding.
+
+Bundled 4-stage `FLUX.3` presets (`basalt compose up <preset>`): `flux3-16gb-fast`, `flux3-24gb-balanced`, `flux3-36gb-moe-vision`, `flux3-64gb-studio-base`, and `flux3-128gb-reference`.
+
+### Version 2: variables and profiles
+`version: 2` adds two blocks, so that one file serves several Macs. A version 1 file keeps working; using either block in it is refused with "needs version: 2".
+
+```yaml
+version: 2
+name: desk
+variables:
+  chat_repo: mlx-community/gemma-4-12B-it-qat-4bit
+profiles:
+  small:
+    when: { memory_gb: { under: 20 } }
+    variables: { chat_repo: mlx-community/gemma-4-E4B-it-4bit }
+  big:
+    when: { memory_gb: { over: 48 }, chip: Max }
+models:
+  chat:  { source: "${chat_repo}" }
+  large: { source: lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly, keep: on-demand, profiles: [big] }
+```
+
+- **`variables`:** lowercase names with one-line plain values. `${name}` is replaced anywhere in the file. An undeclared `${…}` is refused, so environment variables still never reach the file; secrets come only by `api_key_env`.
+- **`profiles`:** a profile is on when its `when` holds on this Mac: `memory_gb` with `under` and `over` (unified memory in GB), and `chip` (a case-insensitive part of the chip name, such as `M4 Pro` or `Max`). A profile without `when` is on only when named with `--profile`.
+  - An on profile's `variables` override the file's.
+  - A model or a named pipeline with `profiles: [...]` exists only while one of them is on.
+- **Overrides:** `--set name=value` overrides a declared variable and `--profile name` turns on exactly the named profiles, for `config`, `plan` and `up`. `compose up` passes them on to the server, and up-as-diff sends them with the file.
+- **Paths:** a `./` or `../` model path is relative to the compose file's folder.
+- **`basalt compose config -f <file>`** prints the file as it resolves on this Mac, with the profiles that are on. **`basalt compose schema`** prints the JSON Schema of the format for editors.
+
+### Experimental and MCP (`#485`)
+A compose file may declare top-level `experimental` and `mcp` sections (both supported in version 1 and 2) instead of passing long flag tails after `--`:
+
+```yaml
+experimental:
+  zero_copy_body: true
+  smallm_kernel: true
+  q3_kernel: true
+  kv_shared_row: true
+  speech_analyzer: true
+  image_fallback: ocr
+  ane_vision_tower: ./tower-bundle
+  telemetry_confidence_every: 4
+  adaptive_thinking_budget: true
+  samplers: true
+  mtp_draft_head: true
+  expert_streaming: true
+  expert_cache_gb: 2.5
+  kv_head_split: 0.5            # or quest_top_k: 64 (mutually exclusive)
+
+mcp:
+  enabled: true
+  rest: true
+  research_tools: false
+  enable: [surgery, intervene]
+  disable: [switch_model]
+  image_dirs: [./images]
+```
+
+- **`experimental`:** lowers to the matching `serve` flags (`zero_copy_body`, `smallm_kernel`, `q3_kernel`, `kv_shared_row`, `speech_analyzer`, `image_fallback`, `ane_vision_tower`, `telemetry_confidence_every`, `adaptive_thinking_budget`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k`), validated with exact YAML line numbers (`telemetry_confidence_every` >= 0, `image_fallback` `ocr`, `ane_vision_tower` containing `metadata.json` and `tower.aimodel`, `expert_cache_gb` > 0 with `expert_streaming: true`, `kv_head_split` in `0.05...1`, `quest_top_k` in `1...4096`). Relative paths (`./`, `../`, `~`) resolve against the compose file's folder.
+- **`mcp`:** configures the MCP stdio transport (`enabled`, `rest`, `research_tools`, `enable`, `disable`, `image_dirs`) using the same group and tool selectors as `--mcp-enable` / `--mcp-disable` (`serving`, `gemma`, `media`, `harness`, `xray`, `surgery`, `research`, `all`, or individual tool names; `disable` always wins).
+- **Hot reload vs restart:** `speech_analyzer`, `image_fallback`, `telemetry_confidence_every` and `adaptive_thinking_budget` update live on `compose up` (`POST /v1/compose/apply`, printed under `experimental:`). Engine- and transport-bound flags (`zero_copy_body`, `smallm_kernel`, `q3_kernel`, `kv_shared_row`, `ane_vision_tower`, `samplers`, `mtp_draft_head`, `expert_streaming`, `expert_cache_gb`, `kv_head_split`, `quest_top_k` and `mcp`) report `needs a restart` in `compose diff` and are refused on live `apply`.
+
+### Benchmarks and Leaderboard Submissions (version 2, `#492`)
+A `version: 2` compose file may declare a top-level `benchmarks` block with shared `defaults` and named `suites` (either under `suites:` or as shorthand suite keys directly under `benchmarks:`):
+
+```yaml
+benchmarks:
+  defaults:
+    seed: 42
+    temperature: 0.0
+    gpu_lock: true
+    output_dir: ./bench-out
+  suites:
+    smoke:
+      - adapter: basalt:throughput
+        target: model:chat
+        params: { iterations: 2, max_tokens: 64 }
+        gates: { min_decode_tps: 15, max_peak_gb: 20, max_p50_ms: 5000 }
+    frontier:
+      profiles: [big]
+      budget: { usd_max: 5.0, max_minutes: 30 }
+      tasks:
+        - adapter: arc-agi-2
+          dataset: ./arc-eval.json
+          target: pipeline
+          gates: { min_accuracy: 0.25, max_ppl: 12.0, max_ece: 0.08 }
+          submit:
+            target: arc-prize
+            api_key_env: ARC_PRIZE_API_KEY
+            endpoint: https://arcprize.org/api/v1/submissions
+            subset: public-eval
+            split: test
+```
+
+- **`defaults`:** optional `seed`, `temperature`, `gpu_lock` and `output_dir`.
+- **`suites`:** each suite is either a shorthand task list (`smoke: [...]`) or `{ profiles, budget: { usd_max, max_minutes }, tasks: [...] }`.
+- **`tasks`:** each task names an `adapter` (`basalt:throughput`, `basalt:perplexity`, `basalt:system-one`, `basalt:passkey`, `basalt:mom`, `basalt:harness`, `arc-agi`, `arc-agi-2`, `terminal-bench`, `swe-bench`, `lm-eval`, `livecodebench`, `bfcl`, `inspect-ai`, `tau-bench`, `gaia`, `evalplus`), optional `dataset`, `target` (`pipeline`, `pipeline:<name>` or `model:<slot>`), scalar `params`, regression `gates` (`min_decode_tps`, `max_peak_gb`, `min_accuracy`, `max_p50_ms`, `max_ppl`, `max_ece`) and optional `submit` (`target`, `api_key_env`, `endpoint`, `subset`, `split`).
+- **Commands:** `basalt compose plan` prints resolved suites; `basalt compose bench -f basalt.yaml --suite smoke --submit-dry-run` runs the suite and exports verified leaderboard bundles; `basalt bench list|compare|submit` inspects adapters, diffs artifacts, and exports dry-run bundles across all ten targets (`arc-prize`, `terminal-bench`, `swe-bench`, `hf-leaderboard`, `livecodebench`, `bfcl`, `inspect-ai`, `tau-bench`, `gaia`, `weave-otel`).
+
+### Cloud failures and spend
+- A refused key (HTTP 401/403) disables that cloud model until the server restarts, with one log line saying so.
+- A rate limit (429) pauses it for `Retry-After`, or 60 s if the header is missing.
+- While a cloud model is disabled or paused, the next stage or the fallback answers.
+- The day's spend per model and in total is kept in `~/.basalt/cloud-spend.json`, so a restart does not reset a cap. Days are UTC.
+
+## Running systems
+- **`compose pull`:** downloads every local model of the file into the Hugging Face cache and verifies each file, printing progress every tenth. After a pull, `compose plan` has exact sizes and `compose up` loads without waiting for downloads.
+- **Sizes in `compose plan`:** a model in the cache is measured on disk. A model that is not downloaded is sized from the Hugging Face API's file list. If neither knows the size, `plan` refuses and names the model: run `compose pull`, or pass `--assume-size <GB>` to count it at that size. `plan` no longer counts an unknown model as 0 bytes.
+- **`compose diff`:** shows what `compose up` would change on the running system with the same name, without changing it (`POST /v1/compose/diff`). It lists loads, unloads, keys and budgets, a needed restart, or a refusal: a missing key, or a system that does not fit. It exits non-zero on a restart or a refusal.
+- **Events:** `GET /v1/compose/events` is a server-sent event stream of what the system does. Event kinds are `loading`, `ready`, `registered` (on demand), `failed` (a startup probe), `applied`, `refused` and `up`. A new client first gets the last 100 events. `compose up --wait` prints them while it waits.
+- **`compose up` on a running system:** if a system with the same `name` runs, `compose up` sends it the file (`POST /v1/compose/apply`) and applies the difference.
+  - While the system is still loading, or applying another change, it answers 503. `compose up` waits and sends the file again, up to `--wait-timeout` seconds (default 1800).
+  - With `--wait`, `compose up` then waits until `GET /v1/health/ready` answers 200, prints the models it is waiting for, and exits non-zero if the system is not ready within the timeout.
+  - It loads added models, reloads changed ones and unloads removed ones.
+  - It swaps the pipelines between requests.
+  - It checks the new system against this Mac's memory first, as `compose plan` does, with the models of every pipeline counted. A system that does not fit is refused, and nothing changes.
+  - When the new system fits but old and new models do not fit side by side, it unloads the models it replaces before loading their successors. A request that needs one of them in that window waits for the load or fails. If a load then fails, it loads the old models back.
+  - It prints `load`, `reload`, `unload` and `keep` per model, `budget` for each changed cloud budget (`total` for the file's) and `key` for each cloud model whose `api_key_env` changed.
+  - A cloud model's budget or key variable changes without a reload. The new limits apply at once, and a model disabled by a refused key is enabled again when its key variable changes.
+  - A different chat model is loaded into the serving model's place and printed as `chat`. Requests wait while it loads. If a later step of the apply fails, the old chat model is loaded back.
+  - A pipeline's new local decision model is loaded like any added model. The default pipeline's is also printed as `decide`. The pipelines and `/v1/systemone` use it from the next request. A model that starts or stops deciding is reloaded in its new role.
+- **Changes that need a restart:** a different memory mode, a sequential perceiver, engine/HTTP startup flags under `experimental`, or changes under `mcp`. Run `compose down` and then `compose up`.
+- **`compose ps`:** lists each running system (`GET /v1/compose`) with its pipelines and, per model:
+  - its state, one of `loading`, `ready`, `unloading`, `unloaded`, `idle-unloaded` (on demand, not loaded now), `decision` (held by the decision engine), `cloud`, `no-key`, `over-budget`, `rate-limited`, `refused` and `failed`;
+  - for an on-demand model, when it was last used and when it unloads;
+  - for a cloud model, its spend today against its cap, and a refusal if one applies.
+- **Health:** `GET /v1/health/live` answers 200 while the server answers HTTP. `GET /v1/health/ready` answers 200 once every model can serve. Until then it answers 503 and lists the models still waiting, such as `chat (loading)`. An idle on-demand model, an over-budget cloud model and a rate-limited cloud model count as able to serve; the cascade or the router goes past them.
+- **Cloud keys:** `compose up` refuses to start when a cloud model's `api_key_env` is not set, and names the variable. Up-as-diff checks the running server's environment instead.
+- **`compose down`:** sends the server SIGINT. It finishes in-flight requests and unloads. If the process is still running after 30 s, `down` says so and exits non-zero.
+- **Where state lives:** the running system's pid, port and process start time are in `~/.basalt/compose/<name>.json`. A record whose pid now belongs to another process, because the pid was reused, counts as not running.
+- **API key:** when the server has an API key, set `BASALT_API_KEY` for `ps` and up-as-diff.
+
+## Domain adapters (`version: 2`)
+A `version: 2` file may declare `adapters:` trained on Hugging Face NVIDIA Nemotron presets (`nemotron:post-v2`, `nemotron:post-v1`, `nemotron:code`, `nemotron:math`, `nemotron:crossthink`, `nemotron:personas`), `hf:<org>/<repo>` datasets, or local `.jsonl` files, and route requests across them on a single resident `base` model without reloading weights:
+
+```yaml
+adapters:
+  code_oft:
+    base: chat
+    method: oft              # lora | phm | oft
+    rank: 16
+    scale: 10.0
+    hypercomplex_dim: 8
+    factor_rank: 1
+    shared_basis: true
+    block_size: 16
+    parameterization: cayley # cayley | matrixExp
+    block_shared: false
+    layers: [0, 1, 2, 3]
+    output: ./adapters/code_oft
+    iterations: 200
+    batch_size: 2
+    learning_rate: 0.0001
+    max_seq_len: 2048
+    checkpoint_every: 50
+    corpus:
+      source: nemotron:code
+      subset: default
+      split: split_0
+      max_rows: 512
+      min_pass_rate: 0.9
+      include_reasoning: true
+      seed: 42
+    gate:
+      max_kl: 0.2
+      max_ppl_rise: 0.05
+      held_out: ["Explain what a hash table is in two sentences."]
+```
+
+Run `basalt compose train -f basalt.yaml` (with optional `--adapter`, `--force`, `--resume`) to train declared adapters onto disk, then select an `adapter:` in `pipeline.answer` or any entry of `pipeline.answer.routes`.
+
+## Receipts
+Each `/v1/pipeline` response, and each session log record, carries a receipt. Per stage it gives the model, milliseconds and tokens. Decide stages also carry their cost and any cloud stages that were skipped. Answer stages carry the rule that fired (`route`), the cost and the skipped models. `swap_ms` is the time spent loading on-demand and sequential models.
+
+## Bundled hardware-tiered profiles (`#526`)
+
+`basalt compose` and `Basalt.app` (`Compose Profiles`, `⌥⌘C`, plus **Settings → Engine → Bundled Profile**) ship **84 hardware-calibrated profiles** across 7 Apple Silicon unified-memory tiers (`16gb`, `24gb`, `32-36gb` [aliases `32gb` and `36gb`], `48gb`, `64gb`, `128gb`, `256gb` [aliases `192gb` and `236gb`]) × 12 workload archetypes:
+
+| Archetype | Primary | Focus |
+|---|---|---|
+| `daily-chat` | ★ | Everyday chat, Apple Vision document perception, local speech input |
+| `coding-agent` | ★ | Speculative small-M kernel, code-specialized routing, MCP tools |
+| `voice-zonos` | ★ | Zyphra `ZONOS3-Mini` 44.1 kHz neural TTS + `Kokoro-82M` ANE fallback |
+| `multimodal-desk` | ★ | OCR, audio perception, System One triage, chat, and ZONOS3 voice |
+| `reasoning-lab` | | Adaptive thinking budgets + System One cascade for math and logic |
+| `document-ocr` | | Neural OCR (`PaddleOCR-VL-1.5`) + four-valued Belnap epistemic gate |
+| `voice-duplex` | | Full-duplex transcription and sub-80 ms TTFA streaming synthesis |
+| `creative-studio` | | Native MLX image synthesis (`Z-Image-Turbo` / `FLUX`) with TeaCache |
+| `rag-knowledge` | | Grounded long-context retrieval with conflict and abstention gating |
+| `hybrid-cloud` | | Local privacy-first chat with capped `$1/day` cloud escalation |
+| `moe-frontier` | | Sparse MoE (`Flint 40B-A2.5B`, `Nemotron-3.5`, `Qwen3.8`) + expert streaming |
+| `research-xray` | | Model X-Ray, weight surgery, and `basalt:throughput` smoke benchmarks |
+
+On launch, `Basalt.app` detects physical unified memory (`ComposeMemoryTier.detect`) and pins the 4 starred primary profiles for this Mac under **Recommended for this Mac**, while keeping all 84 profiles searchable and selectable. Any profile runs identically from the CLI (`basalt compose plan 24gb-voice-zonos`, `basalt compose up 36gb-moe-frontier`, `basalt compose up 236gb-multimodal-desk`).
+
+## Examples
+- `docs/examples/compose/any-mac.yaml`: one version 2 file for 16, 24 and 64 GB Macs. The chat model comes from a profile chosen by memory, and the 64 GB profile adds a 27B model on demand and a `long` pipeline.
+- `docs/examples/compose/mac-16gb.yaml`: Ornith 9B local, OCR on demand, long prompts to Claude Haiku within $0.50 a day.
+- `docs/examples/compose/mac-24gb.yaml`: Gemma 4 12B, OCR on demand, code to Haiku, a second `support` pipeline, $1 a day in total.
+- `docs/examples/compose/mac-64gb.yaml`: Gemma 4 26B-A4B with Qwen3.8-27B and Nemotron Transcribe on demand, no cloud answers.
+- `docs/examples/compose/document-qa-cloud.yaml`, `mom.yaml` and `too-big.yaml`: the files behind the measurements below.
+
+More measurements are in #412.
+
+## Measured
+
+```yaml
+version: 1
+name: document-qa-cloud
+models:
+  chat:  { source: mlx-community/gemma-4-12B-it-qat-4bit }
+  ocr:   { source: mlx-community/PaddleOCR-VL-1.5-8bit, keep: on-demand, idle_unload: 30s }
+  jev:   { source: "cloud:openrouter/~typesafe/jev-latest", api_key_env: OPENROUTER_API_KEY }
+pipeline:
+  perceive: { documents: [ocr, apple-vision] }
+  decide:   { cascade: [jev, chat], escalate_below: 0.6 }
+  answer: chat
+```
+
+```bash
+basalt compose plan -f docs/examples/compose/document-qa-cloud.yaml
+basalt compose up -f docs/examples/compose/document-qa-cloud.yaml -- --port 8080
+basalt compose up voice-agent            # bundled: document-qa, voice-agent
+```
+
+```yaml
+pipeline:
+  decide: { cascade: [jev, chat], escalate_below: 0.6 }
+  answer:
+    routes:
+      - when: { decide: { route: code }, cost_left: true }
+        model: haiku          # cloud:openrouter/anthropic/claude-haiku-5.5, budget: { usd_per_day: 0.5 }
+        fallback: chat
+      - model: chat
+```
+
+Mixed workload of 55 requests through `/v1/pipeline` (30 decisions, 10 code, 10 chat, 5 documents), M4 Pro, release build (`scripts/compose_mom_bench.swift`, `docs/examples/compose/mom.yaml`):
+
+| Setup | Labels right | Cloud per 1000 requests | p50 | p95 | Local stage time |
+|---|---|---|---|---|---|
+| local only (Gemma 4 12B decides and answers) | 55/55 | $0 | 0.92 s | 10.0 s | 176 s |
+| cloud first (Jev decides, Haiku answers all text) | 55/55 | $0.046 | 1.25 s | 4.8 s | 24 s |
+| MoM (Jev decides, code to Haiku while budget lasts, the rest Gemma) | 55/55 | $0.035 | 1.21 s | 4.8 s | 53 s |
+
+Measured with `compose up` on an M4 Pro with 24 GB, release build:
+
+| File | Request | Receipt |
+|---|---|---|
+| document-qa-cloud | document (first) | OCR loaded on demand (489 ms), decided locally, answered: 6.1 s |
+| | document (again) | OCR already loaded (0 ms): 5.0 s |
+| | after 40 s idle | OCR unloaded, footprint 12 → 11 GB |
+| | typed question | decided by Jev in the cloud: 0.6 s |
+| | document | OCR reloaded (267 ms): 5.3 s |
+| voice-agent (bundled) | audio | chat unloaded around Nemotron Transcribe (swap 6.9 s): 17.3 s |
+| too-big (example) | `compose plan` | refused: one stage needs 20.7 GB plus 2 GB against a 19.1 GB working set |
+
+
+## Schema `version: "2.2"` Extensions
+
+Compose `version: "2.2"` (compatible with `version: 2`) adds declarative configuration for block-diffusion LLMs, `DFlash` speculative drafters, duplex speech-to-speech, shared VLM/DiT text encoders, 1-step `SeedVR2` upscaling, `ACE-Step` music DiT, causal 3D-VAE video DiTs, segment-wise preference training, and Thunderbolt/LAN multi-Mac clusters:
+
+- Per-model `speculative` (`mode`, `drafter`, `block_size`, `verify`) and `diffusion_text` (`dual_kv_cache`, `confidence_threshold`, `contrastive_alpha`).
+- `imagine` extensions: `share_text_encoder_with`, `kv_cache_references`, `rgba`, and `upscale` (`model`, `steps`, `target_resolution`).
+- Root `voice` (`mode`, `sts_model`, `denoise`, `turn_detection` with `model` and `diarization`, `tts_fallback`, `aligner`).
+- Root `music` (`model`, `steps`, `duration_seconds`) and `video` (`model`, `vae_tiling`, `sta_sparse`, `fps`, `frames`).
+- Root `train` (`method`, `segments`, `ema_decay`) and `cluster` (`topology`, `peers`, `compression`).
+- Enterprise routing, caching & governance (`v0.12`): `BusinessOrchestratorCore` 5-component routing, `LANTERN` semantic cache (`SemanticCacheCore` / `SemanticCacheActor`, `#625`), `HITL` approval gate (`/v1/mcp/approvals`) + LAAS-CNRS `SymbolicKnowledgeGraph` (`#626`), and UMA-aware L0/L1/L2 `TieredKVHierarchyCore` + `AdaptiveHeterogeneousPlanner` (`#627`).

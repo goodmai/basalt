@@ -1,6 +1,6 @@
 # Décisions dans le cloud avec Gemini Decision 1
 
-> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · **Français** · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md)
+> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · **Français** · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md) · [한국어](../ko/cloud-decisions.md) · [Bahasa Indonesia](../id/cloud-decisions.md)
 
 Le modèle `gemini-decision-1` de Google répond aux questions System One (`noul`, `choice`, `score`) en une seule passe sur du texte, des images, de l'audio, de la vidéo et des PDF. Son format d'échange correspond à celui de `/v1/systemone` dans basalt, ce qui lui permet de fonctionner comme étape cloud en amont d'un modèle de décision local :
 

@@ -1,6 +1,6 @@
 # 模型 X 光透视与研究工具（#328）
 
-> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · **中文** · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md)
+> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · **中文** · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md) · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 Basalt 的 MCP 服务器能够展示已加载模型的内部运行状态，并在其上执行小型、可逆的实验。只读 X 光透视（X-ray）工具始终在工具列表中公开；实验类工具仅在服务器以 `basalt serve --mcp --research-tools` 启动时才会被列出并接受调用。
 

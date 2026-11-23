@@ -1,6 +1,6 @@
 # REST API
 
-> Languages: **English** · [Русский](i18n/ru/rest-api.md) · [中文](i18n/zh/rest-api.md) · [Español](i18n/es/rest-api.md) · [Français](i18n/fr/rest-api.md) · [日本語](i18n/ja/rest-api.md) · [Deutsch](i18n/de/rest-api.md)
+> Languages: **English** · [Русский](i18n/ru/rest-api.md) · [中文](i18n/zh/rest-api.md) · [Español](i18n/es/rest-api.md) · [Français](i18n/fr/rest-api.md) · [日本語](i18n/ja/rest-api.md) · [Deutsch](i18n/de/rest-api.md) · [한국어](i18n/ko/rest-api.md) · [Bahasa Indonesia](i18n/id/rest-api.md)
 
 Base URL: `http://127.0.0.1:8080` — **no authentication required**.
 

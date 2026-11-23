@@ -1,6 +1,6 @@
 # Basalt для Mac
 
-> Languages: [English](../../mac-app.md) · **Русский** · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · [Deutsch](../de/mac-app.md)
+> Languages: [English](../../mac-app.md) · **Русский** · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · [Deutsch](../de/mac-app.md) · [한국어](../ko/mac-app.md) · [Bahasa Indonesia](../id/mac-app.md)
 
 Нативное приложение для basalt: окно чата и окно Монитора, работающие поверх локального движка, который приложение запускает и контролирует. Архитектура и этапы разработки описаны в #434. Это этап 1.
 

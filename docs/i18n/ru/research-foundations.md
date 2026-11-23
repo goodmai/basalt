@@ -1,6 +1,6 @@
 # Математические и научные основы Basalt
 
-> Languages: [English](../../research-foundations.md) · **Русский** · [中文](../zh/research-foundations.md) · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md)
+> Languages: [English](../../research-foundations.md) · **Русский** · [中文](../zh/research-foundations.md) · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md) · [한국어](../ko/research-foundations.md) · [Bahasa Indonesia](../id/research-foundations.md)
 
 Basalt опирается на достижения мирового сообщества открытой науки. Каждое Metal-ядро, кодек квантования, компрессор KV-кэша, спекулятивный верификатор, эпистемический шлюз и целевая функция пост-обучения в Basalt имеют строгое обоснование в рецензируемой математической теории и препринтах открытого доступа из международных научных экосистем — охватывающих **североамериканскую, европейскую, китайскую, российскую, южнокорейскую и японскую** научные школы.
 

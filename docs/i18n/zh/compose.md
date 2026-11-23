@@ -1,6 +1,6 @@
 # basalt compose
 
-> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · **中文** · [Español](../es/compose.md) · [Français](../fr/compose.md) · [日本語](../ja/compose.md) · [Deutsch](../de/compose.md)
+> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · **中文** · [Español](../es/compose.md) · [Français](../fr/compose.md) · [日本語](../ja/compose.md) · [Deutsch](../de/compose.md) · [한국어](../ko/compose.md) · [Bahasa Indonesia](../id/compose.md)
 
 `basalt compose` 用于启动并托管由单个 YAML 文件描述的模型系统。该文件列出了本地和云端模型以及它们各自在内存中的驻留方式，同时也描述了在模型之间路由请求的流水线（pipeline）。每条流水线依次执行感知（perceive：OCR、语音）、决策（decide：System One）和回答（answer：对话模型）。这是一种面向模型的混合架构编排方式，风格类似于针对模型的 docker-compose 文件。
 

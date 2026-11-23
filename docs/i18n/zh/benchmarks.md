@@ -1,6 +1,6 @@
 # 特性与基准测试
 
-> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · **中文** · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md)
+> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · **中文** · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md) · [한국어](../ko/benchmarks.md) · [Bahasa Indonesia](../id/benchmarks.md)
 
 ## 核心特性一览
 

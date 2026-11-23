@@ -4,7 +4,7 @@
 
 > 在 Apple Silicon 上部署服务、训练、量化、编排并剖析开源 LLM、神经语音、视频、OCR 与图像模型。单个 Swift 6.4 二进制文件即可原生支持 **OpenAI API、Anthropic API 与 MCP**，上层配有原生 macOS 27 Liquid Glass 应用。运行时无需 Python，除非你主动请求，否则绝不访问云端。
 
-[English](README.md) · [Русский](README.ru.md) · **中文** · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
+[English](README.md) · [Русский](README.ru.md) · **中文** · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
@@ -160,7 +160,7 @@ open .build/Basalt.app
 
 ## 文档索引
 
-> 多语言翻译文档位于 `docs/i18n/`：[Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/)。
+> 多语言翻译文档位于 `docs/i18n/`：[Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/) · [한국어](docs/i18n/ko/) · [Bahasa Indonesia](docs/i18n/id/)。
 
 | 主题 | 文档 |
 |---|---|

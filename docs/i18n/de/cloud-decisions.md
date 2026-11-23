@@ -1,6 +1,6 @@
 # Cloud-Entscheidungen mit Gemini Decision 1
 
-> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · **Deutsch**
+> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · **Deutsch** · [한국어](../ko/cloud-decisions.md) · [Bahasa Indonesia](../id/cloud-decisions.md)
 
 Googles `gemini-decision-1` beantwortet System-One-Fragen (`noul`, `choice`, `score`) in einem einzigen Durchgang über Text, Bilder, Audio, Video und PDFs hinweg. Sein Übertragungsformat (Wire Format) entspricht basalts eigenem `/v1/systemone`, sodass es als Cloud-Stufe vor einem lokalen Entscheidungsmodell arbeitet:
 

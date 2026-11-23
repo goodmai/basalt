@@ -1,6 +1,6 @@
 # API REST
 
-> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · [中文](../zh/rest-api.md) · **Español** · [Français](../fr/rest-api.md) · [日本語](../ja/rest-api.md) · [Deutsch](../de/rest-api.md)
+> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · [中文](../zh/rest-api.md) · **Español** · [Français](../fr/rest-api.md) · [日本語](../ja/rest-api.md) · [Deutsch](../de/rest-api.md) · [한국어](../ko/rest-api.md) · [Bahasa Indonesia](../id/rest-api.md)
 
 URL base: `http://127.0.0.1:8080` — **no requiere autenticación**.
 

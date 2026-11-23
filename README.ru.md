@@ -4,7 +4,7 @@
 
 > Запускайте, дообучайте, квантуйте, объединяйте в стеки и разбирайте изнутри открытые LLM, нейросетевые модели речи, видео, OCR и генерации изображений на Apple Silicon. Один бинарный файл на Swift 6.4 говорит на **OpenAI API, Anthropic API и MCP**, а поверх работает нативное приложение для macOS 27 Liquid Glass. Без Python в рантайме. Без облака — пока вы сами его не запросите.
 
-[English](README.md) · **Русский** · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
+[English](README.md) · **Русский** · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
@@ -160,7 +160,7 @@ open .build/Basalt.app
 
 ## Документация
 
-> Переводы документации находятся в `docs/i18n/`: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/).
+> Переводы документации находятся в `docs/i18n/`: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/) · [한국어](docs/i18n/ko/) · [Bahasa Indonesia](docs/i18n/id/).
 
 | Тема | Документ |
 |---|---|

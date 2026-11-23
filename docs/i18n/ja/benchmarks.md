@@ -1,6 +1,6 @@
 # 機能とベンチマーク
 
-> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · **日本語** · [Deutsch](../de/benchmarks.md)
+> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · **日本語** · [Deutsch](../de/benchmarks.md) · [한국어](../ko/benchmarks.md) · [Bahasa Indonesia](../id/benchmarks.md)
 
 ## 機能一覧
 

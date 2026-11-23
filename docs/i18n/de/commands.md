@@ -1,6 +1,6 @@
 # Befehle
 
-> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · [中文](../zh/commands.md) · [Español](../es/commands.md) · [Français](../fr/commands.md) · [日本語](../ja/commands.md) · **Deutsch**
+> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · [中文](../zh/commands.md) · [Español](../es/commands.md) · [Français](../fr/commands.md) · [日本語](../ja/commands.md) · **Deutsch** · [한국어](../ko/commands.md) · [Bahasa Indonesia](../id/commands.md)
 
 `basalt` ohne Unterbefehl startet `chat`.
 

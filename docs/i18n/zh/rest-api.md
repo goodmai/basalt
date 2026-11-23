@@ -1,6 +1,6 @@
 # REST API
 
-> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · **中文** · [Español](../es/rest-api.md) · [Français](../fr/rest-api.md) · [日本語](../ja/rest-api.md) · [Deutsch](../de/rest-api.md)
+> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · **中文** · [Español](../es/rest-api.md) · [Français](../fr/rest-api.md) · [日本語](../ja/rest-api.md) · [Deutsch](../de/rest-api.md) · [한국어](../ko/rest-api.md) · [Bahasa Indonesia](../id/rest-api.md)
 
 基础地址：`http://127.0.0.1:8080` —— **无需身份验证**。
 

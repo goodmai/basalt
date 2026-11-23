@@ -11,7 +11,7 @@ func captures(_ pattern: String, in line: String) -> [String] {
 }
 
 var failures: [String] = []
-for name in ["README.md", "README.ru.md", "README.zh.md", "README.es.md", "README.fr.md", "README.ja.md", "README.de.md"] {
+for name in ["README.md", "README.ru.md", "README.zh.md", "README.es.md", "README.fr.md", "README.ja.md", "README.de.md", "README.ko.md", "README.id.md"] {
     guard let text = try? String(contentsOf: root.appending(path: name), encoding: .utf8) else { continue }
     var listed = 0
     for (index, line) in text.components(separatedBy: "\n").enumerated() where line.contains("Fixtures/golden/") {

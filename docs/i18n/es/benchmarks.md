@@ -1,6 +1,6 @@
 # Funciones y benchmarks
 
-> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · **Español** · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md)
+> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · **Español** · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md) · [한국어](../ko/benchmarks.md) · [Bahasa Indonesia](../id/benchmarks.md)
 
 ## Funciones de un vistazo
 

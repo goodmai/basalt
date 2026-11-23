@@ -1,6 +1,6 @@
 # Funktionen und Benchmarks
 
-> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · **Deutsch**
+> Languages: [English](../../benchmarks.md) · [Русский](../ru/benchmarks.md) · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · **Deutsch** · [한국어](../ko/benchmarks.md) · [Bahasa Indonesia](../id/benchmarks.md)
 
 ## Funktionen im Überblick
 

@@ -1,6 +1,6 @@
 # Install
 
-> Languages: **English** · [Русский](i18n/ru/install.md) · [中文](i18n/zh/install.md) · [Español](i18n/es/install.md) · [Français](i18n/fr/install.md) · [日本語](i18n/ja/install.md) · [Deutsch](i18n/de/install.md)
+> Languages: **English** · [Русский](i18n/ru/install.md) · [中文](i18n/zh/install.md) · [Español](i18n/es/install.md) · [Français](i18n/fr/install.md) · [日本語](i18n/ja/install.md) · [Deutsch](i18n/de/install.md) · [한국어](i18n/ko/install.md) · [Bahasa Indonesia](i18n/id/install.md)
 
 ## Prebuilt binary (two lines, no Xcode)
 

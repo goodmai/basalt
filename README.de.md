@@ -4,7 +4,7 @@
 
 > Offene LLMs, neuronale Sprachsynthese, Video-, OCR- und Bildmodelle auf Apple Silicon bereitstellen, trainieren, quantisieren, komponieren und analysieren. Ein einziges Swift-6.4-Binary spricht die **OpenAI API, die Anthropic API und MCP**, mit einer nativen macOS-27-Liquid-Glass-App obendrauf. Kein Python zur Laufzeit. Keine Cloud, außer du forderst sie an.
 
-[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · **Deutsch** · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
+[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · **Deutsch** · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
@@ -160,7 +160,7 @@ Lokale 4B–12B-Modelle sind kein direkter Ersatz für ein Frontier-Modell — s
 
 ## Dokumentation
 
-> Übersetzte Dokumentation liegt unter `docs/i18n/`: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/).
+> Übersetzte Dokumentation liegt unter `docs/i18n/`: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/) · [한국어](docs/i18n/ko/) · [Bahasa Indonesia](docs/i18n/id/).
 
 | Thema | Dokument |
 |---|---|

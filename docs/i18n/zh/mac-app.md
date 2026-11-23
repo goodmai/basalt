@@ -1,6 +1,6 @@
 # Basalt Mac 版
 
-> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · **中文** · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · [Deutsch](../de/mac-app.md)
+> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · **中文** · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · [日本語](../ja/mac-app.md) · [Deutsch](../de/mac-app.md) · [한국어](../ko/mac-app.md) · [Bahasa Indonesia](../id/mac-app.md)
 
 围绕 basalt 构建的原生应用：包含一个聊天窗口和一个 Monitor 窗口，基于由应用自行启动并监管的本地引擎运行。设计方案与阶段规划见 #434。本文档介绍第 1 阶段。
 

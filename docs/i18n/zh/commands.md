@@ -1,6 +1,6 @@
 # 命令参考
 
-> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · **中文** · [Español](../es/commands.md) · [Français](../fr/commands.md) · [日本語](../ja/commands.md) · [Deutsch](../de/commands.md)
+> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · **中文** · [Español](../es/commands.md) · [Français](../fr/commands.md) · [日本語](../ja/commands.md) · [Deutsch](../de/commands.md) · [한국어](../ko/commands.md) · [Bahasa Indonesia](../id/commands.md)
 
 直接运行 `basalt`（不带子命令）将启动 `chat`。
 

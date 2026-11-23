@@ -1,6 +1,6 @@
 # Pipeline-Voreinstellungen und Speichermodi
 
-> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · **Deutsch**
+> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · **Deutsch** · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline` (MCP `basalt_pipeline`) führt Wahrnehmung (OCR, Sprache) → Entscheidung (System One) → Antwort (das Chat-Modell) in einem einzigen Prozess aus. Eine Voreinstellung (Preset) füllt die Serve-Flags für ein mitgeliefertes Profil aus; jedes explizit angegebene Flag hat Vorrang:
 

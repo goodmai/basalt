@@ -1,6 +1,6 @@
 # REST API
 
-> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · [中文](../zh/rest-api.md) · [Español](../es/rest-api.md) · [Français](../fr/rest-api.md) · **日本語** · [Deutsch](../de/rest-api.md)
+> Languages: [English](../../rest-api.md) · [Русский](../ru/rest-api.md) · [中文](../zh/rest-api.md) · [Español](../es/rest-api.md) · [Français](../fr/rest-api.md) · **日本語** · [Deutsch](../de/rest-api.md) · [한국어](../ko/rest-api.md) · [Bahasa Indonesia](../id/rest-api.md)
 
 ベース URL：`http://127.0.0.1:8080` — **認証不要**。
 
