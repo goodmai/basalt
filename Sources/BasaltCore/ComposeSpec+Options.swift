@@ -56,6 +56,9 @@ extension ComposeSpec {
                 issues.append(Issue("experimental.expert_cache_gb", "must be positive"))
             }
         }
+        if let factor = experimental.ropeYarn, !(factor > 1 && factor <= 64) {
+            issues.append(Issue("experimental.rope_yarn", "must lie in (1, 64]"))
+        }
         if let split = experimental.kvHeadSplit, !(0.05 ... 1).contains(split) {
             issues.append(Issue("experimental.kv_head_split", "must lie between 0.05 and 1"))
         }

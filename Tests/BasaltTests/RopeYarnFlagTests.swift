@@ -105,5 +105,9 @@ struct RopeYarnFlagTests {
         var next = spec
         next.experimental.ropeYarn = 4
         #expect(spec.experimentalRestartReason(to: next)?.contains("rope_yarn") == true)
+        var invalid = spec
+        invalid.experimental.ropeYarn = 1
+        #expect(invalid.experimentalIssues.contains { $0.path == "experimental.rope_yarn" })
+        #expect(!spec.experimentalIssues.contains { $0.path == "experimental.rope_yarn" })
     }
 }
