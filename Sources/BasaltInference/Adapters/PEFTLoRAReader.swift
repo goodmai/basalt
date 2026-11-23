@@ -12,10 +12,11 @@ struct PEFTLoRAConfiguration: Decodable, Equatable {
     var modulesToSave: [String]?
     var rankPattern: [String: Int]?
     var alphaPattern: [String: Float]?
+    var initialization: String?
 
     enum CodingKeys: String, CodingKey {
         case peftType = "peft_type", rank = "r", alpha = "lora_alpha", rsLoRA = "use_rslora", dora = "use_dora"
-        case modulesToSave = "modules_to_save", rankPattern = "rank_pattern", alphaPattern = "alpha_pattern"
+        case modulesToSave = "modules_to_save", rankPattern = "rank_pattern", alphaPattern = "alpha_pattern", initialization = "init_lora_weights"
     }
 
     init(from decoder: Decoder) throws {
@@ -27,7 +28,10 @@ struct PEFTLoRAConfiguration: Decodable, Equatable {
         modulesToSave = try c.decodeIfPresent([String].self, forKey: .modulesToSave)
         rankPattern = try c.decodeIfPresent([String: Int].self, forKey: .rankPattern)
         alphaPattern = try c.decodeIfPresent([String: Float].self, forKey: .alphaPattern)
+        initialization = try? c.decodeIfPresent(String.self, forKey: .initialization)
     }
+
+    static let baseChangingInitializations = ["pissa", "olora", "corda", "loftq"]
 
     var scale: Float { rsLoRA ? alpha / Float(rank).squareRoot() : alpha / Float(rank) }
 
@@ -36,7 +40,10 @@ struct PEFTLoRAConfiguration: Decodable, Equatable {
         if dora { return "use_dora is set; DoRA adapters are not supported" }
         if !(modulesToSave ?? []).isEmpty { return "modules_to_save \(modulesToSave ?? []) would replace whole modules, which a LoRA adapter cannot carry" }
         if !(rankPattern ?? [:]).isEmpty || !(alphaPattern ?? [:]).isEmpty { return "rank_pattern or alpha_pattern gives layers their own rank or alpha, which is not supported" }
-        return rank > 0 && alpha.isFinite ? nil : "r \(rank) and lora_alpha \(alpha) must be positive and finite"
+        if let initialization, Self.baseChangingInitializations.contains(where: initialization.lowercased().hasPrefix) {
+            return "init_lora_weights \(initialization) trains against a changed base model; convert it to a plain LoRA with PEFT first"
+        }
+        return rank > 0 && alpha > 0 && alpha.isFinite ? nil : "r \(rank) and lora_alpha \(alpha) must be positive and finite"
     }
 }
 
@@ -58,9 +65,13 @@ enum PEFTLoRAReader {
         let raw: [String: MLXArray]
         do {
             configuration = try JSONDecoder().decode(PEFTLoRAConfiguration.self, from: Data(contentsOf: directory.appending(component: "adapter_config.json")))
+        } catch {
+            throw Refused(reason: "adapter_config.json is not a PEFT LoRA config: \(error)")
+        }
+        do {
             raw = try MLX.loadArrays(url: directory.appending(component: weightsFile))
         } catch {
-            throw Refused(reason: "unreadable PEFT adapter (adapter_config.json and \(weightsFile)): \(error.localizedDescription)")
+            throw Refused(reason: "\(weightsFile) is unreadable: \(error.localizedDescription)")
         }
         if let refusal = configuration.refusal { throw Refused(reason: refusal) }
         guard let lora = model as? LoRAModel else { throw Refused(reason: "the \(type(of: model)) architecture takes no LoRA adapter") }
@@ -84,7 +95,7 @@ enum PEFTLoRAReader {
             guard let path = modulePath(peftPath, in: linears), let linear = linears[path], let relative = layerRelative(path) else {
                 throw Refused(reason: "\(key) belongs to no linear layer of this model")
             }
-            let dtype = (linear as? QuantizedLinear)?.scales.dtype ?? linear.weight.dtype
+            let dtype = computeType(of: linear)
             parameters["\(path).\(side.name)"] = tensor.transposed().asType(dtype)
             keys.insert(relative)
         }
@@ -112,5 +123,11 @@ enum PEFTLoRAReader {
         let parts = path.split(separator: ".")
         guard let index = parts.indices.dropLast(2).first(where: { parts[$0] == "layers" && Int(parts[$0 + 1]) != nil }) else { return nil }
         return parts[(index + 2)...].joined(separator: ".")
+    }
+
+    static func computeType(of linear: Linear) -> DType {
+        guard let quantized = linear as? QuantizedLinear else { return linear.weight.dtype }
+        let floats: Set<DType> = [.float16, .bfloat16, .float32]
+        return [quantized.biases?.dtype, quantized.scales.dtype].compactMap { $0 }.first(where: floats.contains) ?? .bfloat16
     }
 }
