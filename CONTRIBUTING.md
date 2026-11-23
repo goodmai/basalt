@@ -162,3 +162,27 @@ Measure more than one model family. A claim about speed or quality names the mod
 - Behaviour changes come with a test that fails without the change; the changed-line coverage step (see Coverage) checks the tests run it.
 - No new concurrency hatch outside `scripts/concurrency-hatches.allow`, and no stale line left in it.
 - Claims that need a real model (speed, output quality) are marked as unverified in the PR unless they were measured; measured ones name the models and link the runner's log (see Real-model runs).
+
+## Documentation translations
+
+English (`README.md` and `docs/*.md`) is the canonical source of truth. Localized copies live in `README.<lang>.md` and `docs/i18n/<lang>/*.md` for `ru`, `zh`, `es`, `fr`, `ja`, `de`, `ko`, and `id`, tracked by SHA-256 digests in `docs/i18n/.manifest.json` (`Sources/BasaltCore/DocsTranslationCore.swift`).
+
+When you edit an English doc:
+
+1. **Check which translations became stale:**
+   ```bash
+   swift scripts/translate_docs.swift --check
+   ```
+2. **Start a local specialized translation stack** (TranslateGemma / HY-MT1.5 via Basalt Compose; see `docs/examples/compose/translate.yaml`):
+   ```bash
+   basalt compose up -f docs/examples/compose/translate.yaml
+   ```
+3. **Auto-translate stale or missing locales** (code fences, inline code, URLs, badges, and `Fixtures/golden/*.json` links are preserved automatically):
+   ```bash
+   swift scripts/translate_docs.swift --locales ja,ko,id --endpoint http://127.0.0.1:8080/v1 --model default
+   ```
+   Use `--dry-run` to preview the file and chunk plan without calling the endpoint, or `--sync-manifest` after manual translation edits.
+4. **Verify golden-tested model links across all READMEs:**
+   ```bash
+   swift scripts/check_readme_models.swift
+   ```
