@@ -73,7 +73,7 @@ extension Inkling2DecoderLayer {
         let post = postStep(hasMessages)(postArgs)
         if let conv {
             let windows = [pre[6], pre[7], post[2], post[3]]
-            Inkling2Ops.commit(windows.map { Inkling2Ops.convState($0, kernel: kernel) }, windows: length > 1 ? windows : nil, count: length, to: conv)
+            Inkling2Ops.commit(windows.map { Inkling2Ops.convState($0, kernel: kernel) }, windows: windows, count: length, to: conv)
         }
         return (post[0], post[1])
     }

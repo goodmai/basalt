@@ -81,10 +81,15 @@ final class Inkling2DSparkDraftModel: Module, StatefulMTPDrafterModel {
     }
 
     private func appendContext(_ features: MLXArray, state: inout MTPDrafterState) {
-        for (index, (layer, cache)) in zip(layers, state.cache).enumerated() {
-            layer.attention.appendContext(mix(features, row: index, layer.featureNorm), cache: cache)
+        let rows = features.dim(1)
+        for start in stride(from: 0, to: rows, by: Inkling2Model.draftChunk) {
+            let chunk = features[0..., start ..< min(start + Inkling2Model.draftChunk, rows)]
+            for (index, (layer, cache)) in zip(layers, state.cache).enumerated() {
+                layer.attention.appendContext(mix(chunk, row: index, layer.featureNorm), cache: cache)
+            }
+            if rows > Inkling2Model.draftChunk { eval(state.cache.flatMap { $0.innerState() }) }
         }
-        state.nextPosition += features.dim(1)
+        state.nextPosition += rows
     }
 
     private func mix(_ features: MLXArray, row: Int, _ norm: RMSNorm) -> MLXArray {

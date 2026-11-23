@@ -85,7 +85,7 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
         (gateSoftcap, upSoftcap) = (try c.decode(Float.self, forKey: .gateSoftcap), try c.decode(Float.self, forKey: .upSoftcap))
         routeScale = try c.decodeIfPresent(Float.self, forKey: .routeScale) ?? 1
         loop = try c.decodeIfPresent(Loop.self, forKey: .loop)
-        draftTaps = try root.contains(.draft) ? root.nestedContainer(keyedBy: DraftKeys.self, forKey: .draft).decodeIfPresent([Int].self, forKey: .taps) : nil
+        draftTaps = try root.contains(.draft) && !root.decodeNil(forKey: .draft) ? root.nestedContainer(keyedBy: DraftKeys.self, forKey: .draft).decodeIfPresent([Int].self, forKey: .taps) : nil
     }
 
     var globalLayers: [Int] {
@@ -111,8 +111,8 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
                 throw Invalid(description: "loop core \(loop.coreStart)..<\(loop.coreEnd) × \(loop.numPasses) passes in \(layers) layers")
             }
         }
-        if let draftTaps, draftTaps.isEmpty || draftTaps != draftTaps.sorted() || !draftTaps.allSatisfy({ (0 ... visitOrder.count).contains($0) }) {
-            throw Invalid(description: "mtp_config.target_layer_ids \(draftTaps) outside 0...\(visitOrder.count) or unsorted")
+        if let draftTaps, draftTaps.isEmpty || zip(draftTaps, draftTaps.dropFirst()).contains(where: { $0 >= $1 }) || !draftTaps.allSatisfy({ (0 ... visitOrder.count).contains($0) }) {
+            throw Invalid(description: "mtp_config.target_layer_ids \(draftTaps) outside 0...\(visitOrder.count) or not strictly increasing")
         }
         return self
     }

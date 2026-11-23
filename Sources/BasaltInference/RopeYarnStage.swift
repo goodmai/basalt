@@ -72,24 +72,36 @@ enum RopeYarnStage {
         let names = try fm.contentsOfDirectory(atPath: source.path).filter { $0 != "config.json" && !$0.hasPrefix(".") }
         if matches(staging, config: config, names: names, source: source) { return }
         try fm.createDirectory(at: staging.deletingLastPathComponent(), withIntermediateDirectories: true)
+        sweepAbandonedTemporaries(beside: staging, olderThan: Date().addingTimeInterval(-3600))
         let temporary = staging.deletingLastPathComponent().appending(component: "\(staging.lastPathComponent).\(UUID().uuidString)")
         try fm.createDirectory(at: temporary, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: temporary) }
         try config.write(to: temporary.appending(component: "config.json"))
         for name in names {
             try fm.createSymbolicLink(at: temporary.appending(component: name), withDestinationURL: source.appending(component: name).resolvingSymlinksInPath())
         }
         guard rename(temporary.path, staging.path) != 0 else { return }
-        if matches(staging, config: config, names: names, source: source) {
-            try? fm.removeItem(at: temporary)
-        } else {
+        if !matches(staging, config: config, names: names, source: source) {
             _ = try fm.replaceItemAt(staging, withItemAt: temporary)
         }
     }
 
     static func matches(_ staging: URL, config: Data, names: [String], source: URL) -> Bool {
-        guard (try? Data(contentsOf: staging.appending(component: "config.json"))) == config else { return false }
+        guard (try? Data(contentsOf: staging.appending(component: "config.json"))) == config,
+              let present = try? FileManager.default.contentsOfDirectory(atPath: staging.path).filter({ !$0.hasPrefix(".") }),
+              Set(present) == Set(names + ["config.json"]) else { return false }
         return names.allSatisfy { name in
             staging.appending(component: name).resolvingSymlinksInPath() == source.appending(component: name).resolvingSymlinksInPath()
+        }
+    }
+
+    static func sweepAbandonedTemporaries(beside staging: URL, olderThan cutoff: Date) {
+        let fm = FileManager.default
+        let parent = staging.deletingLastPathComponent()
+        for name in (try? fm.contentsOfDirectory(atPath: parent.path)) ?? [] where name.hasPrefix("\(staging.lastPathComponent).") {
+            let url = parent.appending(component: name)
+            guard let modified = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date, modified < cutoff else { continue }
+            try? fm.removeItem(at: url)
         }
     }
 }

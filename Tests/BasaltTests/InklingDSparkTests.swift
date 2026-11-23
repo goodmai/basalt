@@ -190,4 +190,34 @@ struct InklingDSparkTests {
         #expect(policy.depth(maximum: 7) == 1)
         #expect(policy.acceptance(at: 0) < 0.1)
     }
+
+    @Test("Repeated target_layer_ids and a block_size the conv states cannot rewind are refused; a null mtp_config loads the target without taps")
+    func configurationEdges() throws {
+        #expect(throws: (any Error).self) { _ = try TinyModel.make(.inkling2Loop, adding: Self.draftConfig.replacingOccurrences(of: "[1, 4, 7, 10]", with: "[1, 4, 4, 10]")) }
+        let target = try Self.target()
+        let config = "{" + Self.draftConfig.replacingOccurrences(of: #""block_size": 4"#, with: #""block_size": 18"#) + TinyModel.Family.inkling2Loop.config.dropFirst()
+        let draft = try JSONDecoder().decode(Inkling2DSparkConfiguration.self, from: Data(config.utf8))
+        #expect(throws: Inkling2Configuration.Invalid.self) { _ = try draft.validated(for: target.config) }
+        let plain = try #require(try TinyModel.make(.inkling2Loop, adding: #""mtp_config": null, "#) as? Inkling2Model)
+        #expect(plain.config.draftTaps == nil)
+    }
+
+    @Test("A 600-row prompt fills the drafter's context in chunks with the same keys and values as one append")
+    func chunkedContext() throws {
+        let target = try Self.target()
+        let directory = try Self.checkpoint(for: target)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafter = try Inkling2DSparkDraftModel.load(url: directory.appending(component: "mtp.safetensors"), directory: directory, target: target)
+        let features = MLXRandom.normal([1, 600, 4 * 64], key: MLXRandom.key(7)) * 0.3
+        var chunked = drafter.makeState(parameters: nil)
+        drafter.prepareDrafterState(target: target, input: MTPPrefillInput(promptTokens: MLXArray.zeros([600], dtype: .int32), targetHidden: features, firstBonus: nil), state: &chunked, sampler: ArgMaxSampler())
+        var whole = drafter.makeState(parameters: nil)
+        for start in [0, 300] {
+            drafter.prepareDrafterState(target: target, input: MTPPrefillInput(promptTokens: MLXArray.zeros([300], dtype: .int32), targetHidden: features[0..., start ..< start + 300], firstBonus: nil), state: &whole, sampler: ArgMaxSampler())
+        }
+        #expect(chunked.nextPosition == 600 && whole.nextPosition == 600)
+        for (a, b) in zip(chunked.cache, whole.cache) {
+            for (x, y) in zip(a.state, b.state) { #expect(abs(x - y).max().item(Float.self) < 1e-5) }
+        }
+    }
 }
