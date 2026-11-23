@@ -19,6 +19,7 @@ struct ExpertLayout: Sendable {
     var scales: ExpertTensor?
     var biases: ExpertTensor?
     var bias: ExpertTensor?
+    var globalScales: [Float]?
     var quantization: (groupSize: Int, bits: Int, mode: QuantizationMode)?
 
     var expertBytes: ByteCount {
@@ -38,10 +39,14 @@ struct ExpertArrays {
     let scales: MLXArray?
     let biases: MLXArray?
     let bias: MLXArray?
+    let globalScale: MLXArray?
 
     func taking(_ slots: [Int]) -> ExpertArrays {
         let pick = MLXArray(slots.map(Int32.init))
-        return ExpertArrays(weight: weight.take(pick, axis: 0), scales: scales?.take(pick, axis: 0), biases: biases?.take(pick, axis: 0), bias: bias?.take(pick, axis: 0))
+        return ExpertArrays(
+            weight: weight.take(pick, axis: 0), scales: scales?.take(pick, axis: 0),
+            biases: biases?.take(pick, axis: 0), bias: bias?.take(pick, axis: 0),
+            globalScale: globalScale?.take(pick, axis: 0))
     }
 }
 
@@ -49,6 +54,8 @@ struct ModuleSlots: ~Copyable {
     var table: ExpertSlotTable
     let buffers: UniqueArray<SlotBuffer>
     let arrays: ExpertArrays?
+    let expertGlobalScales: [Float]?
+    var slotGlobalScales: [Float]
     private var _positions: UniqueArray<Int>
 
     init(layout: ExpertLayout, slots: Int) throws(BasaltError) {
@@ -57,6 +64,8 @@ struct ModuleSlots: ~Copyable {
         initialPositions.reserveCapacity(layout.numExperts)
         for _ in 0 ..< layout.numExperts { initialPositions.append(0) }
         _positions = initialPositions
+        expertGlobalScales = layout.globalScales
+        slotGlobalScales = layout.globalScales != nil && slots > 0 ? [Float](repeating: 1, count: slots) : []
         let tensors = [layout.weight, layout.scales, layout.biases, layout.bias]
         var buffers = UniqueArray<SlotBuffer>()
         buffers.reserveCapacity(tensors.count)
@@ -71,7 +80,7 @@ struct ModuleSlots: ~Copyable {
             buffers.append(buffer)
         }
         self.buffers = buffers
-        arrays = made[0].map { ExpertArrays(weight: $0, scales: made[1], biases: made[2], bias: made[3]) }
+        arrays = made[0].map { ExpertArrays(weight: $0, scales: made[1], biases: made[2], bias: made[3], globalScale: nil) }
     }
 
     var positions: UniqueArray<Int> {
@@ -101,9 +110,12 @@ struct ModuleSlots: ~Copyable {
         return total
     }
 
-    borrowing func appendRequests(for loads: [ExpertSlotTable.Load], files: [FileHandle], into out: inout [ExpertReader.Request]) -> ByteCount {
+    mutating func appendRequests(for loads: [ExpertSlotTable.Load], files: [FileHandle], into out: inout [ExpertReader.Request]) -> ByteCount {
         var bytes: Int64 = 0
         for load in loads {
+            if let expertGlobalScales, load.slot < slotGlobalScales.count {
+                slotGlobalScales[load.slot] = expertGlobalScales[load.expert]
+            }
             for index in 0 ..< buffers.count {
                 let tensor = buffers[index].tensor
                 bytes += Int64(tensor.expertBytes)
@@ -266,7 +278,14 @@ final class ExpertStore {
         stats = ExpertCacheStats()
     }
 
-    func slotArrays(module: Int) -> ExpertArrays? { modules[module].arrays }
+    func slotArrays(module: Int) -> ExpertArrays? {
+        guard let base = modules[module].arrays else { return nil }
+        let scales = modules[module].slotGlobalScales
+        guard !scales.isEmpty else { return base }
+        return ExpertArrays(
+            weight: base.weight, scales: base.scales, biases: base.biases, bias: base.bias,
+            globalScale: MLXArray(scales, [scales.count]).asType(.float32))
+    }
 
     func step(module: Int, x: MLXArray, indices: MLXArray) -> [Int] {
         let state = groups[groupOfModule[module]]
@@ -412,7 +431,8 @@ final class ExpertStore {
             let flat = MLXArray(rawPointer: pointer, [SlotBuffer.padded(ids.count * tensor.expertBytes)], dtype: .uint8) { pointer.deallocate() }
             return flat[0 ..< ids.count * tensor.expertBytes].view(dtype: tensor.dtype).reshaped([ids.count] + tensor.shape)
         }
-        return ExpertArrays(weight: parts[0]!, scales: parts[1], biases: parts[2], bias: parts[3])
+        let gs = layout.globalScales.map { table in MLXArray(ids.map { table[$0] }, [ids.count]).asType(.float32) }
+        return ExpertArrays(weight: parts[0]!, scales: parts[1], biases: parts[2], bias: parts[3], globalScale: gs)
     }
 }
 
@@ -469,7 +489,8 @@ final class StreamedSwitchLinear: SwitchLinear, UntracedModule {
             if let quantization, let scales = experts.scales {
                 MLX.gatherQuantizedMM(
                     x, experts.weight, scales: scales, biases: experts.biases, rhsIndices: indices, transpose: true,
-                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode, sortedIndices: sorted)
+                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode,
+                    globalScale: experts.globalScale, sortedIndices: sorted)
             } else {
                 MLX.gatherMM(x, experts.weight.swappedAxes(-1, -2), rhsIndices: indices, sortedIndices: sorted)
             }

@@ -266,27 +266,52 @@ extension FlintModel {
     }
 
     static func quantizeModulesMatchingPackedWeights(in root: Module, weights: [String: MLXArray]) {
-        quantize(model: root) { path, module in
+        var updates: [(String, Module)] = []
+        for (path, module) in root.leafModules().flattened() {
             guard !(module is any Quantized),
-                  let packedWeight = weights["\(path).weight"],
-                  let scales = weights["\(path).scales"],
-                  packedWeight.dtype == .uint32,
-                  case .value(let unquantizedWeight) = module.parameters()["weight"]
-            else {
-                return nil
-            }
-            let origInCols = unquantizedWeight.dim(-1)
-            let groups = scales.dim(-1)
-            let packedCols = packedWeight.dim(-1)
-            guard origInCols > 0, groups > 0, origInCols.isMultiple(of: groups) else { return nil }
-            let groupSize = origInCols / groups
-            let totalBits = packedCols * 32
-            guard totalBits.isMultiple(of: origInCols) else { return nil }
-            let bits = totalBits / origInCols
-            guard [2, 3, 4, 5, 6, 8].contains(bits) else { return nil }
-            let mode: QuantizationMode = weights["\(path).biases"] != nil ? .affine : .mxfp4
-            guard mode == .affine || (bits == 4 && groupSize == 32) else { return nil }
-            return (groupSize, bits, mode)
+                  case .value(let unquantizedWeight) = module.parameters()["weight"],
+                  let spec = packedQuantSpec(path: path, unquantizedWeight: unquantizedWeight, weights: weights),
+                  let quantized = quantizedReplacement(module, unquantizedWeight: unquantizedWeight, spec: spec, hasGlobalScale: weights["\(path).global_scale"] != nil)
+            else { continue }
+            updates.append((path, quantized))
         }
+        if !updates.isEmpty { root.update(modules: ModuleChildren.unflattened(updates)) }
+    }
+
+    private static func packedQuantSpec(
+        path: String, unquantizedWeight: MLXArray, weights: [String: MLXArray]
+    ) -> (groupSize: Int, bits: Int, mode: QuantizationMode)? {
+        guard let packedWeight = weights["\(path).weight"],
+              let scales = weights["\(path).scales"],
+              packedWeight.dtype == .uint32 else { return nil }
+        let origInCols = unquantizedWeight.dim(-1)
+        let groups = scales.dim(-1)
+        let totalBits = packedWeight.dim(-1) * 32
+        guard origInCols > 0, groups > 0, origInCols.isMultiple(of: groups), totalBits.isMultiple(of: origInCols) else { return nil }
+        let groupSize = origInCols / groups
+        let bits = totalBits / origInCols
+        guard [2, 3, 4, 5, 6, 8].contains(bits) else { return nil }
+        let mode: QuantizationMode? =
+            if weights["\(path).biases"] != nil { .affine }
+            else if bits == 4 && groupSize == 16 { .nvfp4 }
+            else if bits == 4 && groupSize == 32 { .mxfp4 }
+            else if bits == 8 && groupSize == 32 { .mxfp8 }
+            else { nil }
+        return mode.map { (groupSize, bits, $0) }
+    }
+
+    private static func quantizedReplacement(
+        _ module: Module, unquantizedWeight: MLXArray,
+        spec: (groupSize: Int, bits: Int, mode: QuantizationMode), hasGlobalScale: Bool
+    ) -> Module? {
+        if hasGlobalScale && spec.mode != .nvfp4 { return nil }
+        if let switchLayer = module as? SwitchLinear {
+            let placeholder = hasGlobalScale ? MLXArray.ones([unquantizedWeight.dim(0)], dtype: .float32) : nil
+            return QuantizedSwitchLinear(switchLayer, groupSize: spec.groupSize, bits: spec.bits, mode: spec.mode, globalScale: placeholder)
+        }
+        if let linear = module as? Linear, hasGlobalScale {
+            return QuantizedLinear(weight: linear.weight, bias: linear.bias, groupSize: spec.groupSize, bits: spec.bits, mode: spec.mode, globalScale: MLXArray(Float(1)))
+        }
+        return quantizeSingle(layer: module, groupSize: spec.groupSize, bits: spec.bits, mode: spec.mode)
     }
 }
