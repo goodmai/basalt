@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import MLXLMCommon
 import MLXNN
 import Testing
 @testable import BasaltInference
@@ -60,6 +61,23 @@ struct GaugeRoPESpikeTests {
         eval(ours, stock, back)
         #expect(abs(ours - stock).max().item(Float.self) < 1e-4)
         #expect(abs(back - x).max().item(Float.self) < 1e-4)
+    }
+
+    @Test("Gemma 4 proportional RoPE: reordering its two rotated quarters to the front and rescaling the base gives the spike helper the stock rotation")
+    func proportionalRopeMapsToHelper() throws {
+        let x = MLXRandom.normal([32, 2, 64], dtype: .float32, key: MLXRandom.key(6474))
+        let stock = initializeRope(
+            dims: 64, base: 1_000_000, traditional: false,
+            scalingConfig: ["type": .string("proportional"), "partial_rotary_factor": .float(0.25)],
+            maxPositionEmbeddings: nil)
+        let rope = GaugeRoPERealModelTests.RopeConfig(base: 1_000_000, partialFactor: 0.25, proportional: true)
+        let order = try #require(rope.order(headDim: 64))
+        let expected = take(stock(x.transposed(1, 0, 2), offset: 7).transposed(1, 0, 2), order, axis: -1)
+        let ours = GaugeRoPEArms.rope(
+            take(x, order, axis: -1), rotaryDims: rope.rotaryDims(headDim: 64), base: rope.effectiveBase(headDim: 64), offset: 7)
+        eval(expected, ours)
+        #expect(rope.rotaryDims(headDim: 64) == 16)
+        #expect(abs(ours - expected).max().item(Float.self) < 1e-4)
     }
 
     @Test("Full rank: MLA-split and GaugeRoPE (carrier rank = KV heads, full joint code) reconstruct pre-RoPE K and V exactly")

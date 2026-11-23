@@ -170,6 +170,23 @@ struct GaugeRoPERealModelTests {
     struct RopeConfig {
         let base: Float
         let partialFactor: Double
+        var proportional = false
+
+        func rotaryDims(headDim: Int) -> Int {
+            proportional ? 2 * Int(partialFactor * Double(headDim) / 2) : Int(Double(headDim) * partialFactor)
+        }
+
+        func effectiveBase(headDim: Int) -> Float {
+            proportional ? pow(base, Float(rotaryDims(headDim: headDim)) / Float(headDim)) : base
+        }
+
+        func order(headDim: Int) -> MLXArray? {
+            guard proportional else { return nil }
+            let (half, rotated) = (headDim / 2, rotaryDims(headDim: headDim) / 2)
+            let front = Array(0 ..< rotated) + Array(half ..< half + rotated)
+            let rest = (0 ..< headDim).filter { !(0 ..< rotated).contains($0) && !(half ..< half + rotated).contains($0) }
+            return MLXArray((front + rest).map(Int32.init))
+        }
     }
 
     static var env: [String: String] { ProcessInfo.processInfo.environment }
@@ -184,23 +201,29 @@ struct GaugeRoPERealModelTests {
     static func ropeConfig(at path: String) -> RopeConfig? {
         guard let config = ModelCache.config(at: URL(fileURLWithPath: path)) else { return nil }
         let text = config["text_config"] as? [String: Any] ?? config
-        let params = text["rope_parameters"] as? [String: Any] ?? text
+        let nested = text["rope_parameters"] as? [String: Any]
+        let params = nested?["full_attention"] as? [String: Any] ?? nested ?? text
         let kind = params["rope_type"] as? String ?? params["type"] as? String ?? "default"
-        guard kind == "default", let theta = params["rope_theta"] as? NSNumber else { return nil }
+        guard kind == "default" || kind == "proportional", let theta = params["rope_theta"] as? NSNumber else { return nil }
         let factor = (params["partial_rotary_factor"] as? NSNumber ?? text["partial_rotary_factor"] as? NSNumber)?.doubleValue
-        return RopeConfig(base: theta.floatValue, partialFactor: factor ?? 1)
+        return RopeConfig(base: theta.floatValue, partialFactor: factor ?? 1, proportional: kind == "proportional")
     }
 
     static func layerKV(_ cache: GaugeRoPECaptureCache, layer: Int, rope: RopeConfig) throws -> GaugeRoPELayerKV {
         guard let keys = cache.keys, let values = cache.values, !cache.queries.isEmpty else {
-            throw StepFailure(description: "layer \(layer) captured no attention call")
+            throw StepFailure(description: "layer \(layer) captured no attention call: the model attends outside the cache after update(keys:values:), as Gemma 4 does, so its queries need a forward probe")
         }
-        let k = keys[0].transposed(1, 0, 2).asType(.float32)
-        let rotary = Int(Double(k.dim(2)) * rope.partialFactor)
+        var k = keys[0].transposed(1, 0, 2).asType(.float32)
+        var q = concatenated(cache.queries, axis: 2)[0].asType(.float32)
+        let headDim = k.dim(2)
+        if let order = rope.order(headDim: headDim) {
+            (k, q) = (take(k, order, axis: -1), take(q, order, axis: -1))
+        }
+        let (rotary, base) = (rope.rotaryDims(headDim: headDim), rope.effectiveBase(headDim: headDim))
         return GaugeRoPELayerKV(
-            layer: layer, queries: concatenated(cache.queries, axis: 2)[0].asType(.float32), keysPost: k,
-            keysPre: GaugeRoPEArms.rope(k, rotaryDims: rotary, base: rope.base, inverse: true),
-            values: values[0].transposed(1, 0, 2).asType(.float32), scale: cache.scale, rotaryDims: rotary, ropeBase: rope.base)
+            layer: layer, queries: q, keysPost: k,
+            keysPre: GaugeRoPEArms.rope(k, rotaryDims: rotary, base: base, inverse: true),
+            values: values[0].transposed(1, 0, 2).asType(.float32), scale: cache.scale, rotaryDims: rotary, ropeBase: base)
     }
 
     static func capture(_ tokens: [Int], context: ModelContext, rope: RopeConfig) throws -> [GaugeRoPELayerKV] {
@@ -241,7 +264,7 @@ struct GaugeRoPERealModelTests {
         let log = try await ModelRunLog("gaugerope-s0", modelPath: path)
         defer { log.releaseGPU() }
         guard let rope = Self.ropeConfig(at: path) else {
-            return log.record("result", "GAUGEROPE refused: config.json has no default rope_type with rope_theta")
+            return log.record("result", "GAUGEROPE refused: config.json has no default or proportional rope_type with rope_theta")
         }
         let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0))
         try await log.step("load") { try await engine.load(modelPath: path) }
