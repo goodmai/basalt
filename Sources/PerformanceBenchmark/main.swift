@@ -64,6 +64,9 @@ struct Benchmark: AsyncParsableCommand {
     @Option(name: .customLong("quest-top-k"), help: "Experimental: decode attends to sinks, a recent window and this many 64-token blocks between them (Quest)")
     var questTopK: Int?
 
+    @Option(name: .customLong("rope-yarn"), help: "Extend a Qwen 3.5/3.6/3.8 context with YaRN by this factor; other models load with stock RoPE and a warning")
+    var ropeYarn: Double?
+
     @Flag(name: .customLong("experimental-kv-shared-row"), help: "Experimental: on Gemma 4 K=V global layers, store one 640-value row per KV head instead of 512 keys + 512 values (#645)")
     var kvSharedRow = false
 
@@ -271,6 +274,7 @@ extension Benchmark {
         configuration.kvHeadSplit = kvHeadSplit
         configuration.questTopK = questTopK
         configuration.kvSharedRow = kvSharedRow
+        configuration.ropeYarn = ropeYarn
         configuration.repetitionPenalty = repetitionPenalty
         (configuration.topK, configuration.minP, configuration.seed) = (topK, minP, seed)
         (configuration.speculativeLookup, configuration.speculativeRecycling) = (speculativeLookup, speculativeRecycling)

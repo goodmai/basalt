@@ -45,7 +45,7 @@ public enum ComposeSchema {
             Field("telemetry_confidence_every", .integer), Field("adaptive_thinking_budget", .boolean),
             Field("samplers", .boolean), Field("mtp_draft_head", .boolean),
             Field("expert_streaming", .boolean), Field("expert_cache_gb", .number),
-            Field("kv_head_split", .number), Field("quest_top_k", .integer),
+            Field("kv_head_split", .number), Field("quest_top_k", .integer), Field("rope_yarn", .number),
         ],
         "mcp": [
             Field("enabled", .boolean), Field("rest", .boolean), Field("research_tools", .boolean),

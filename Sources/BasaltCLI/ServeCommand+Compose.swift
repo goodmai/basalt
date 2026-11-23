@@ -59,6 +59,7 @@ extension ServeCommand {
         if expertStreaming.cacheGB == nil, let cacheGB = exp.expertCacheGB { expertStreaming.cacheGB = cacheGB }
         if kvCache.headSplit == nil, let split = exp.kvHeadSplit { kvCache.headSplit = split }
         if kvCache.questTopK == nil, let topK = exp.questTopK { kvCache.questTopK = topK }
+        if kvCache.ropeYarn == nil, let factor = exp.ropeYarn { kvCache.ropeYarn = factor }
     }
 
     private mutating func applyComposeMCP(_ specMCP: ComposeSpec.MCP) {

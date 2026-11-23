@@ -199,6 +199,7 @@ extension ServeConfigFile {
         "serve.kv.evict": .number("--kv-evict"),
         "serve.kv.head_split": .number("--kv-head-split"),
         "serve.kv.quest_top_k": .int("--quest-top-k"),
+        "serve.rope_yarn": .number("--rope-yarn"),
         "serve.prompt_cache.mb": .int("--prompt-cache-mb"),
         "serve.prompt_cache.disk_mb": .int("--prompt-cache-disk-mb"),
         "serve.prompt_cache.disk_days": .int("--prompt-cache-disk-days"),

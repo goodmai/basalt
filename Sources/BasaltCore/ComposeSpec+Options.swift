@@ -17,6 +17,7 @@ extension ComposeSpec {
         public var expertCacheGB: Double?
         public var kvHeadSplit: Double?
         public var questTopK: Int?
+        public var ropeYarn: Double?
 
         public init() {}
     }
@@ -54,6 +55,9 @@ extension ComposeSpec {
             if !(cacheGB > 0) || !cacheGB.isFinite {
                 issues.append(Issue("experimental.expert_cache_gb", "must be positive"))
             }
+        }
+        if let factor = experimental.ropeYarn, !(factor > 1 && factor <= 64) {
+            issues.append(Issue("experimental.rope_yarn", "must lie in (1, 64]"))
         }
         if let split = experimental.kvHeadSplit, !(0.05 ... 1).contains(split) {
             issues.append(Issue("experimental.kv_head_split", "must lie between 0.05 and 1"))
@@ -115,6 +119,7 @@ extension ComposeSpec {
         if let cacheGB = experimental.expertCacheGB { arguments += ["--expert-cache-gb", String(cacheGB)] }
         if let split = experimental.kvHeadSplit { arguments += ["--kv-head-split", String(split)] }
         if let topK = experimental.questTopK { arguments += ["--quest-top-k", String(topK)] }
+        if let factor = experimental.ropeYarn { arguments += ["--rope-yarn", String(factor)] }
         arguments += mcp.enable.flatMap { ["--mcp-enable", $0] }
         arguments += mcp.disable.flatMap { ["--mcp-disable", $0] }
         arguments += mcp.imageDirs.flatMap { ["--image-dir", ($0 as NSString).expandingTildeInPath] }
@@ -147,6 +152,7 @@ extension ComposeSpec {
              "experimental.expert_streaming is bound to the engine configuration at start"),
             (experimental.kvHeadSplit != next.experimental.kvHeadSplit, "experimental.kv_head_split is bound to the engine configuration at start"),
             (experimental.questTopK != next.experimental.questTopK, "experimental.quest_top_k is bound to the engine configuration at start"),
+            (experimental.ropeYarn != next.experimental.ropeYarn, "experimental.rope_yarn is bound to the model load at start"),
             (mcp != next.mcp, "mcp options are bound to the server transport at start"),
         ]
         return checks.first(where: \.0)?.1
