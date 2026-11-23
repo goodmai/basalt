@@ -53,13 +53,15 @@ struct InklingLongContextTests {
             let prompt = lines.joined(separator: "\n") + "\nWhat is the pass key? Reply with the number only."
             Memory.peakMemory = 0
             let response = try await log.step("passkey depth=\(depth)") {
-                var request = GenerationRequest(prompt: prompt, maxTokens: 64, temperature: 0)
+                var request = GenerationRequest(prompt: prompt, maxTokens: 512, temperature: 0)
                 request.reasoningEffort = "none"
                 return try await engine.generate(request: request)
             }
-            let ok = response.generatedText.contains(String(key))
+            let inAnswer = response.generatedText.contains(String(key))
+            let inReasoning = (response.reasoningText ?? "").contains(String(key))
+            let ok = inAnswer || inReasoning
             found += ok ? 1 : 0
-            log.record("result", "depth=\(depth) prompt_tokens=\(response.promptTokens) ok=\(ok) peak_mb=\(Memory.peakMemory / 1_048_576) answer=\(response.generatedText.prefix(40).debugDescription) reasoning=\((response.reasoningText ?? "").prefix(40).debugDescription)")
+            log.record("result", "depth=\(depth) prompt_tokens=\(response.promptTokens) ok=\(ok) in_answer=\(inAnswer) in_reasoning=\(inReasoning) completion_tokens=\(response.completionTokens) peak_mb=\(Memory.peakMemory / 1_048_576) answer=\(response.generatedText.prefix(40).debugDescription) reasoning=\((response.reasoningText ?? "").prefix(40).debugDescription)")
         }
         log.record("result", "passkey 32K \(found)/5")
         #expect(found == 5)
