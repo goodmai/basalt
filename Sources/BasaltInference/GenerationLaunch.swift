@@ -106,6 +106,13 @@ extension GenerateParameters {
         return reporting
     }
 
+    func capped(for model: any LanguageModel, promptTokens: Int) -> GenerateParameters {
+        guard let cap = (model as? Inkling2Model)?.prefillStepCap(keys: promptTokens) else { return self }
+        var capped = self
+        capped.prefill.stepSize = min(prefill.stepSize ?? PrefillParameters.defaultStepSize, cap)
+        return capped
+    }
+
     func paced(by pacer: PrefillPacer?) -> GenerateParameters {
         guard let pacer else { return self }
         var paced = self

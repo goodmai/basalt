@@ -118,14 +118,15 @@ public final class Inkling2Model: Module, LLMModel, LoRAModel {
     func draftFeatures(_ tokens: MLXArray, cache: [KVCache]?) -> (hidden: MLXArray, features: MLXArray) {
         let taps = Set(config.draftTaps ?? [config.visitOrder.count])
         let length = tokens.dim(-1)
-        guard length > Self.draftChunk else {
+        let chunkSize = min(Self.draftChunk, prefillStepCap(keys: (cache?.first?.offset ?? 0) + length) ?? Self.draftChunk)
+        guard length > chunkSize else {
             let output = model.languageModel.forward(tokens, cache: cache, capturing: taps)
             return (output.hidden, concatenated(output.captured, axis: -1))
         }
         var features = [MLXArray]()
         var last = tokens
-        for start in stride(from: 0, to: length, by: Self.draftChunk) {
-            let output = model.languageModel.forward(tokens[.ellipsis, start ..< min(start + Self.draftChunk, length)], cache: cache, capturing: taps)
+        for start in stride(from: 0, to: length, by: chunkSize) {
+            let output = model.languageModel.forward(tokens[.ellipsis, start ..< min(start + chunkSize, length)], cache: cache, capturing: taps)
             features.append(concatenated(output.captured, axis: -1))
             last = output.hidden[0..., (-1)..., 0...]
             eval([features.last!, last] + (cache ?? []).flatMap { $0.innerState() })
@@ -134,6 +135,13 @@ public final class Inkling2Model: Module, LLMModel, LoRAModel {
     }
 
     static let draftChunk = 512
+    static let maskBudgetBytes = 256 << 20
+    static let minimumPrefillStep = 64
+
+    func prefillStepCap(keys: Int) -> Int? {
+        let cap = max(Self.minimumPrefillStep, Self.maskBudgetBytes / (config.heads * max(keys, 1) * MemoryLayout<Float>.size))
+        return cap < PrefillParameters.defaultStepSize ? cap : nil
+    }
 
     func logits(_ hidden: MLXArray) -> MLXArray {
         let capped = tanh(vocabularyLogits(hidden).asType(.float32) / config.finalLogitSoftcap) * config.finalLogitSoftcap
