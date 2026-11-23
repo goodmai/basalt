@@ -1,6 +1,6 @@
 import Foundation
 
-public enum AdapterSource: Sendable, Equatable {
+public enum ServedAdapterSource: Sendable, Equatable {
     case directory(URL)
     case repository(String)
 
@@ -8,8 +8,8 @@ public enum AdapterSource: Sendable, Equatable {
         public let description: String
     }
 
-    public static func parse(_ specs: [String], fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws(Invalid) -> [String: AdapterSource] {
-        var sources: [String: AdapterSource] = [:]
+    public static func parse(_ specs: [String], fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws(Invalid) -> [String: ServedAdapterSource] {
+        var sources: [String: ServedAdapterSource] = [:]
         for spec in specs {
             let parts = spec.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else {
@@ -26,7 +26,7 @@ public enum AdapterSource: Sendable, Equatable {
         return present("adapter_config.json") && (present("adapter_model.safetensors") || present("adapters.safetensors"))
     }
 
-    static func source(_ value: String, fileExists: (String) -> Bool) -> AdapterSource {
+    static func source(_ value: String, fileExists: (String) -> Bool) -> ServedAdapterSource {
         let expanded = (value as NSString).expandingTildeInPath
         let pathLike = value.hasPrefix("/") || value.hasPrefix(".") || value.hasPrefix("~")
         let components = value.split(separator: "/", omittingEmptySubsequences: false)

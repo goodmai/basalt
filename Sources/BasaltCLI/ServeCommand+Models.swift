@@ -36,9 +36,9 @@ extension ServeCommand {
         }
     }
 
-    static func adapterSources(_ specs: [String]) throws -> [String: AdapterSource] {
-        do throws(AdapterSource.Invalid) {
-            return try AdapterSource.parse(specs)
+    static func adapterSources(_ specs: [String]) throws -> [String: ServedAdapterSource] {
+        do throws(ServedAdapterSource.Invalid) {
+            return try ServedAdapterSource.parse(specs)
         } catch {
             throw ValidationError(error.description)
         }
@@ -57,7 +57,7 @@ extension ServeCommand {
 
     func adapterDirectory(_ repo: String, name: String) async throws -> URL {
         let cached = ModelCache.cacheDir(for: repo)
-        if AdapterSource.isAdapterDirectory(cached) { return cached }
+        if ServedAdapterSource.isAdapterDirectory(cached) { return cached }
         log("Adapter \(bold(name)): \(repo) is not in the local cache. Downloading…")
         do {
             let directory = try await HuggingFaceHub(requireVerified: requireVerified).download(
