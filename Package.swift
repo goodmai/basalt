@@ -28,7 +28,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift",         from: "0.33.0"),
-        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "b1f801c827b9abae1882c0589e0af57ba2b9fae7"),
+        .package(url: "https://github.com/goodmai/mlx-swift-lm",      revision: "e9feb1ec03a79d69eba69373371650980cba463c"),
         .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.28.0"),
         .package(url: "https://github.com/apple/swift-argument-parser",    from: "1.8.2"),
         .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.12.0"),

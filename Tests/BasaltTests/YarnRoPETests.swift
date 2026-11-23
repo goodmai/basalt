@@ -103,4 +103,15 @@ struct YarnRoPETests {
         }
         _ = try TinyModel.make(.gemma4KEqV)
     }
+
+    @Test("The attention factor follows Hugging Face: an explicit attention_factor wins, mscale alone is ignored, mscale with mscale_all_dim is their ratio")
+    func attentionFactorRules() {
+        let plain = Float(0.1 * log(4.0) + 1)
+        #expect(abs(YarnScaling.attentionFactor(scalingFactor: 4) - plain) < 1e-6)
+        #expect(YarnScaling.attentionFactor(scalingFactor: 4, explicit: 1) == 1)
+        #expect(abs(YarnScaling.attentionFactor(scalingFactor: 4, mscale: 0.707) - plain) < 1e-6)
+        #expect(abs(YarnScaling.attentionFactor(scalingFactor: 4, mscale: 0.707, mscaleAllDim: 0.707) - 1) < 1e-6)
+        let parsed = YarnScaling.from(["rope_type": .string("yarn"), "factor": .float(4), "attention_factor": .float(1.25)], dimensions: 8, base: 1e7)
+        #expect(parsed?.attentionFactor == 1.25)
+    }
 }
