@@ -45,6 +45,7 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { false }
+    var adaptsDraftDepth: Bool { inner.adaptsDraftDepth }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 
@@ -81,6 +82,7 @@ final class ProbingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { inner.requiresGreedySampling }
+    var adaptsDraftDepth: Bool { inner.adaptsDraftDepth }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 
@@ -152,6 +154,9 @@ enum MTPSidecar {
         guard let url = file(in: directory) else { return nil }
         if let nemotron = target as? NemotronLightningModel {
             return try loadNemotron(url: url, target: nemotron)
+        }
+        if let inkling = target as? Inkling2Model {
+            return GreedyDraftingMTPDrafter(try Inkling2DSparkDraftModel.load(url: url, directory: directory, target: inkling))
         }
         guard target is Qwen35Model || target is Qwen35TextModel else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))

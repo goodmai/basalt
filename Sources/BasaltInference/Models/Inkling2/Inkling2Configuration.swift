@@ -45,6 +45,7 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
     var upSoftcap: Float
     var routeScale: Float
     var loop: Loop?
+    var draftTaps: [Int]?
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type", hiddenSize = "hidden_size", layers = "num_hidden_layers", vocabSize = "vocab_size"
@@ -57,7 +58,8 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
         case routeScale = "route_scale", loop = "loop_config"
     }
 
-    private enum Root: String, CodingKey { case textConfig = "text_config" }
+    private enum Root: String, CodingKey { case textConfig = "text_config", draft = "mtp_config" }
+    private enum DraftKeys: String, CodingKey { case taps = "target_layer_ids" }
 
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Root.self)
@@ -83,6 +85,7 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
         (gateSoftcap, upSoftcap) = (try c.decode(Float.self, forKey: .gateSoftcap), try c.decode(Float.self, forKey: .upSoftcap))
         routeScale = try c.decodeIfPresent(Float.self, forKey: .routeScale) ?? 1
         loop = try c.decodeIfPresent(Loop.self, forKey: .loop)
+        draftTaps = try root.contains(.draft) ? root.nestedContainer(keyedBy: DraftKeys.self, forKey: .draft).decodeIfPresent([Int].self, forKey: .taps) : nil
     }
 
     var globalLayers: [Int] {
@@ -107,6 +110,9 @@ struct Inkling2Configuration: Decodable, Sendable, Equatable {
             guard loop.coreStart >= 0, loop.coreStart < loop.coreEnd, loop.coreEnd <= layers, loop.numPasses >= 1, loop.gateRank > 0 else {
                 throw Invalid(description: "loop core \(loop.coreStart)..<\(loop.coreEnd) × \(loop.numPasses) passes in \(layers) layers")
             }
+        }
+        if let draftTaps, draftTaps.isEmpty || draftTaps != draftTaps.sorted() || !draftTaps.allSatisfy({ (0 ... visitOrder.count).contains($0) }) {
+            throw Invalid(description: "mtp_config.target_layer_ids \(draftTaps) outside 0...\(visitOrder.count) or unsorted")
         }
         return self
     }

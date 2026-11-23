@@ -16,6 +16,8 @@ final class Inkling2WindowKVCache: KVCache {
     var maxSize: Int? { window }
     var isTrimmable: Bool { firstPosition == 0 }
 
+    func isTrimmable(after positions: Int) -> Bool { positions >= 0 }
+
     func innerState() -> [MLXArray] { [keys, values].compactMap { $0 } }
 
     var state: [MLXArray] {
@@ -51,7 +53,7 @@ final class Inkling2WindowKVCache: KVCache {
         let visibleValues = self.values![0..., 0..., start..., 0...]
         let keyStart = firstPosition + start
         if held > 2 * window + length {
-            let keep = max(0, held - (window - 1))
+            let keep = max(0, held - (window - 1 + length))
             self.keys = self.keys![0..., 0..., keep..., 0...] + 0
             self.values = self.values![0..., 0..., keep..., 0...] + 0
             firstPosition += keep

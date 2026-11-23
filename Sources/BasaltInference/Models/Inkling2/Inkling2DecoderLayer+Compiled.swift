@@ -70,7 +70,7 @@ extension Inkling2DecoderLayer {
         postArgs += (index > 0 ? [blocks!] : []) + (messages.map { [$0] } ?? [])
         postArgs += [states[2] ?? zeros(hidden.dim(-1)), states[3] ?? zeros(hidden.dim(-1))]
         let post = postStep(hasMessages)(postArgs)
-        if let conv { (conv[0], conv[1], conv[2], conv[3]) = (pre[6], pre[7], post[2], post[3]) }
+        if let conv { Inkling2Ops.commit([pre[6], pre[7], post[2], post[3]], windows: nil, count: 1, to: conv) }
         return (post[0], post[1])
     }
 
