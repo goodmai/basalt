@@ -5,13 +5,13 @@ import Testing
 
 @Suite("--rope-yarn: staged config, fingerprint split, refusals that keep stock RoPE (#729 P1)")
 struct RopeYarnFlagTests {
-    static let qwen: [String: Any] = [
+    static var qwen: [String: Any] { [
         "model_type": "qwen3_5",
         "text_config": [
             "model_type": "qwen3_5_text", "max_position_embeddings": 262_144, "rope_theta": 10_000_000.0, "partial_rotary_factor": 0.25,
             "hidden_size": 64,
         ] as [String: Any],
-    ]
+    ] }
 
     static func directory(_ config: [String: Any]) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appending(path: "rope-yarn-\(UUID().uuidString)")
