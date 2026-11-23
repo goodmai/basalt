@@ -9,9 +9,10 @@ import Testing
 @Suite("Inkling 2 P2b: verify rounds of up to 8 tokens run the compiled step, match the eager graph and still rewind (#650, #228)", .serialized)
 struct InklingCompiledVerifyTests {
     static let prompt = (0 ..< 12).map { Int32(($0 * 29 + 5) % 250) }
-    static let round: [Int32] = [17, 200, 41, 9]
+    static let rounds: [Int: [Int32]] = [1: [17], 4: [17, 200, 41, 9], 8: [17, 200, 41, 9, 133, 61, 2, 99], 9: [17, 200, 41, 9, 133, 61, 2, 99, 250]]
 
-    static func run(eager: Bool, keep: Int?) throws -> (logits: MLXArray, next: MLXArray) {
+    static func run(eager: Bool, length: Int = 4, keep: Int?) throws -> (logits: MLXArray, next: MLXArray) {
+        let round = try #require(rounds[length])
         let model = try TinyModel.make(.inkling2Loop)
         let cache = try model.newCache(parameters: nil)
         _ = model(MLXArray(prompt)[.newAxis], cache: cache)
@@ -25,10 +26,10 @@ struct InklingCompiledVerifyTests {
         return (logits, next)
     }
 
-    @Test("A 4-token round through the compiled step gives the eager logits within 1e-4, with the same greedy ids")
-    func compiledMatchesEager() throws {
-        let compiled = try Self.run(eager: false, keep: nil)
-        let eager = try Self.run(eager: true, keep: nil)
+    @Test("Rounds of 1, 4 and 8 tokens through the compiled step, and 9 tokens past it on the eager path, give the eager logits within 1e-4, with the same greedy ids", arguments: [1, 4, 8, 9])
+    func compiledMatchesEager(length: Int) throws {
+        let compiled = try Self.run(eager: false, length: length, keep: nil)
+        let eager = try Self.run(eager: true, length: length, keep: nil)
         #expect(abs(compiled.logits - eager.logits).max().item(Float.self) < 1e-4)
         #expect(argMax(compiled.logits, axis: -1).asArray(Int32.self) == argMax(eager.logits, axis: -1).asArray(Int32.self))
         #expect(abs(compiled.next - eager.next).max().item(Float.self) < 1e-4)
