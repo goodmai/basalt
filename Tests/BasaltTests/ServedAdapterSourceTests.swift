@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import BasaltCore
+@testable import BasaltCLI
 
 @Suite("--adapter name=org/repo: a repo id is told apart from a directory, and a cached adapter is found by adapter_config.json (#675 P1)")
 struct ServedAdapterSourceTests {
@@ -41,5 +42,21 @@ struct ServedAdapterSourceTests {
         #expect(!ServedAdapterSource.isAdapterDirectory(directory))
         try Data("w".utf8).write(to: directory.appending(component: "adapter_model.safetensors"))
         #expect(ServedAdapterSource.isAdapterDirectory(directory))
+    }
+
+    @Test("serve resolves a directory as given and a cached org/repo to its snapshot; a malformed --adapter fails validation")
+    func serveResolvesSources() async throws {
+        let repo = "basalt-test/adapter-\(UUID().uuidString.prefix(8))"
+        let snapshot = ModelCache.cacheDir(for: repo)
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: snapshot.deletingLastPathComponent().deletingLastPathComponent()) }
+        try Data("{}".utf8).write(to: snapshot.appending(component: "adapter_config.json"))
+        try Data("w".utf8).write(to: snapshot.appending(component: "adapter_model.safetensors"))
+        let local = FileManager.default.temporaryDirectory.appending(path: "served-adapter-\(UUID().uuidString)")
+        let command = try ServeCommand.parse(["--adapter", "local=\(local.path)", "--adapter", "pi=\(repo)"])
+        let directories = try await command.adapterDirectories()
+        #expect(directories["local"] == local)
+        #expect(directories["pi"] == snapshot)
+        #expect(throws: (any Error).self) { _ = try ServeCommand.adapterSources(["broken"]) }
     }
 }
