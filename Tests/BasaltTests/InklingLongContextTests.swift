@@ -9,6 +9,7 @@ import Testing
 struct InklingLongContextTests {
     static let env = ProcessInfo.processInfo.environment
     static var modelPath: String? { env["BASALT_E2E"] == "1" ? env["BASALT_E2E_INKLING_MODEL_PATH"] : nil }
+    static var passkeyTokens: Int { Int(env["BASALT_E2E_PASSKEY_TOKENS"] ?? "") ?? 32_768 }
     static let filler = "The grass is green. The sky is blue. The sun is yellow. Here we go. There and back again."
 
     @Test("The cap leaves 4K prompts on the default 512-token chunk, cuts 32K to 85 rows, never goes under 64, and only applies to Inkling 2")
@@ -48,7 +49,7 @@ struct InklingLongContextTests {
         var found = 0
         for (index, depth) in [0.1, 0.3, 0.5, 0.7, 0.9].enumerated() {
             let key = 100_000 + (index * 137_911 + 32_768) % 900_000
-            var lines = Array(repeating: Self.filler, count: 1_500)
+            var lines = Array(repeating: Self.filler, count: Self.passkeyTokens * 1_500 / 32_768)
             lines.insert("The pass key is \(key). Remember it. \(key) is the pass key.", at: Int(Double(lines.count) * depth))
             let prompt = lines.joined(separator: "\n") + "\nWhat is the pass key? Reply with the number only."
             Memory.peakMemory = 0
@@ -63,7 +64,36 @@ struct InklingLongContextTests {
             found += ok ? 1 : 0
             log.record("result", "depth=\(depth) prompt_tokens=\(response.promptTokens) ok=\(ok) in_answer=\(inAnswer) in_reasoning=\(inReasoning) completion_tokens=\(response.completionTokens) peak_mb=\(Memory.peakMemory / 1_048_576) answer=\(response.generatedText.prefix(40).debugDescription) reasoning=\((response.reasoningText ?? "").prefix(40).debugDescription)")
         }
-        log.record("result", "passkey 32K \(found)/5")
+        log.record("result", "passkey \(Self.passkeyTokens) \(found)/5")
         #expect(found == 5)
+    }
+
+    @Test("On the real model an 8K prompt prefilled in 85-row chunks gives the last-token logits of 512-row chunks: the same top token and top-5, and a small max difference",
+          .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_INKLING_MODEL_PATH"))
+    func chunkingParity8K() async throws {
+        let path = try #require(Self.modelPath)
+        let log = try await ModelRunLog("inkling-chunking", modelPath: path)
+        let engine = MLXInferenceEngine()
+        try await engine.load(modelPath: path)
+        let container = try #require(await engine.container)
+        let text = Array(repeating: Self.filler, count: 370).joined(separator: "\n") + "\nThe pass key is 482917. What is the pass key?"
+        let report = try await container.perform(nonSendable: text) { context, text in
+            let tokens = MLXArray(context.tokenizer.encode(text: text, addSpecialTokens: true).map(Int32.init))[.newAxis]
+            func last(chunk: Int) throws -> MLXArray {
+                let cache = try context.model.newCache(parameters: nil)
+                var logits = tokens
+                for start in stride(from: 0, to: tokens.dim(1), by: chunk) {
+                    logits = context.model(tokens[0..., start ..< min(start + chunk, tokens.dim(1))], cache: cache)[0..., (-1)..., 0...]
+                    eval(logits)
+                }
+                return logits.reshaped(-1).asType(.float32)
+            }
+            let (a, b) = (try last(chunk: 512), try last(chunk: 85))
+            let topA = argSort(-a)[..<5].asArray(Int32.self), topB = argSort(-b)[..<5].asArray(Int32.self)
+            let line = "tokens=\(tokens.dim(1)) max_diff=\(abs(a - b).max().item(Float.self)) top5_512=\(topA) top5_85=\(topB)"
+            return (line, topA.first == topB.first && Set(topA) == Set(topB))
+        }
+        log.record("result", report.0)
+        #expect(report.1, "\(report.0)")
     }
 }
