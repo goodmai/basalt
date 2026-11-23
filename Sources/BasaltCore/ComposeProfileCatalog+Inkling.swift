@@ -4,7 +4,7 @@ extension ComposeProfileCatalog {
     static let inklingAgents: [V22ComposeSpecialist] = [
         inklingAgent(tier: .gb24, id: "24gb-agent-inkling", pack: "mlx-community/Inkling-2-Mini-oQ3e-mtp", peakGB: 16.5, context: "32K"),
         inklingAgent(tier: .gb36, id: "36gb-agent-inkling", pack: "mlx-community/Inkling-2-Mini-oQ3e-mtp", peakGB: 17.6, context: "64K"),
-        inklingAgent(tier: .gb48, id: "48gb-agent-inkling", pack: "mlx-community/Inkling-2-Mini-oQ3e-mtp", peakGB: 20.8, context: "128K"),
+        inklingAgent(tier: .gb48, id: "48gb-agent-inkling", pack: "mlx-community/Inkling-2-Mini-oQ3e-mtp", peakGB: 20.2, context: "128K"),
     ]
 
     private static func inklingAgent(tier: ComposeMemoryTier, id: String, pack: String, peakGB: Double, context: String) -> V22ComposeSpecialist {
