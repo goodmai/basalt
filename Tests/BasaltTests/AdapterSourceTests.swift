@@ -16,7 +16,7 @@ struct AdapterSourceTests {
         #expect(sources["shadow"] == .directory(URL(fileURLWithPath: "adapters/oc")))
     }
 
-    @Test("A missing name, a missing source, a repeated name and a deeper path are refused or kept as directories", arguments: ["=x/y", "pi=", "pi"])
+    @Test("A missing name, a missing source or no = sign is refused", arguments: ["=x/y", "pi=", "pi"])
     func invalid(spec: String) {
         #expect(throws: AdapterSource.Invalid.self) { try AdapterSource.parse([spec], fileExists: { _ in false }) }
     }
