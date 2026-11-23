@@ -11,7 +11,7 @@ final class Inkling2DSparkDraftModel: Module, StatefulMTPDrafterModel {
     let requiresSharedTargetKV = false
     let requiresPromptPrefill = true
     let requiresGreedySampling = true
-    let adaptsDraftDepth = false
+    let draftWidthCost: Double? = 0.27
 
     @ModuleInfo var layers: [Inkling2DSparkLayer]
     @ModuleInfo var norm: RMSNorm

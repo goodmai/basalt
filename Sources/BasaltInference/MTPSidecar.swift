@@ -45,7 +45,7 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { false }
-    var adaptsDraftDepth: Bool { inner.adaptsDraftDepth }
+    var draftWidthCost: Double? { inner.draftWidthCost }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 
@@ -82,7 +82,7 @@ final class ProbingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { inner.requiresGreedySampling }
-    var adaptsDraftDepth: Bool { inner.adaptsDraftDepth }
+    var draftWidthCost: Double? { inner.draftWidthCost }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 

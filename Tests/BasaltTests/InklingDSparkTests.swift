@@ -111,14 +111,14 @@ struct InklingDSparkTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let drafter = try #require(try MTPSidecar.load(directory: directory, target: target) as? GreedyDraftingMTPDrafter)
         let dspark = try #require(drafter.inner as? Inkling2DSparkDraftModel)
-        #expect(!drafter.adaptsDraftDepth && drafter.maximumBlockSize == 4)
+        #expect(drafter.draftWidthCost == 0.27 && drafter.maximumBlockSize == 4)
         let raw = try MLX.loadArrays(url: directory.appending(component: "mtp.safetensors"))
         let fold = matmul(target.lmHead.weight.asType(.float32), try #require(raw["markov_head.hidden_out.weight"]).asType(.float32))
         #expect(abs(dspark.markovHead.fold.weight.asType(.float32) - fold).max().item(Float.self) < 2e-2)
         #expect(throws: (any Error).self) { try MTPSidecar.load(directory: directory, target: try TinyModel.make(.inkling2Loop)) }
     }
 
-    @Test("DSpark drafts its whole block every round, and its drafts change nothing in the greedy or seeded output", arguments: [Float(0), 0.7])
+    @Test("DSpark drafts past one token a round under the depth policy, and its drafts change nothing in the greedy or seeded output", arguments: [Float(0), 0.7])
     func dsparkParity(temperature: Float) throws {
         let target = try Self.target()
         let directory = try Self.checkpoint(for: target)
@@ -130,7 +130,7 @@ struct InklingDSparkTests {
         #expect(run.iterator.passthroughReason == nil)
         let telemetry = try #require(run.iterator.speculativeDecodingTelemetry)
         #expect(telemetry.roundCount > 0)
-        #expect(telemetry.draftTokenCount >= 3 * telemetry.roundCount - 3)
+        #expect(telemetry.draftTokenCount > telemetry.roundCount)
     }
 
     @Test("Through the engine an Inkling 2 request drafts with DSpark, answers like one without it, and the capability table admits --mtp for Inkling 2")
@@ -151,5 +151,42 @@ struct InklingDSparkTests {
         let drafted = try await reply(mtp: true)
         #expect((drafted.draftTokens ?? 0) > 0)
         #expect(drafted.generatedText == plain.generatedText)
+    }
+
+    @Test("With a prompt cache the second identical request reuses the prefix and DSpark state and still answers like a fresh engine without --mtp")
+    func cachedSecondTurn() async throws {
+        let target = try Self.target()
+        let directory = try Self.checkpoint(for: target)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func engine(mtp: Bool) async throws -> MLXInferenceEngine {
+            let engine = MLXInferenceEngine(EngineConfiguration(promptCacheBytes: 1 << 26, seed: 11, mtp: mtp))
+            let container = ModelContainer(context: ModelContext(
+                configuration: ModelConfiguration(id: "tiny-inkling2-dspark"), model: try Self.target(), processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
+            await engine.attach(container)
+            if mtp { await engine.useMTPDrafter(in: container) { try? MTPSidecar.load(directory: directory, target: $0.model) } }
+            return engine
+        }
+        let request = greedy(Conversation.firstTurn, key: "agent", maxTokens: 32)
+        let plain = try await engine(mtp: false).generate(request: request)
+        let drafting = try await engine(mtp: true)
+        let first = try await drafting.generate(request: request)
+        let second = try await drafting.generate(request: request)
+        #expect(first.generatedText == plain.generatedText)
+        #expect(second.cachedPromptTokens > 0)
+        #expect((second.draftTokens ?? 0) > 0)
+        #expect(second.generatedText == plain.generatedText)
+    }
+
+    @Test("The depth policy starts at two drafts at DSpark's width cost, widens to the block when every draft is accepted, and drops to one when none is")
+    func depthPolicy() {
+        var policy = MTPDraftDepthPolicy(widthCost: 0.27, maximumDepth: 7)
+        #expect(policy.depth(maximum: 7) == 2)
+        var greedy = policy
+        for _ in 0 ..< 40 { greedy.record(drafted: greedy.depth(maximum: 7), accepted: greedy.depth(maximum: 7)) }
+        #expect(greedy.depth(maximum: 7) == 7)
+        #expect(greedy.depth(maximum: 3) == 3)
+        for _ in 0 ..< 40 { policy.record(drafted: policy.depth(maximum: 7), accepted: 0) }
+        #expect(policy.depth(maximum: 7) == 1)
+        #expect(policy.acceptance(at: 0) < 0.1)
     }
 }
