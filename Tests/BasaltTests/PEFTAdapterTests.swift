@@ -111,8 +111,8 @@ struct PEFTAdapterTests {
         #expect(configuration.refusal == nil)
     }
 
-    @Test("DoRA, modules_to_save, rank_pattern, a key with no layer, a lone lora_A and a wrong rank are refused with the reason", arguments: [
-        "dora", "save", "pattern", "unmatched", "lone", "rank",
+    @Test("DoRA, modules_to_save, rank_pattern, a base-changing init, a zero alpha, a key with no layer, a lone lora_A and a wrong rank are refused with the reason", arguments: [
+        "dora", "save", "pattern", "pissa", "alpha", "unmatched", "lone", "rank",
     ])
     func refusals(case name: String) throws {
         let model = try TinyModel.make(.qwen35)
@@ -122,6 +122,8 @@ struct PEFTAdapterTests {
         case "dora": config = config.replacingOccurrences(of: #""use_dora": false"#, with: #""use_dora": true"#)
         case "save": config = config.replacingOccurrences(of: #""modules_to_save": null"#, with: #""modules_to_save": ["lm_head"]"#)
         case "pattern": config = config.replacingOccurrences(of: #""rank_pattern": {}"#, with: #""rank_pattern": {"q_proj": 8}"#)
+        case "pissa": config = Self.config(extra: #", "init_lora_weights": "pissa_niter_4""#)
+        case "alpha": config = Self.config(alpha: 0)
         case "unmatched": pairs[0] = Pair(path: "model.layers.99.mlp.down_proj", a: pairs[0].a, b: pairs[0].b)
         case "rank": pairs[0] = Pair(path: pairs[0].path, a: MLXArray.zeros([Self.rank + 1, pairs[0].a.dim(1)]), b: MLXArray.zeros([pairs[0].b.dim(0), Self.rank + 1]))
         default: break
@@ -135,7 +137,8 @@ struct PEFTAdapterTests {
             try save(arrays: arrays, url: directory.appending(component: PEFTLoRAReader.weightsFile))
         }
         defer { try? FileManager.default.removeItem(at: directory) }
-        let expected = ["dora": "use_dora", "save": "modules_to_save", "pattern": "rank_pattern", "unmatched": "belongs to no linear layer", "lone": "only one of lora_A and lora_B", "rank": "has shape"][name]!
+        let expected = ["dora": "use_dora", "save": "modules_to_save", "pattern": "rank_pattern", "unmatched": "belongs to no linear layer", "lone": "only one of lora_A and lora_B", "rank": "has shape",
+            "pissa": "init_lora_weights", "alpha": "must be positive"][name]!
         #expect {
             try MLXInferenceEngine.attachAnyAdapterDirectory(directory, to: model)
         } throws: { error in
@@ -161,5 +164,26 @@ struct PEFTAdapterTests {
         #expect(adapted.generatedText == merged.generatedText)
         #expect(adapted.generatedText != base.generatedText)
         #expect(try await orchestrator.generate(request: greedy(Conversation.firstTurn, key: nil)).generatedText == base.generatedText)
+    }
+
+    @Test("LoRA weights take the layer's float type: the weight's for a dense layer, the affine scales' for a quantized one, and bfloat16 where the scales are uint8 (mxfp4, mxfp8, nvfp4)")
+    func computeTypes() {
+        #expect(PEFTLoRAReader.computeType(of: Linear(64, 32)) == .float32)
+        let affine = QuantizedLinear(weight: MLXArray.zeros([32, 8], dtype: .uint32), bias: nil, scales: MLXArray.zeros([32, 2], dtype: .float16), biases: MLXArray.zeros([32, 2], dtype: .float16), groupSize: 32, bits: 4)
+        #expect(PEFTLoRAReader.computeType(of: affine) == .float16)
+        let microscaled = QuantizedLinear(weight: MLXArray.zeros([32, 8], dtype: .uint32), bias: nil, scales: MLXArray.zeros([32, 2], dtype: .uint8), biases: nil, groupSize: 32, bits: 4, mode: .mxfp4)
+        #expect(PEFTLoRAReader.computeType(of: microscaled) == .bfloat16)
+    }
+
+    @Test("A config without lora_alpha and an unreadable weights file give different reasons")
+    func separateReasons() throws {
+        let model = try TinyModel.make(.qwen35)
+        let directory = try Self.directory(Self.pairs(model, family: .qwen35), config: #"{"peft_type": "LORA", "r": 4}"#)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(throws: PEFTLoRAReader.Refused.self) { try PEFTLoRAReader.container(at: directory, for: model) }
+        do throws(PEFTLoRAReader.Refused) { _ = try PEFTLoRAReader.container(at: directory, for: model) } catch { #expect(error.reason.contains("adapter_config.json")) }
+        try Data(Self.config().utf8).write(to: directory.appending(component: "adapter_config.json"))
+        try Data("x".utf8).write(to: directory.appending(component: PEFTLoRAReader.weightsFile))
+        do throws(PEFTLoRAReader.Refused) { _ = try PEFTLoRAReader.container(at: directory, for: model) } catch { #expect(error.reason.contains(PEFTLoRAReader.weightsFile)) }
     }
 }
