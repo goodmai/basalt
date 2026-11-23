@@ -396,6 +396,7 @@ On launch, `Basalt.app` detects physical unified memory (`ComposeMemoryTier.dete
 - `docs/examples/compose/mac-16gb.yaml`: Ornith 9B local, OCR on demand, long prompts to Claude Haiku within $0.50 a day.
 - `docs/examples/compose/mac-24gb.yaml`: Gemma 4 12B, OCR on demand, code to Haiku, a second `support` pipeline, $1 a day in total.
 - `docs/examples/compose/mac-64gb.yaml`: Gemma 4 26B-A4B with Qwen3.8-27B and Nemotron Transcribe on demand, no cloud answers.
+- `docs/examples/compose/translate.yaml`: specialized local translation stack (`TranslateGemma 4B/12B/27B` + on-demand `HY-MT1.5 1.8B/7B` for CJK and Southeast Asian languages including Japanese, Korean, and Indonesian), with named `cjk` and `fast` pipelines and adaptive 16/24/64 GB profiles.
 - `docs/examples/compose/document-qa-cloud.yaml`, `mom.yaml` and `too-big.yaml`: the files behind the measurements below.
 
 More measurements are in #412.

@@ -1,0 +1,52 @@
+version: 2
+name: translate-docs
+memory: auto
+
+variables:
+  gemma_repo: mlx-community/translategemma-12b-it-4bit
+  hymt_repo: mlx-community/HY-MT1.5-7B-4bit
+
+profiles:
+  mac-16gb:
+    when: { memory_gb: { under: 20 } }
+    variables:
+      gemma_repo: mlx-community/translategemma-4b-it-4bit
+      hymt_repo: mlx-community/HY-MT1.5-1.8B-4bit
+  mac-64gb:
+    when: { memory_gb: { over: 48 } }
+    variables:
+      gemma_repo: mlx-community/translategemma-27b-it-4bit
+      hymt_repo: mlx-community/HY-MT1.5-7B-8bit
+
+models:
+  gemma:
+    source: ${gemma_repo}
+  hymt:
+    source: ${hymt_repo}
+    keep: on-demand
+    idle_unload: 5m
+  draft:
+    source: mlx-community/HY-MT1.5-1.8B-4bit
+    keep: on-demand
+    idle_unload: 2m
+
+pipeline:
+  answer:
+    routes:
+      - model: gemma
+
+pipelines:
+  cjk:
+    answer:
+      routes:
+        - when: { prompt_tokens: { over: 1 } }
+          model: hymt
+          fallback: gemma
+        - model: gemma
+  fast:
+    answer:
+      routes:
+        - when: { prompt_tokens: { over: 1 } }
+          model: draft
+          fallback: gemma
+        - model: gemma
