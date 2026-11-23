@@ -109,12 +109,12 @@ enum GaugeRoPEByteBudget {
     }
 }
 
-@Suite("GaugeRoPE S0 spike: iso-frequency RoPE equivariance, full-rank exactness, MLA-split baseline, and byte budgets (#647)")
+@Suite("GaugeRoPE S0 spike: iso-frequency RoPE equivariance, full-rank exactness, MLA-split baseline, and byte budgets (#647)", .serialized)
 struct GaugeRoPESpikeTests {
     private static func applyRoPE(_ x: MLXArray, rotaryDims: Int, offset: Int, base: Float = 10_000.0) -> MLXArray {
         let seq = x.dim(0)
         let half = rotaryDims / 2
-        let invFreq = MLX.exp(MLXArray(0 ..< half).asType(.float32) * (-log(base) / Float(rotaryDims)))
+        let invFreq = MLX.exp(MLXArray(0 ..< half).asType(.float32) * (-2.0 * log(base) / Float(rotaryDims)))
         let positions = MLXArray(offset ..< (offset + seq)).asType(.float32).reshaped([seq, 1])
         let angles = matmul(positions, invFreq.reshaped([1, half]))
         let cosA = MLX.cos(angles).reshaped([seq, 1, half])
@@ -128,6 +128,7 @@ struct GaugeRoPESpikeTests {
 
     @Test("GaugeRoPE iso-frequency carrier commutes exactly with RoPE across positions 0...4096")
     func carrierCommutesWithRoPE() {
+        MLXRandom.seed(6470)
         let keys = MLXRandom.normal([64, 4, 64], dtype: .float32)
         let carrier = GaugeRoPECarrier.calibrate(preRopeKeys: keys, rotaryDims: 64, carrierHeads: 2)
 
@@ -142,6 +143,7 @@ struct GaugeRoPESpikeTests {
 
     @Test("Full-rank GaugeRoPE carrier and joint RKV codec reconstruct pre-RoPE K and V exactly")
     func fullRankExactReconstruction() {
+        MLXRandom.seed(6471)
         let seq = 32
         let heads = 4
         let headDim = 64
@@ -166,6 +168,7 @@ struct GaugeRoPESpikeTests {
 
     @Test("Reduced-rank GaugeRoPE vs MLA-split reconstruction error improves monotonically with rank and hits 0.6x/0.45x/0.3x k8v4 budgets")
     func reducedRankAndByteBudgets() {
+        MLXRandom.seed(6472)
         let k8v4 = GaugeRoPEByteBudget.k8v4BytesPerToken(layers: 16, kvHeads: 4, headDim: 256)
         #expect(k8v4 > 25_000 && k8v4 < 28_000)
         for targetRatio in [0.6, 0.45, 0.3] {
