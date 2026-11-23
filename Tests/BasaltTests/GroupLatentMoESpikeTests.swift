@@ -3,7 +3,7 @@ import MLX
 import Testing
 @testable import BasaltInference
 
-private struct GroupLatentBudget: Sendable {
+struct GroupLatentBudget: Sendable {
     let model: String
     let hiddenDim: Int
     let numExperts: Int
@@ -248,7 +248,7 @@ private enum GroupLatentSafetensorsProbe {
     }
 }
 
-private struct GroupLatentBudgetCase: Sendable {
+struct GroupLatentBudgetCase: Sendable {
     let budget: GroupLatentBudget
     let expectedRatio: Double
 }
