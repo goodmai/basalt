@@ -6,7 +6,7 @@ import Testing
 @testable import BasaltCore
 @testable import BasaltInference
 
-struct GaugeRoPECarrier: Sendable {
+struct GaugeRoPECarrier {
     let basisPerFrequency: [MLXArray]
     let rotaryDims: Int
     let numKVHeads: Int
@@ -70,7 +70,7 @@ struct GaugeRoPECarrier: Sendable {
     }
 }
 
-struct JointPCACodec: Sendable {
+struct JointPCACodec {
     let basis: MLXArray
     let rank: Int
 
