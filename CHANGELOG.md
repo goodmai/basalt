@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Inkling 2 Mini
+- **Tool calls, reasoning and agent turns.** Inkling 2 serves through `/v1/chat/completions` and `/v1/messages`, with:
+  - its message frames split into reasoning, text and JSON tool calls (#686);
+  - a second agent turn that reuses the first turn's prompt cache, with window and conv states restored bit for bit (#712).
+- **`--mtp` drafts with the checkpoint's DSpark head** (`mtp.safetensors`, #728). On `mlx-community/Inkling-2-Mini-oQ3e-mtp` (M4 Pro, 24 GB, 256 tokens), decode goes 28.0 → 49.8 tok/s on code at T 0 and 26.8 → 38.4 at T 0.7, and stays even with plain decoding on prose. Each round's draft depth follows how many drafts were accepted so far.
+- **`basalt fit` and Compose.**
+  - `basalt fit` ranks the oQ2.5e, oQ3e and oQ4e packs.
+  - New Compose profiles: `24gb-agent-inkling` (oQ3e, 32K context), and `36gb-agent-inkling` and `48gb-agent-inkling` (oQ4e).
+  - The mlx-community 4-bit pack (native NVFP4 experts) and the original ModelOpt checkpoint wait for per-expert `global_scale` and ModelOpt import (#677).
+
+### Adapters
+- PEFT LoRA adapters (`adapter_config.json` + `adapter_model.safetensors`, the format of the `harness-hub` adapters) load through `--adapter name=dir`, `X-Basalt-Adapter` and `adapter_apply`. This covers VLM-style keys and rsLoRA. DoRA, `modules_to_save` and per-layer rank patterns are refused with the field named (#730).
+
+### Fixes
+- Qwen 3.5/3.8 checkpoints that load through the multimodal path (`model_type: qwen3_5`) ignored a YaRN `rope_parameters` entry. They now apply it like the text path (#731).
+- A Gemma 4 config with a RoPE scaling type is refused at load, instead of rotating the dimensions p-RoPE leaves unrotated (#731).
+
 ## 0.12.0 — 2026-11-20
 
 ### Upgrading from 0.11.0

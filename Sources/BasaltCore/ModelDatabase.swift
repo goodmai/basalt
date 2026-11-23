@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ModelFamily: String, Codable, Sendable {
-    case qwen, gemma, llama, mistral, deepseek, muse
+    case qwen, gemma, llama, mistral, deepseek, muse, inkling
 }
 
 public enum ModelTask: String, Codable, Sendable {
@@ -244,6 +244,36 @@ public struct ModelDatabase: Sendable {
             spec: ModelDefinition.Spec(
                 ramMB: 20200, contextWindow: 131072, quantization: "oQ4e", quality: 0.96,
                 totalParameters: 30.0, activeParameters: 30.0)
+        ),
+        ModelDefinition(
+            id: "mlx-community/Inkling-2-Mini-oQ2.5e-mtp",
+            name: "Inkling 2 Mini (oQ2.5e, DSpark MTP)",
+            family: .inkling,
+            task: .code,
+            modality: .text,
+            spec: ModelDefinition.Spec(
+                ramMB: 11010, contextWindow: 262144, quantization: "oQ2.5e", quality: 0.89,
+                totalParameters: 26.0, activeParameters: 5.4)
+        ),
+        ModelDefinition(
+            id: "mlx-community/Inkling-2-Mini-oQ3e-mtp",
+            name: "Inkling 2 Mini (oQ3e, DSpark MTP)",
+            family: .inkling,
+            task: .code,
+            modality: .text,
+            spec: ModelDefinition.Spec(
+                ramMB: 13040, contextWindow: 262144, quantization: "oQ3e", quality: 0.91,
+                totalParameters: 26.0, activeParameters: 5.4)
+        ),
+        ModelDefinition(
+            id: "mlx-community/Inkling-2-Mini-oQ4e-mtp",
+            name: "Inkling 2 Mini (oQ4e, DSpark MTP)",
+            family: .inkling,
+            task: .code,
+            modality: .text,
+            spec: ModelDefinition.Spec(
+                ramMB: 16120, contextWindow: 262144, quantization: "oQ4e", quality: 0.92,
+                totalParameters: 26.0, activeParameters: 5.4)
         ),
         ModelDefinition(
             id: "meta-models/Muse-Glimmer-30B",
