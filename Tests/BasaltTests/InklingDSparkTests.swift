@@ -132,4 +132,24 @@ struct InklingDSparkTests {
         #expect(telemetry.roundCount > 0)
         #expect(telemetry.draftTokenCount >= 3 * telemetry.roundCount - 3)
     }
+
+    @Test("Through the engine an Inkling 2 request drafts with DSpark, answers like one without it, and the capability table admits --mtp for Inkling 2")
+    func engineDrafts() async throws {
+        #expect(ModelCapabilities.of(modelType: "inkling2_loop")?.allows(.mtp) == true)
+        let target = try Self.target()
+        let directory = try Self.checkpoint(for: target)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func reply(mtp: Bool) async throws -> GenerationResponse {
+            let engine = MLXInferenceEngine(EngineConfiguration(seed: 11, mtp: mtp))
+            let container = ModelContainer(context: ModelContext(
+                configuration: ModelConfiguration(id: "tiny-inkling2-dspark"), model: try Self.target(), processor: ByteInputProcessor(), tokenizer: ByteTokenizer()))
+            await engine.attach(container)
+            if mtp { await engine.useMTPDrafter(in: container) { try? MTPSidecar.load(directory: directory, target: $0.model) } }
+            return try await engine.generate(request: GenerationRequest(prompt: Conversation.firstTurn, maxTokens: 32, temperature: 0))
+        }
+        let plain = try await reply(mtp: false)
+        let drafted = try await reply(mtp: true)
+        #expect((drafted.draftTokens ?? 0) > 0)
+        #expect(drafted.generatedText == plain.generatedText)
+    }
 }
