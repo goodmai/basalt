@@ -139,7 +139,7 @@ public final class Inkling2Model: Module, LLMModel, LoRAModel {
     static let minimumPrefillStep = 64
 
     func prefillStepCap(keys: Int) -> Int? {
-        let cap = max(Self.minimumPrefillStep, Self.maskBudgetBytes / (config.heads * max(keys, 1) * MemoryLayout<Float>.size))
+        let cap = max(Self.minimumPrefillStep, Self.maskBudgetBytes / MemoryLayout<Float>.size / max(config.heads, 1) / max(keys, 1))
         return cap < PrefillParameters.defaultStepSize ? cap : nil
     }
 

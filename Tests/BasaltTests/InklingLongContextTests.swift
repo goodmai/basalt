@@ -18,6 +18,7 @@ struct InklingLongContextTests {
         let heads = model.config.heads
         #expect(model.prefillStepCap(keys: 4096 * 24 / heads) == nil)
         #expect(model.prefillStepCap(keys: 1 << 30) == Inkling2Model.minimumPrefillStep)
+        #expect(model.prefillStepCap(keys: Int.max) == Inkling2Model.minimumPrefillStep)
         let keys = 32_768 * 24 / heads
         #expect(model.prefillStepCap(keys: keys) == Inkling2Model.maskBudgetBytes / (heads * keys * 4))
         let parameters = GenerateParameters()
@@ -37,6 +38,7 @@ struct InklingLongContextTests {
             last = model(tokens[0..., start ..< min(start + Inkling2Model.minimumPrefillStep, 300)], cache: cache)[0..., (-1)..., 0...]
         }
         #expect(abs(last - whole).max().item(Float.self) < 1e-3)
+        #expect(argMax(last, axis: -1).asArray(Int32.self) == argMax(whole, axis: -1).asArray(Int32.self))
     }
 
     @Test("32K passkey at five depths on the real model, with the peak memory recorded (acceptance for P2c)",
