@@ -127,7 +127,11 @@ package struct ModelDeepCheck: Codable, Sendable {
                 weights[key].flatMap { $0.shape == shape ? nil : "shape mismatch \(key): checkpoint \($0.shape), model \(shape)" }
             }.sorted()
             let diff = missing + unexpected + mismatched
-            return diff.isEmpty ? [MLXInferenceEngine.briefly(error)] : diff
+            var problems = diff.isEmpty ? [MLXInferenceEngine.briefly(error)] : diff
+            if let ignored = quantization?.ignoredKeys, !ignored.isEmpty {
+                problems.append("config.json quantization keys ignored: \(ignored.joined(separator: ", "))")
+            }
+            return problems
         }
     }
 
