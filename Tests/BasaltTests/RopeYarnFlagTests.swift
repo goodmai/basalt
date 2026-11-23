@@ -38,16 +38,16 @@ struct RopeYarnFlagTests {
     }
 
     @Test("A config that already scales its RoPE, or names no native context, is refused")
-    func rewriteRefusals() {
+    func rewriteRefusals() throws {
         var yarn = Self.qwen
-        var text = yarn["text_config"] as! [String: Any]
+        var text = try #require(yarn["text_config"] as? [String: Any])
         text["rope_parameters"] = ["rope_type": "yarn", "factor": 4.0]
         yarn["text_config"] = text
         #expect(throws: RopeYarnStage.Refusal.self) { try RopeYarnStage.rewritten(yarn, factor: 2) }
         #expect(throws: RopeYarnStage.Refusal.self) { try RopeYarnStage.rewritten(["model_type": "qwen3_5_text"], factor: 2) }
     }
 
-    @Test("Staging writes the rewritten config beside symlinks to every other file, in a directory keyed by the source and factor, and the prompt-cache fingerprint differs from the source's")
+    @Test("Staging writes the rewritten config beside symlinks to every other file, keyed by the source and factor; an identical staging is reused in place, a stale one is replaced, no temporary directory is left behind, and the fingerprint differs from the source's")
     func stagedDirectory() throws {
         let source = try Self.directory(Self.qwen)
         let root = FileManager.default.temporaryDirectory.appending(path: "rope-yarn-root-\(UUID().uuidString)")
@@ -58,8 +58,14 @@ struct RopeYarnFlagTests {
         let link = try FileManager.default.destinationOfSymbolicLink(atPath: staged.directory.appending(component: "model.safetensors").path)
         #expect(URL(fileURLWithPath: link).resolvingSymlinksInPath() == source.appending(component: "model.safetensors").resolvingSymlinksInPath())
         #expect(PromptCacheDiskStore.fingerprint(modelDirectory: staged.directory) != PromptCacheDiskStore.fingerprint(modelDirectory: source))
+        let marker = try FileManager.default.attributesOfItem(atPath: staged.directory.path)[.systemFileNumber] as? Int
         let again = try RopeYarnStage.stage(directory: source, modelType: "qwen3_5", factor: 2, root: root)
         #expect(again.directory == staged.directory)
+        #expect(try FileManager.default.attributesOfItem(atPath: again.directory.path)[.systemFileNumber] as? Int == marker)
+        try Data("{}".utf8).write(to: staged.directory.appending(component: "config.json"))
+        _ = try RopeYarnStage.stage(directory: source, modelType: "qwen3_5", factor: 2, root: root)
+        #expect(try Data(contentsOf: staged.directory.appending(component: "config.json")) != Data("{}".utf8))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).count == 1)
         let text = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: staged.directory.appending(component: "config.json"))) as? [String: Any])["text_config"] as? [String: Any]
         #expect((text?["rope_parameters"] as? [String: Any])?["rope_theta"] as? Double == 10_000_000)
     }

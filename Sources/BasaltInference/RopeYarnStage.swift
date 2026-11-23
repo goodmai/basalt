@@ -60,16 +60,36 @@ enum RopeYarnStage {
         let (config, native, effective) = try rewritten(root0, factor: factor)
         let staging = stagingDirectory(for: directory, factor: factor, root: root)
         do {
-            let fm = FileManager.default
-            try? fm.removeItem(at: staging)
-            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
-            try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]).write(to: staging.appending(component: "config.json"))
-            for name in try fm.contentsOfDirectory(atPath: directory.path) where name != "config.json" && !name.hasPrefix(".") {
-                try fm.createSymbolicLink(at: staging.appending(component: name), withDestinationURL: directory.appending(component: name).resolvingSymlinksInPath())
-            }
+            try publish(config: JSONSerialization.data(withJSONObject: config, options: [.sortedKeys]), source: directory, at: staging)
         } catch {
             throw Refusal(reason: "the staged config could not be written to \(staging.path): \(error.localizedDescription)")
         }
         return Staged(directory: staging, nativeContext: native, effectiveContext: effective)
+    }
+
+    static func publish(config: Data, source: URL, at staging: URL) throws {
+        let fm = FileManager.default
+        let names = try fm.contentsOfDirectory(atPath: source.path).filter { $0 != "config.json" && !$0.hasPrefix(".") }
+        if matches(staging, config: config, names: names, source: source) { return }
+        try fm.createDirectory(at: staging.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let temporary = staging.deletingLastPathComponent().appending(component: "\(staging.lastPathComponent).\(UUID().uuidString)")
+        try fm.createDirectory(at: temporary, withIntermediateDirectories: false)
+        try config.write(to: temporary.appending(component: "config.json"))
+        for name in names {
+            try fm.createSymbolicLink(at: temporary.appending(component: name), withDestinationURL: source.appending(component: name).resolvingSymlinksInPath())
+        }
+        guard rename(temporary.path, staging.path) != 0 else { return }
+        if matches(staging, config: config, names: names, source: source) {
+            try? fm.removeItem(at: temporary)
+        } else {
+            _ = try fm.replaceItemAt(staging, withItemAt: temporary)
+        }
+    }
+
+    static func matches(_ staging: URL, config: Data, names: [String], source: URL) -> Bool {
+        guard (try? Data(contentsOf: staging.appending(component: "config.json"))) == config else { return false }
+        return names.allSatisfy { name in
+            staging.appending(component: name).resolvingSymlinksInPath() == source.appending(component: name).resolvingSymlinksInPath()
+        }
     }
 }
