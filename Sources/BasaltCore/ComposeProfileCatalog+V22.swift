@@ -18,7 +18,7 @@ extension ComposeProfileCatalog {
         make24GBVideoLingBot(),
         make36GBStudioEdit2K(),
         make64GBClusterDiLoCo(),
-    ]
+    ] + inklingAgents
 
     public static var v22YAML: [String: String] {
         Dictionary(uniqueKeysWithValues: v22Specialists.map { ($0.id, $0.yaml) })
