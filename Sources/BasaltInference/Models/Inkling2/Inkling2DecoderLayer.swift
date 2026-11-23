@@ -61,9 +61,11 @@ final class Inkling2DecoderLayer: Module {
     func callAsFunction(
         _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
     ) -> (MLXArray, MLXArray?) {
-        if hidden.dim(1) == 1, !training, let out = compiledDecode(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages) { return out }
+        if hidden.dim(1) <= Self.compiledRows, !training, let out = compiledDecode(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages) { return out }
         return eager(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages)
     }
+
+    static let compiledRows = 8
 
     func eager(
         _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
