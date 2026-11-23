@@ -174,6 +174,15 @@ struct PromptCacheTree {
         evict()
     }
 
+    @discardableResult
+    mutating func makeRoom(_ bytes: ByteCount) -> ByteCount {
+        let (budget, before) = (byteBudget, byteCount)
+        byteBudget = max(0, budget - bytes)
+        evict()
+        byteBudget = budget
+        return before - byteCount
+    }
+
     mutating func removeAll() {
         (roots, byteCount, leafCount, rowTemplates) = ([:], 0, 0, [:])
         tieredKV.reset(ramBudgetBytes: byteBudget.rawValue)

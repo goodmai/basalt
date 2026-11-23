@@ -184,6 +184,7 @@ extension MLXInferenceEngine {
                 promptCaches.revokeHit()
             }
         }
+        if Self.clearsBeforePrefill(newTokens: tokens.count - (lease?.reusedTokens ?? 0)) { clearForLongPrefill(tokens.count) }
         let fork = mediaEnd > 0 ? nil : namespace.map { promptCaches.storedPrefix(of: tokens, in: $0) }
         let reuse: (cache: PromptCache, reusedTokens: Int)? = switch lease {
         case let held?: (held.cache, held.reusedTokens)
@@ -191,6 +192,18 @@ extension MLXInferenceEngine {
         }
         try faults.check(.anchorOffsets)
         return CacheClaim(leaseID: hold(lease), reuse: reuse, mtpPrefix: storedPrefix, fork: fork)
+    }
+}
+
+extension MLXInferenceEngine {
+    static func clearsBeforePrefill(newTokens: Int) -> Bool {
+        newTokens >= MemoryDirective.longContextTokens
+    }
+
+    func clearForLongPrefill(_ promptTokens: Int) {
+        let dropped = promptCaches.makeRoom(promptCaches.byteBudget)
+        Memory.clearCache()
+        logger.info("Long prefill of \(promptTokens) tokens: dropped \(dropped.rawValue >> 20) MB of unpinned prompt cache and the MLX buffer cache for prefill scratch (#741)")
     }
 }
 
