@@ -1,6 +1,6 @@
 # モデル X-ray と研究ツール (#328)
 
-> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · **日本語** · [Deutsch](../de/research-tools.md)
+> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · **日本語** · [Deutsch](../de/research-tools.md) · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 Basalt の MCP サーバーは、読み込まれているモデルが何をしているかを可視化し、小規模で可逆的な実験を実行できます。読み取り専用の X-ray ツールは常に公開されます。実験用ツールは、サーバーを `basalt serve --mcp --research-tools` で起動した場合にのみ一覧表示され、呼び出しが受け付けられます。
 

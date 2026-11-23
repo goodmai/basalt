@@ -1,6 +1,6 @@
 # Mac 版 Basalt
 
-> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · **日本語** · [Deutsch](../de/mac-app.md)
+> Languages: [English](../../mac-app.md) · [Русский](../ru/mac-app.md) · [中文](../zh/mac-app.md) · [Español](../es/mac-app.md) · [Français](../fr/mac-app.md) · **日本語** · [Deutsch](../de/mac-app.md) · [한국어](../ko/mac-app.md) · [Bahasa Indonesia](../id/mac-app.md)
 
 Basalt 向けのネイティブアプリです。チャットウィンドウとモニター（Monitor）ウィンドウを備え、アプリ自身が起動・監視するローカルエンジン上で動作します。設計とフェーズ計画は #434 に記載されています。本ドキュメントはフェーズ 1 の内容です。
 

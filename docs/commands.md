@@ -1,6 +1,6 @@
 # Commands
 
-> Languages: **English** · [Русский](i18n/ru/commands.md) · [中文](i18n/zh/commands.md) · [Español](i18n/es/commands.md) · [Français](i18n/fr/commands.md) · [日本語](i18n/ja/commands.md) · [Deutsch](i18n/de/commands.md)
+> Languages: **English** · [Русский](i18n/ru/commands.md) · [中文](i18n/zh/commands.md) · [Español](i18n/es/commands.md) · [Français](i18n/fr/commands.md) · [日本語](i18n/ja/commands.md) · [Deutsch](i18n/de/commands.md) · [한국어](i18n/ko/commands.md) · [Bahasa Indonesia](i18n/id/commands.md)
 
 `basalt` with no subcommand starts `chat`.
 

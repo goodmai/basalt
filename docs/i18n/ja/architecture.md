@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-> Languages: [English](../../architecture.md) · [Русский](../ru/architecture.md) · [中文](../zh/architecture.md) · [Español](../es/architecture.md) · [Français](../fr/architecture.md) · **日本語** · [Deutsch](../de/architecture.md)
+> Languages: [English](../../architecture.md) · [Русский](../ru/architecture.md) · [中文](../zh/architecture.md) · [Español](../es/architecture.md) · [Français](../fr/architecture.md) · **日本語** · [Deutsch](../de/architecture.md) · [한국어](../ko/architecture.md) · [Bahasa Indonesia](../id/architecture.md)
 
 ```
 ┌──────────────────────────────────────────────────────┐

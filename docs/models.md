@@ -1,6 +1,6 @@
 # Models
 
-> Languages: **English** · [Русский](i18n/ru/models.md) · [中文](i18n/zh/models.md) · [Español](i18n/es/models.md) · [Français](i18n/fr/models.md) · [日本語](i18n/ja/models.md) · [Deutsch](i18n/de/models.md)
+> Languages: **English** · [Русский](i18n/ru/models.md) · [中文](i18n/zh/models.md) · [Español](i18n/es/models.md) · [Français](i18n/fr/models.md) · [日本語](i18n/ja/models.md) · [Deutsch](i18n/de/models.md) · [한국어](i18n/ko/models.md) · [Bahasa Indonesia](i18n/id/models.md)
 
 ## Verified Models
 

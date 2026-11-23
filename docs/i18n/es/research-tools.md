@@ -1,6 +1,6 @@
 # Radiografía del modelo y herramientas de investigación (#328)
 
-> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · **Español** · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md)
+> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · **Español** · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md) · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 El servidor MCP de Basalt puede mostrar qué está haciendo el modelo cargado y ejecutar experimentos pequeños y reversibles sobre él. Las herramientas de radiografía de solo lectura siempre aparecen listadas. Las herramientas de experimentación solo se listan y se aceptan cuando el servidor se inicia con `basalt serve --mcp --research-tools`.
 

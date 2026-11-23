@@ -1,6 +1,6 @@
 # Рентген модели и инструменты исследования (#328)
 
-> Languages: [English](../../research-tools.md) · **Русский** · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md)
+> Languages: [English](../../research-tools.md) · **Русский** · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md) · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 MCP-сервер Basalt позволяет наблюдать за тем, что делает загруженная модель, и проводить над ней небольшие обратимые эксперименты. Инструменты рентгена только для чтения доступны в списке всегда. Инструменты экспериментов перечисляются в списке и принимаются сервером только при запуске с флагами `basalt serve --mcp --research-tools`.
 

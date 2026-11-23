@@ -1,6 +1,6 @@
 # Model X-ray and research tools (#328)
 
-> Languages: **English** · [Русский](i18n/ru/research-tools.md) · [中文](i18n/zh/research-tools.md) · [Español](i18n/es/research-tools.md) · [Français](i18n/fr/research-tools.md) · [日本語](i18n/ja/research-tools.md) · [Deutsch](i18n/de/research-tools.md)
+> Languages: **English** · [Русский](i18n/ru/research-tools.md) · [中文](i18n/zh/research-tools.md) · [Español](i18n/es/research-tools.md) · [Français](i18n/fr/research-tools.md) · [日本語](i18n/ja/research-tools.md) · [Deutsch](i18n/de/research-tools.md) · [한국어](i18n/ko/research-tools.md) · [Bahasa Indonesia](i18n/id/research-tools.md)
 
 Basalt's MCP server can show what the loaded model is doing and run small, reversible experiments on it. The read-only X-ray tools are always listed. The experiment tools are listed and accepted only when the server starts with `basalt serve --mcp --research-tools`.
 

@@ -1,6 +1,6 @@
 # コマンド
 
-> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · [中文](../zh/commands.md) · [Español](../es/commands.md) · [Français](../fr/commands.md) · **日本語** · [Deutsch](../de/commands.md)
+> Languages: [English](../../commands.md) · [Русский](../ru/commands.md) · [中文](../zh/commands.md) · [Español](../es/commands.md) · [Français](../fr/commands.md) · **日本語** · [Deutsch](../de/commands.md) · [한국어](../ko/commands.md) · [Bahasa Indonesia](../id/commands.md)
 
 サブコマンドを指定せずに `basalt` を実行すると、`chat` が起動します。
 

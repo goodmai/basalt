@@ -1,6 +1,6 @@
 # インストール
 
-> Languages: [English](../../install.md) · [Русский](../ru/install.md) · [中文](../zh/install.md) · [Español](../es/install.md) · [Français](../fr/install.md) · **日本語** · [Deutsch](../de/install.md)
+> Languages: [English](../../install.md) · [Русский](../ru/install.md) · [中文](../zh/install.md) · [Español](../es/install.md) · [Français](../fr/install.md) · **日本語** · [Deutsch](../de/install.md) · [한국어](../ko/install.md) · [Bahasa Indonesia](../id/install.md)
 
 ## ビルド済みバイナリ（2 行、Xcode 不要）
 

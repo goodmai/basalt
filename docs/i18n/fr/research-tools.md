@@ -1,6 +1,6 @@
 # Radiographie du modèle (Model X-ray) et outils de recherche (#328)
 
-> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · **Français** · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md)
+> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · **Français** · [日本語](../ja/research-tools.md) · [Deutsch](../de/research-tools.md) · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 Le serveur MCP de Basalt peut montrer ce que fait le modèle chargé et exécuter de petites expériences réversibles sur celui-ci. Les outils d'inspection en lecture seule sont toujours listés. Les outils d'expérimentation ne sont listés et acceptés que lorsque le serveur démarre avec `basalt serve --mcp --research-tools`.
 

@@ -1,6 +1,6 @@
 # Features and benchmarks
 
-> Languages: **English** · [Русский](i18n/ru/benchmarks.md) · [中文](i18n/zh/benchmarks.md) · [Español](i18n/es/benchmarks.md) · [Français](i18n/fr/benchmarks.md) · [日本語](i18n/ja/benchmarks.md) · [Deutsch](i18n/de/benchmarks.md)
+> Languages: **English** · [Русский](i18n/ru/benchmarks.md) · [中文](i18n/zh/benchmarks.md) · [Español](i18n/es/benchmarks.md) · [Français](i18n/fr/benchmarks.md) · [日本語](i18n/ja/benchmarks.md) · [Deutsch](i18n/de/benchmarks.md) · [한국어](i18n/ko/benchmarks.md) · [Bahasa Indonesia](i18n/id/benchmarks.md)
 
 ## Features at a glance
 

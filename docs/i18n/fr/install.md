@@ -1,6 +1,6 @@
 # Installation
 
-> Languages: [English](../../install.md) · [Русский](../ru/install.md) · [中文](../zh/install.md) · [Español](../es/install.md) · **Français** · [日本語](../ja/install.md) · [Deutsch](../de/install.md)
+> Languages: [English](../../install.md) · [Русский](../ru/install.md) · [中文](../zh/install.md) · [Español](../es/install.md) · **Français** · [日本語](../ja/install.md) · [Deutsch](../de/install.md) · [한국어](../ko/install.md) · [Bahasa Indonesia](../id/install.md)
 
 ## Binaire précompilé (deux lignes, sans Xcode)
 

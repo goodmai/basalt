@@ -1,6 +1,6 @@
 # Облачные решения с Gemini Decision 1
 
-> Languages: [English](../../cloud-decisions.md) · **Русский** · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md)
+> Languages: [English](../../cloud-decisions.md) · **Русский** · [中文](../zh/cloud-decisions.md) · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md) · [한국어](../ko/cloud-decisions.md) · [Bahasa Indonesia](../id/cloud-decisions.md)
 
 Модель Google `gemini-decision-1` отвечает на вопросы System One (`noul`, `choice`, `score`) за один проход по тексту, изображениям, аудио, видео и PDF. Её сетевой формат совпадает с собственным форматом `/v1/systemone` в basalt, поэтому она работает как облачный этап перед локальной моделью принятия решений:
 

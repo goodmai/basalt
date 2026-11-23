@@ -1,6 +1,6 @@
 # Préréglages de pipeline et modes mémoire
 
-> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · **Français** · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md)
+> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · **Français** · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md) · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline` (MCP `basalt_pipeline`) exécute percevoir (OCR, parole) → décider (System One) → répondre (le modèle de chat) dans un seul processus. Un préréglage renseigne les options de `serve` pour un profil fourni ; toute option que vous passez explicitement prévaut :
 

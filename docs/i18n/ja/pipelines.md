@@ -1,6 +1,6 @@
 # パイプラインプリセットとメモリモード
 
-> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · **日本語** · [Deutsch](../de/pipelines.md)
+> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · **日本語** · [Deutsch](../de/pipelines.md) · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline`（MCP `basalt_pipeline`）は、知覚（OCR、音声認識）→ 判断（System One）→ 回答（チャットモデル）を 1 つのプロセス内で実行します。プリセットはあらかじめ用意されたプロファイルの serve フラグを自動的に設定しますが、明示的に指定したフラグが常に優先されます：
 

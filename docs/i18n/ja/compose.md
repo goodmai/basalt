@@ -1,6 +1,6 @@
 # basalt compose
 
-> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · [中文](../zh/compose.md) · [Español](../es/compose.md) · [Français](../fr/compose.md) · **日本語** · [Deutsch](../de/compose.md)
+> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · [中文](../zh/compose.md) · [Español](../es/compose.md) · [Français](../fr/compose.md) · **日本語** · [Deutsch](../de/compose.md) · [한국어](../ko/compose.md) · [Bahasa Indonesia](../id/compose.md)
 
 `basalt compose` は、1つの YAML ファイルに記述されたモデルシステムを提供します。このファイルには、ローカルモデルとクラウドモデルの一覧、およびそれぞれをメモリに保持する方法を記述します。また、それらの間でリクエストをルーティングするパイプラインも定義します。各パイプラインは perceive（OCR、音声認識）、decide（System One）、answer（チャットモデル）の順に処理を行います。これは、モデル向けの docker-compose ファイルのようなスタイルで構成された、モデルの組み合わせ（mixture of models）です。
 

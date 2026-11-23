@@ -1,6 +1,6 @@
 # basalt compose
 
-> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · [中文](../zh/compose.md) · **Español** · [Français](../fr/compose.md) · [日本語](../ja/compose.md) · [Deutsch](../de/compose.md)
+> Languages: [English](../../compose.md) · [Русский](../ru/compose.md) · [中文](../zh/compose.md) · **Español** · [Français](../fr/compose.md) · [日本語](../ja/compose.md) · [Deutsch](../de/compose.md) · [한국어](../ko/compose.md) · [Bahasa Indonesia](../id/compose.md)
 
 `basalt compose` sirve un sistema de modelos descrito en un único archivo YAML. El archivo enumera los modelos locales y en la nube, así como la forma en que cada uno se mantiene en memoria. También describe los pipelines que enrutan una solicitud entre ellos. Cada pipeline ejecuta primero la percepción (OCR, voz), luego la decisión (System One) y, por último, la respuesta (un modelo de chat). Se trata de una mezcla de modelos, al estilo de un archivo docker-compose para modelos.
 

@@ -1,6 +1,6 @@
 # Возможности и бенчмарки
 
-> Languages: [English](../../benchmarks.md) · **Русский** · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md)
+> Languages: [English](../../benchmarks.md) · **Русский** · [中文](../zh/benchmarks.md) · [Español](../es/benchmarks.md) · [Français](../fr/benchmarks.md) · [日本語](../ja/benchmarks.md) · [Deutsch](../de/benchmarks.md) · [한국어](../ko/benchmarks.md) · [Bahasa Indonesia](../id/benchmarks.md)
 
 ## Обзор возможностей
 

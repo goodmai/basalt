@@ -1,6 +1,6 @@
 # Пресеты конвейеров и режимы памяти
 
-> Languages: [English](../../pipelines.md) · **Русский** · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md)
+> Languages: [English](../../pipelines.md) · **Русский** · [中文](../zh/pipelines.md) · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md) · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline` (MCP `basalt_pipeline`) выполняет восприятие (OCR, речь) → принятие решения (System One) → ответ (чат-модель) в одном процессе. Пресет заполняет флаги `serve` для встроенного профиля; любой явно указанный вами флаг имеет приоритет:
 

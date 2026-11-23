@@ -1,6 +1,6 @@
 # Модели
 
-> Languages: [English](../../models.md) · **Русский** · [中文](../zh/models.md) · [Español](../es/models.md) · [Français](../fr/models.md) · [日本語](../ja/models.md) · [Deutsch](../de/models.md)
+> Languages: [English](../../models.md) · **Русский** · [中文](../zh/models.md) · [Español](../es/models.md) · [Français](../fr/models.md) · [日本語](../ja/models.md) · [Deutsch](../de/models.md) · [한국어](../ko/models.md) · [Bahasa Indonesia](../id/models.md)
 
 ## Проверенные модели
 

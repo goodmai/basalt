@@ -1,6 +1,6 @@
 # Basalt 的数学与科学研究基础
 
-> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · **中文** · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md)
+> Languages: [English](../../research-foundations.md) · [Русский](../ru/research-foundations.md) · **中文** · [Español](../es/research-foundations.md) · [Français](../fr/research-foundations.md) · [日本語](../ja/research-foundations.md) · [Deutsch](../de/research-foundations.md) · [한국어](../ko/research-foundations.md) · [Bahasa Indonesia](../id/research-foundations.md)
 
 Basalt 站在全球开放科学共同体的肩膀之上。Basalt 中的每一个 Metal 内核、量化编解码器、KV 缓存压缩器、投机采样验证器、认知门控（epistemic gate）以及后训练目标函数，均扎根于国际科研生态中经过同行评审的数学理论与开放获取预印本——横跨**北美、欧洲、中国、俄罗斯、韩国及日本**的学术与工程研究学派。
 

@@ -4,7 +4,7 @@
 
 > Apple Silicon 上で、オープンウェイト LLM、ニューラル音声、動画、OCR、画像モデルを推論サービング、学習、量子化、構成、解析できます。単一の Swift 6.4 バイナリが **OpenAI API、Anthropic API、MCP** に対応し、その上にネイティブの macOS 27 Liquid Glass アプリを備えています。実行時に Python は不要。明示的に指定しない限りクラウド通信も一切行いません。
 
-[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · **日本語** · [Deutsch](README.de.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
+[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · **日本語** · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
@@ -160,7 +160,7 @@ Swift 製 MLX ネイティブツールを増やしたい方は **Star** を押�
 
 ## ドキュメント
 
-> 翻訳済みドキュメントは `docs/i18n/` にあります: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/)。
+> 翻訳済みドキュメントは `docs/i18n/` にあります: [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/) · [한국어](docs/i18n/ko/) · [Bahasa Indonesia](docs/i18n/id/)。
 
 | トピック | ドキュメント |
 |---|---|

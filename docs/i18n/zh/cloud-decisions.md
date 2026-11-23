@@ -1,6 +1,6 @@
 # 使用 Gemini Decision 1 进行云端决策
 
-> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · **中文** · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md)
+> Languages: [English](../../cloud-decisions.md) · [Русский](../ru/cloud-decisions.md) · **中文** · [Español](../es/cloud-decisions.md) · [Français](../fr/cloud-decisions.md) · [日本語](../ja/cloud-decisions.md) · [Deutsch](../de/cloud-decisions.md) · [한국어](../ko/cloud-decisions.md) · [Bahasa Indonesia](../id/cloud-decisions.md)
 
 Google 的 `gemini-decision-1` 可以在单次前向推理中针对文本、图像、音频、视频和 PDF 回答 System One 问题（`noul`、`choice`、`score`）。它的通信协议格式与 basalt 自身的 `/v1/systemone` 一致，因此可以作为本地决策模型前置的云端决策阶段使用：
 

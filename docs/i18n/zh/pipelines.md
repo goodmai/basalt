@@ -1,6 +1,6 @@
 # 流水线预设与内存模式
 
-> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · **中文** · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md)
+> Languages: [English](../../pipelines.md) · [Русский](../ru/pipelines.md) · **中文** · [Español](../es/pipelines.md) · [Français](../fr/pipelines.md) · [日本語](../ja/pipelines.md) · [Deutsch](../de/pipelines.md) · [한국어](../ko/pipelines.md) · [Bahasa Indonesia](../id/pipelines.md)
 
 `/v1/pipeline`（MCP 工具为 `basalt_pipeline`）会在同一个进程中依次执行 感知（perceive：OCR、语音）→ 决策（decide：System One）→ 回答（answer：对话模型）。预设（preset）会为内置场景填充对应的 serve 参数；你显式传入的任何参数都会覆盖预设值：
 

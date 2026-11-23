@@ -1,6 +1,6 @@
 # Интеграции
 
-> Languages: [English](../../integrations.md) · **Русский** · [中文](../zh/integrations.md) · [Español](../es/integrations.md) · [Français](../fr/integrations.md) · [日本語](../ja/integrations.md) · [Deutsch](../de/integrations.md)
+> Languages: [English](../../integrations.md) · **Русский** · [中文](../zh/integrations.md) · [Español](../es/integrations.md) · [Français](../fr/integrations.md) · [日本語](../ja/integrations.md) · [Deutsch](../de/integrations.md) · [한국어](../ko/integrations.md) · [Bahasa Indonesia](../id/integrations.md)
 
 ## Использование в ваших инструментах
 

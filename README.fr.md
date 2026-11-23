@@ -4,7 +4,7 @@
 
 > Servez, entraînez, quantifiez, composez et disséquez des LLM ouverts, de la synthèse vocale neuronale, de la vidéo, de l'OCR et des modèles d'image sur Apple Silicon. Un seul binaire Swift 6.4 parle **l'API OpenAI, l'API Anthropic et MCP**, surmonté d'une application native macOS 27 Liquid Glass. Pas de Python à l'exécution. Pas de cloud, sauf si vous le demandez.
 
-[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français** · [日本語](README.ja.md) · [Deutsch](README.de.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
+[English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · **Français** · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
@@ -160,7 +160,7 @@ Les modèles locaux 4B–12B ne remplacent pas directement un modèle frontière
 
 ## Documentation
 
-> La documentation traduite est disponible sous `docs/i18n/` : [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/).
+> La documentation traduite est disponible sous `docs/i18n/` : [Русский](docs/i18n/ru/) · [中文](docs/i18n/zh/) · [Español](docs/i18n/es/) · [Français](docs/i18n/fr/) · [日本語](docs/i18n/ja/) · [Deutsch](docs/i18n/de/) · [한국어](docs/i18n/ko/) · [Bahasa Indonesia](docs/i18n/id/).
 
 | Sujet | Document |
 |---|---|

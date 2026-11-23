@@ -1,6 +1,6 @@
 # Model-X-Ray und Forschungswerkzeuge (#328)
 
-> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · **Deutsch**
+> Languages: [English](../../research-tools.md) · [Русский](../ru/research-tools.md) · [中文](../zh/research-tools.md) · [Español](../es/research-tools.md) · [Français](../fr/research-tools.md) · [日本語](../ja/research-tools.md) · **Deutsch** · [한국어](../ko/research-tools.md) · [Bahasa Indonesia](../id/research-tools.md)
 
 Der MCP-Server von Basalt kann zeigen, was das geladene Modell intern tut, und kleine, umkehrbare Experimente darauf ausführen. Die schreibgeschützten X-Ray-Werkzeuge sind immer aufgeführt. Die Experimentierwerkzeuge werden nur dann aufgeführt und akzeptiert, wenn der Server mit `basalt serve --mcp --research-tools` gestartet wurde.
 
