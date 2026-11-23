@@ -19,7 +19,7 @@ public struct EngineConfiguration: Sendable {
     public var speculativeLookup = false
     public var speculativeRecycling = false
     public var mtp = false
-    public var mtpBlockSize = 4
+    public var mtpBlockSize: Int?
     public var mtpDraftHead = false
     public var experimentalSamplers = false
     public var grammarJumpForward = false
@@ -44,7 +44,7 @@ extension EngineConfiguration {
     var normalized: EngineConfiguration {
         var configuration = self
         configuration.batchSlots = max(1, batchSlots)
-        configuration.mtpBlockSize = max(2, mtpBlockSize)
+        configuration.mtpBlockSize = mtpBlockSize.map { max(2, $0) }
         configuration.mobaTopK = max(1, mobaTopK)
         configuration.questTopK = questTopK.map { max(1, $0) }
         return configuration

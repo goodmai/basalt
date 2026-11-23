@@ -256,7 +256,7 @@ extension MLXInferenceEngine {
         return await useMTPDrafter(in: loaded) { context in
             do {
                 guard let drafter = try MTPSidecar.load(directory: directory, target: context.model, draftHead: draftHead) else {
-                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (Qwen3.5-family target plus mtp.safetensors); decoding stays plain")
+                    logger.warn("--mtp: \(modelPath) has no MTP head this build can use (a Qwen3.5-family, Nemotron Lightning or Inkling 2 target plus mtp.safetensors); decoding stays plain")
                     return nil
                 }
                 logger.info("MTP head loaded from \(MTPSidecar.file(in: directory)?.path ?? modelPath); requests without constraints, lookup or --kv-bits and prompts up to \(Self.mtpPromptLimit) tokens draft with it")

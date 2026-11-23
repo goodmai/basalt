@@ -78,7 +78,7 @@ extension MLXInferenceEngine {
             input: input, params: options.params.reportingPrefill.paced(by: options.pacer), components: options.components, tools: options.tools, context: context, started: .now)
         if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
-                MTPRequest(drafter: drafter, blockSize: options.mtpBlockSize, prefix: options.mtpPrefix), prompt: prompt,
+                MTPRequest(drafter: drafter, blockSize: options.mtpBlockSize ?? MTPSidecar.defaultBlockSize(for: drafter), prefix: options.mtpPrefix), prompt: prompt,
                 keepsCache: options.keepsCache)
         }
         guard options.keepsCache else {

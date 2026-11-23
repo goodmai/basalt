@@ -83,7 +83,7 @@ struct LaunchOptions {
     var mobaTopK = 8
     var kvPrecision: KVPrecision?
     var mtp = false
-    var mtpBlockSize = 4
+    var mtpBlockSize: Int?
     var mtpPrefix: MTPPrefix?
     var pacer: PrefillPacer?
     var kEqVRow: KEqVRowLayout?

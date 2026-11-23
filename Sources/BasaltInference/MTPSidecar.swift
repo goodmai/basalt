@@ -45,6 +45,7 @@ final class GreedyDraftingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { false }
+    var draftWidthCost: Double? { inner.draftWidthCost }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 
@@ -81,6 +82,7 @@ final class ProbingMTPDrafter: Module, StatefulMTPDrafterModel {
     var requiresSharedTargetKV: Bool { inner.requiresSharedTargetKV }
     var requiresPromptPrefill: Bool { inner.requiresPromptPrefill }
     var requiresGreedySampling: Bool { inner.requiresGreedySampling }
+    var draftWidthCost: Double? { inner.draftWidthCost }
 
     func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] { inner.sanitize(weights: weights) }
 
@@ -121,6 +123,10 @@ enum MTPSidecar {
         return ProbingMTPDrafter(stateful, probe: probe)
     }
 
+    static func defaultBlockSize(for drafter: any MTPDrafterModel) -> Int {
+        drafter.draftWidthCost == nil ? 4 : max(2, drafter.maximumBlockSize ?? 4)
+    }
+
     static func file(in directory: URL) -> URL? {
         let config = ModelCache.config(at: directory)
         let declared = (config?["mlx_lm_extra_tensors"] as? [String: Any])?["mtp_file"] as? String
@@ -152,6 +158,9 @@ enum MTPSidecar {
         guard let url = file(in: directory) else { return nil }
         if let nemotron = target as? NemotronLightningModel {
             return try loadNemotron(url: url, target: nemotron)
+        }
+        if let inkling = target as? Inkling2Model {
+            return GreedyDraftingMTPDrafter(try Inkling2DSparkDraftModel.load(url: url, directory: directory, target: inkling))
         }
         guard target is Qwen35Model || target is Qwen35TextModel else { return nil }
         let data = try Data(contentsOf: directory.appending(component: "config.json"))

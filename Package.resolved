@@ -42,7 +42,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/goodmai/mlx-swift-lm",
       "state" : {
-        "revision" : "70d019031cb38939283d6da7afcb320e3a111e61"
+        "revision" : "97ec6352fed69729f5c1e1574b9762bfeac99dbf"
       }
     },
     {

@@ -77,6 +77,14 @@ enum Inkling2Ops {
         let length = window.dim(1)
         return window[0..., (length - (kernel - 1))..., 0...] + 0
     }
+
+    static func commit(_ states: [MLXArray], windows: [MLXArray]?, count: Int, to conv: ArraysCache) {
+        guard let rewindable = conv as? ConvolutionStatesCache else {
+            for (slot, state) in states.enumerated() { conv[slot] = state }
+            return
+        }
+        rewindable.commit(states: states, windows: windows, count: count)
+    }
 }
 
 final class Inkling2DepthwiseWeight: Module {

@@ -88,9 +88,8 @@ final class Inkling2DecoderLayer: Module {
         let (afterMLP, mlpWindow) = postMLPConv(mlp(postAttentionNorm(x).asType(dtype)), state: states[3])
         states[3] = mlpWindow
         if let conv {
-            for (slot, window) in states.enumerated() {
-                if let window { conv[slot] = Inkling2Ops.convState(window, kernel: kernel) }
-            }
+            let windows = states.compactMap { $0 }
+            Inkling2Ops.commit(windows.map { Inkling2Ops.convState($0, kernel: kernel) }, windows: windows, count: hidden.dim(1), to: conv)
         }
         return (compiledResidual(residual, afterMLP), blocks)
     }
