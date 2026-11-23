@@ -8,9 +8,9 @@
   - a second agent turn that reuses the first turn's prompt cache, with window and conv states restored bit for bit (#712).
 - **`--mtp` drafts with the checkpoint's DSpark head** (`mtp.safetensors`, #728). On `mlx-community/Inkling-2-Mini-oQ3e-mtp` (M4 Pro, 24 GB, 256 tokens), decode goes 28.0 → 49.8 tok/s on code at T 0 and 26.8 → 38.4 at T 0.7, and stays even with plain decoding on prose. Each round's draft depth follows how many drafts were accepted so far.
 - **`basalt fit` and Compose.**
-  - `basalt fit` ranks the oQ2.5e, oQ3e and oQ4e packs.
-  - New Compose profiles: `24gb-agent-inkling` (oQ3e, 32K context), and `36gb-agent-inkling` and `48gb-agent-inkling` (oQ4e).
-  - The mlx-community 4-bit pack (native NVFP4 experts) and the original ModelOpt checkpoint wait for per-expert `global_scale` and ModelOpt import (#677).
+  - `basalt fit` ranks the oQ2.5e and oQ3e packs.
+  - New Compose profiles on oQ3e: `24gb-agent-inkling` (32K context), `36gb-agent-inkling` (64K) and `48gb-agent-inkling` (128K).
+  - The oQ4e and mlx-community 4-bit packs carry per-expert `global_scale`, and the original checkpoint is ModelOpt. They wait for #677 gaps 2 and 3.
 
 ### Adapters
 - PEFT LoRA adapters (`adapter_config.json` + `adapter_model.safetensors`, the format of the `harness-hub` adapters) load through `--adapter name=dir`, `X-Basalt-Adapter` and `adapter_apply`. This covers VLM-style keys and rsLoRA. DoRA, `modules_to_save` and per-layer rank patterns are refused with the field named (#730).

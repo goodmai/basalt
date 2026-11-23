@@ -6,9 +6,9 @@ import Testing
 struct InklingCatalogTests {
     static func gib(_ value: Double) -> ByteCount { ByteCount(Int64(value * 1_073_741_824)) }
 
-    @Test("basalt fit knows the oQ2.5e, oQ3e and oQ4e packs; oQ3e is a good fit on a 24 GB Mac's 18 GiB working set and a perfect one at 32 GiB")
+    @Test("basalt fit knows the oQ2.5e and oQ3e packs (oQ4e waits for #677 gap 2); oQ3e is a good fit on a 24 GB Mac's 18 GiB working set and a perfect one at 32 GiB")
     func fitCatalog() throws {
-        #expect(ModelDatabase.models(for: ModelFamily.inkling).map(\.quantization) == ["oQ2.5e", "oQ3e", "oQ4e"])
+        #expect(ModelDatabase.models(for: ModelFamily.inkling).map(\.quantization) == ["oQ2.5e", "oQ3e"])
         let oQ3e = try #require(ModelDatabase.find(id: "mlx-community/Inkling-2-Mini-oQ3e-mtp"))
         #expect(oQ3e.isMoE && oQ3e.task == .code)
         #expect(FitScorer.fitLevel(model: oQ3e, available: Self.gib(18), ramFit: 0.6) == .good)
@@ -18,8 +18,8 @@ struct InklingCatalogTests {
     @Test("Each Inkling agent profile resolves to its pack and tier, and parses with no ComposeSpec issues",
           arguments: [
             ("24gb-agent-inkling", "mlx-community/Inkling-2-Mini-oQ3e-mtp", ComposeMemoryTier.gb24),
-            ("36gb-agent-inkling", "mlx-community/Inkling-2-Mini-oQ4e-mtp", .gb36),
-            ("48gb-agent-inkling", "mlx-community/Inkling-2-Mini-oQ4e-mtp", .gb48),
+            ("36gb-agent-inkling", "mlx-community/Inkling-2-Mini-oQ3e-mtp", .gb36),
+            ("48gb-agent-inkling", "mlx-community/Inkling-2-Mini-oQ3e-mtp", .gb48),
           ])
     func composeProfiles(id: String, pack: String, tier: ComposeMemoryTier) throws {
         let profile = try #require(ComposeProfileCatalog.resolve(id: id))

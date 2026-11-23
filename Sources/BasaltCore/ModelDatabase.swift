@@ -266,16 +266,6 @@ public struct ModelDatabase: Sendable {
                 totalParameters: 26.0, activeParameters: 5.4)
         ),
         ModelDefinition(
-            id: "mlx-community/Inkling-2-Mini-oQ4e-mtp",
-            name: "Inkling 2 Mini (oQ4e, DSpark MTP)",
-            family: .inkling,
-            task: .code,
-            modality: .text,
-            spec: ModelDefinition.Spec(
-                ramMB: 16120, contextWindow: 262144, quantization: "oQ4e", quality: 0.92,
-                totalParameters: 26.0, activeParameters: 5.4)
-        ),
-        ModelDefinition(
             id: "meta-models/Muse-Glimmer-30B",
             name: "Meta Muse Glimmer 30B (Base BF16)",
             family: .muse,
