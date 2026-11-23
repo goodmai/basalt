@@ -50,3 +50,29 @@ pipelines:
           model: draft
           fallback: gemma
         - model: gemma
+
+benchmarks:
+  defaults:
+    seed: 42
+    temperature: 0.0
+  suites:
+    lite:
+      tasks:
+        - adapter: basalt:translation
+          target: model:gemma
+          params:
+            mode: lite
+            limit: 4
+            locales: ja,ko,id,ru
+          gates:
+            min_accuracy: 0.75
+    full:
+      tasks:
+        - adapter: basalt:translation
+          target: model:gemma
+          params:
+            mode: full
+            qe_mode: llm_judge
+            locales: ja,ko,id,ru,zh,de,es,fr
+          gates:
+            min_accuracy: 0.80

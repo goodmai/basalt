@@ -150,6 +150,7 @@ public struct BenchmarkAdapterRegistry: Sendable {
         BasaltPasskeyAdapter(),
         BasaltMoMAdapter(),
         BasaltHarnessAdapter(),
+        TranslationBenchmarkAdapter(),
         ARCAGIAdapter(id: "arc-agi", summary: "Pure-Swift ARC-AGI-1 2-attempt grid reasoner and exact-match scorer"),
         ARCAGIAdapter(id: "arc-agi-2", summary: "Pure-Swift ARC-AGI-2 2-attempt grid reasoner and exact-match scorer"),
         ExternalHarnessAdapter(id: "terminal-bench", summary: "Harbor / Terminal-Bench 2.0 ATIF v1.4 trajectory bridge", defaultSubmissionTarget: .terminalBench),

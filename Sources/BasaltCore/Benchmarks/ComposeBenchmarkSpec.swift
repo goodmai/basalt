@@ -84,7 +84,7 @@ public enum BenchmarkAdapterID {
     ]
 
     public static let pureSwift: Set<String> = [
-        "arc-agi", "arc-agi-2",
+        "arc-agi", "arc-agi-2", "basalt:translation",
     ]
 
     public static let externalHarnesses: Set<String> = [
