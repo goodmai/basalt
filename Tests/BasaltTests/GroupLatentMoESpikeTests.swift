@@ -1,378 +1,361 @@
 import Foundation
 import MLX
+import MLXLMCommon
+import MLXNN
 import Testing
 @testable import BasaltInference
 
-struct GroupLatentBudget: Sendable {
-    let model: String
-    let hiddenDim: Int
-    let numExperts: Int
-    let intermediateDim: Int
-    let latentDim: Int
+struct GroupLatentGrouping: Sendable, Equatable {
     let groups: Int
+    let labels: [Int]
+}
 
-    var denseExpertParams: Int {
-        3 * numExperts * intermediateDim * hiddenDim
-    }
+struct GroupLatentRow: Sendable {
+    let layer: Int
+    let side: String
+    let dim: Int
+    let energies: [[Float]]
 
-    var compressedExpertParams: Int {
-        3 * numExperts * intermediateDim * latentDim
-    }
-
-    var projectionOverheadParams: Int {
-        groups * 2 * hiddenDim * latentDim
-    }
-
-    var totalCompressedParams: Int {
-        compressedExpertParams + projectionOverheadParams
-    }
-
-    var compressionRatio: Double {
-        Double(denseExpertParams) / Double(totalCompressedParams)
+    var lines: [String] {
+        zip(GroupLatentSpectrum.groupCounts, energies).map { groups, kept in
+            "\(layer) | \(side) | \(dim) | \(groups) | " + kept.map { String(format: "%.4f", $0) }.joined(separator: " | ")
+        }
     }
 }
 
-private enum GroupLatentSpectrum {
-    static func whitenedRows(_ experts: [MLXArray], hessian: MLXArray, epsilonFloor: Float = 1e-10) -> (
-        whitened: [MLXArray], s: MLXArray, sInv: MLXArray
-    ) {
-        let (s, sInv) = InputWhitenedSVD.computeWhiteningPair(hessian: hessian, epsilonFloor: epsilonFloor)
-        let whitened = experts.map { matmul($0.asType(.float32), s) }
-        eval(whitened)
-        return (whitened, s, sInv)
+enum GroupLatentSpectrum {
+    static let groupCounts = [1, 4, 8]
+    static let latentRatios = [0.5, 0.7]
+    static let subspaceRank = 16
+
+    static func latentRanks(_ dim: Int) -> [Int] {
+        latentRatios.map { Int((Double(dim) * $0).rounded()) }
     }
 
-    static func subspaceSignatures(whitenedExperts: [MLXArray], subspaceRank: Int) -> [[Float]] {
-        whitenedExperts.map { mat in
-            let (_, _, vt) = MLXLinalg.svd(mat, stream: .cpu)
-            eval(vt)
-            let r = min(max(1, subspaceRank), vt.dim(0))
-            let vr = vt[0 ..< r, 0...]
-            let proj = matmul(vr.T, vr)
-            eval(proj)
-            let raw = proj.asArray(Float.self)
-            let norm = max(raw.reduce(Float(0)) { $0 + $1 * $1 }.squareRoot(), 1e-12)
-            return raw.map { $0 / norm }
-        }
+    static func energies(count: Int, dim: Int, key: MLXArray, rows: (Int) -> MLXArray) -> [[Float]] {
+        let found = groupings(count: count, dim: dim, rank: subspaceRank, key: key, rows: rows)
+        return retainedEnergy(found, dim: dim, ranks: latentRanks(dim), rows: rows)
     }
 
-    static func dot(_ a: [Float], _ b: [Float]) -> Float {
-        var acc: Float = 0
-        for i in 0 ..< a.count {
-            acc += a[i] * b[i]
+    static func groupings(count: Int, dim: Int, rank: Int, key: MLXArray, rows: (Int) -> MLXArray) -> [GroupLatentGrouping] {
+        let r = min(max(1, rank), dim)
+        let probe = MLXRandom.normal([dim, min(r + 8, dim)], key: key)
+        let bases = (0 ..< count).map { expert in
+            let basis = subspaceBasis(rows(expert), rank: r, probe: probe)
+            eval(basis)
+            return basis
         }
-        return acc
+        let similarity = subspaceSimilarity(bases)
+        eval(similarity)
+        return groupCounts.map { GroupLatentGrouping(groups: $0, labels: equalSizeKMeans(similarity: similarity, groups: $0)) }
     }
 
-    static func initializeCentroids(signatures: [[Float]], groups: Int) -> [[Float]] {
-        var centroids: [[Float]] = [signatures[0]]
-        while centroids.count < groups {
-            var bestIdx = 0
-            var lowestMaxSim = Float.greatestFiniteMagnitude
-            for (idx, sig) in signatures.enumerated() {
-                let maxSim = centroids.map { dot(sig, $0) }.max() ?? -1
-                if maxSim < lowestMaxSim {
-                    lowestMaxSim = maxSim
-                    bestIdx = idx
-                }
-            }
-            centroids.append(signatures[bestIdx])
-        }
-        return centroids
+    static func subspaceBasis(_ rows: MLXArray, rank: Int, probe: MLXArray) -> MLXArray {
+        let first = MLXLinalg.qr(matmul(rows.T, matmul(rows, probe)), stream: .cpu).0
+        let q = MLXLinalg.qr(matmul(rows.T, matmul(rows, first)), stream: .cpu).0
+        let projected = matmul(rows, q)
+        let vectors = MLXLinalg.eigh(matmul(projected.T, projected), stream: .cpu).1
+        let k = vectors.dim(1)
+        return matmul(q, vectors[0..., (k - rank) ..< k]).T
     }
 
-    static func balancedAssign(signatures: [[Float]], centroids: [[Float]]) -> [Int] {
-        let count = signatures.count
-        let groups = centroids.count
-        let baseCap = count / groups
-        let extra = count % groups
-        var remaining = (0 ..< groups).map { $0 < extra ? baseCap + 1 : baseCap }
-        let scored: [(idx: Int, sims: [(g: Int, sim: Float)], margin: Float)] = signatures.enumerated().map { idx, sig in
-            let ranked = centroids.enumerated().map { (g: $0.offset, sim: dot(sig, $0.element)) }
-                .sorted { $0.sim > $1.sim }
-            let margin = ranked.count > 1 ? ranked[0].sim - ranked[1].sim : ranked[0].sim
-            return (idx, ranked, margin)
-        }.sorted { $0.margin > $1.margin }
-
-        var labels = [Int](repeating: 0, count: count)
-        for item in scored {
-            if let chosen = item.sims.first(where: { remaining[$0.g] > 0 }) {
-                labels[item.idx] = chosen.g
-                remaining[chosen.g] -= 1
-            }
-        }
-        return labels
+    static func subspaceSimilarity(_ bases: [MLXArray]) -> MLXArray {
+        let (count, rank) = (bases.count, bases[0].dim(0))
+        let stacked = concatenated(bases, axis: 0)
+        let overlap = matmul(stacked, stacked.T)
+        return (overlap * overlap).reshaped(count, rank, count, rank).sum(axes: [1, 3])
     }
 
-    static func updateCentroids(signatures: [[Float]], labels: [Int], groups: Int, fallback: [[Float]]) -> [[Float]] {
-        let dim = signatures[0].count
-        var sums = [[Float]](repeating: [Float](repeating: 0, count: dim), count: groups)
-        var counts = [Int](repeating: 0, count: groups)
-        for (idx, sig) in signatures.enumerated() {
-            let g = labels[idx]
-            counts[g] += 1
-            for j in 0 ..< dim {
-                sums[g][j] += sig[j]
-            }
+    static func equalSizeKMeans(similarity: MLXArray, groups: Int, iterations: Int = 16) -> [Int] {
+        let count = similarity.dim(0)
+        guard groups > 1, count >= groups else { return [Int](repeating: 0, count: count) }
+        var centers = [0]
+        while centers.count < groups {
+            let nearest = similarity.take(MLXArray(centers.map { Int32($0) }), axis: 1).max(axis: 1)
+            centers.append(argMin(nearest).item(Int.self))
         }
-        return (0 ..< groups).map { g in
-            guard counts[g] > 0 else { return fallback[g] }
-            let norm = max(sums[g].reduce(Float(0)) { $0 + $1 * $1 }.squareRoot(), 1e-12)
-            return sums[g].map { $0 / norm }
-        }
-    }
-
-    static func equalSizeSubspaceKMeans(
-        whitenedExperts: [MLXArray],
-        groups: Int,
-        subspaceRank: Int,
-        iterations: Int = 8
-    ) -> [Int] {
-        let count = whitenedExperts.count
-        guard groups > 1, count >= groups else {
-            return [Int](repeating: 0, count: count)
-        }
-        let signatures = subspaceSignatures(whitenedExperts: whitenedExperts, subspaceRank: subspaceRank)
-        var centroids = initializeCentroids(signatures: signatures, groups: groups)
-        var labels = [Int](repeating: 0, count: count)
+        let toCenters = -similarity.take(MLXArray(centers.map { Int32($0) }), axis: 1)
+        var labels = balancedAssign(cost: toCenters.asArray(Float.self), groups: groups)
         for _ in 0 ..< iterations {
-            labels = balancedAssign(signatures: signatures, centroids: centroids)
-            centroids = updateCentroids(signatures: signatures, labels: labels, groups: groups, fallback: centroids)
+            let next = balancedAssign(cost: kernelCost(similarity, labels: labels, groups: groups), groups: groups)
+            if next == labels { break }
+            labels = next
         }
         return labels
     }
 
-    static func groupedRetainedEnergy(
-        whitenedExperts: [MLXArray],
-        groupLabels: [Int],
-        groups: Int,
-        rank: Int
-    ) -> Float {
-        var kept: Float = 0
+    static func kernelCost(_ similarity: MLXArray, labels: [Int], groups: Int) -> [Float] {
+        let ids = MLXArray(labels.map { Int32($0) }).reshaped(-1, 1)
+        let members = (ids .== MLXArray((0 ..< groups).map { Int32($0) }).reshaped(1, -1)).asType(.float32)
+        let sizes = maximum(members.sum(axis: 0), Float(1))
+        let toGroup = matmul(similarity, members)
+        let within = (members * toGroup).sum(axis: 0) / (sizes * sizes)
+        return (within.reshaped(1, -1) - toGroup * Float(2) / sizes.reshaped(1, -1)).asArray(Float.self)
+    }
+
+    static func balancedAssign(cost: [Float], groups: Int) -> [Int] {
+        let count = cost.count / groups
+        var capacity = (0 ..< groups).map { count / groups + ($0 < count % groups ? 1 : 0) }
+        let order = (0 ..< count).map { item -> (item: Int, ranked: [Int], margin: Float) in
+            let ranked = (0 ..< groups).sorted { cost[item * groups + $0] < cost[item * groups + $1] }
+            let margin = groups > 1 ? cost[item * groups + ranked[1]] - cost[item * groups + ranked[0]] : 0
+            return (item, ranked, margin)
+        }.sorted { $0.margin > $1.margin }
+        var labels = [Int](repeating: 0, count: count)
+        for entry in order {
+            guard let group = entry.ranked.first(where: { capacity[$0] > 0 }) else { continue }
+            labels[entry.item] = group
+            capacity[group] -= 1
+        }
+        return labels
+    }
+
+    static func retainedEnergy(_ groupings: [GroupLatentGrouping], dim: Int, ranks: [Int], rows: (Int) -> MLXArray) -> [[Float]] {
+        var grams = groupings.map { grouping in
+            (0 ..< grouping.groups).map { _ in MLXArray.zeros([dim, dim], dtype: .float32) }
+        }
+        for expert in 0 ..< (groupings.first?.labels.count ?? 0) {
+            let r = rows(expert)
+            let gram = matmul(r.T, r)
+            for (index, grouping) in groupings.enumerated() {
+                let group = grouping.labels[expert]
+                grams[index][group] = grams[index][group] + gram
+            }
+            eval(grams.flatMap { $0 })
+        }
+        return grams.map { spectrumEnergy($0, ranks: ranks) }
+    }
+
+    static func spectrumEnergy(_ grams: [MLXArray], ranks: [Int]) -> [Float] {
+        var kept = [Float](repeating: 0, count: ranks.count)
         var total: Float = 0
-        for g in 0 ..< groups {
-            let members = whitenedExperts.enumerated().compactMap { groupLabels[$0.offset] == g ? $0.element : nil }
-            guard !members.isEmpty else { continue }
-            let stacked = concatenated(members, axis: 0)
-            let (_, sigma, _) = MLXLinalg.svd(stacked, stream: .cpu)
-            eval(sigma)
-            let sVals = sigma.asArray(Float.self)
-            let r = min(max(1, rank), sVals.count)
-            for (idx, val) in sVals.enumerated() {
-                let e = val * val
-                total += e
-                if idx < r {
-                    kept += e
-                }
+        for gram in grams {
+            let values = MLXLinalg.eigvalsh(gram, stream: .cpu).asArray(Float.self)
+            total += values.reduce(0, +)
+            for (index, rank) in ranks.enumerated() {
+                kept[index] += values.suffix(rank).reduce(0, +)
             }
         }
-        return kept / max(total, 1e-12)
-    }
-
-    static func groupedMaxReconstructionError(
-        experts: [MLXArray],
-        x: MLXArray,
-        hessian: MLXArray,
-        groupLabels: [Int],
-        groups: Int,
-        rank: Int
-    ) -> Float {
-        let (whitened, _, sInv) = whitenedRows(experts, hessian: hessian)
-        var maxErr: Float = 0
-        for g in 0 ..< groups {
-            let indices = experts.indices.filter { groupLabels[$0] == g }
-            guard !indices.isEmpty else { continue }
-            let stacked = concatenated(indices.map { whitened[$0] }, axis: 0)
-            let (_, _, vt) = MLXLinalg.svd(stacked, stream: .cpu)
-            eval(vt)
-            let r = min(max(1, rank), vt.dim(0))
-            let vtR = vt[0 ..< r, 0...]
-            let vR = vtR.T
-            let downG = matmul(vtR, sInv)
-            let projectedX = matmul(x.asType(.float32), downG.T)
-            for idx in indices {
-                let coreE = matmul(whitened[idx], vR)
-                let approx = matmul(projectedX, coreE.T)
-                let exact = matmul(x.asType(.float32), experts[idx].asType(.float32).T)
-                eval(approx, exact)
-                maxErr = max(maxErr, abs(exact - approx).max().item(Float.self))
-            }
-        }
-        return maxErr
+        return kept.map { $0 / max(total, 1e-12) }
     }
 }
 
-private enum GroupLatentSafetensorsProbe {
-    static func readQuantizationSpec(modelDir: URL) -> (bits: Int, groupSize: Int) {
-        let cfgURL = modelDir.appendingPathComponent("config.json")
-        guard let data = try? Data(contentsOf: cfgURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (4, 64)
+enum GroupLatentCapture {
+    static func sweep(_ model: any LanguageModel, batches: [[Int32]], maxLayers: Int, log: ModelRunLog) throws -> [GroupLatentRow] {
+        let root = model as Module
+        root.train(false)
+        let routers = routerSites(in: root)
+        let blocks = Set(root.namedModules().compactMap { PVTuner.textBlockIndex($0.0) }).sorted().prefix(maxLayers)
+        var rows: [GroupLatentRow] = []
+        for block in blocks {
+            guard let measured = try measureBlock(block, model: model, routers: routers, batches: batches) else { continue }
+            for row in measured {
+                row.lines.forEach { log.record("GROUPLATENT", $0) }
+            }
+            rows += measured
+            Memory.clearCache()
         }
-        let q = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any])
-        let bits = (q?["bits"] as? Int) ?? 4
-        let groupSize = (q?["group_size"] as? Int) ?? 64
-        return (bits, groupSize)
+        return rows
     }
 
-    static func loadStackedExpertGateUp(
-        modelDir: URL,
-        layerIndex: Int
-    ) throws -> (gateUp: [MLXArray], downTransposed: [MLXArray])? {
-        let qSpec = readQuantizationSpec(modelDir: modelDir)
-        let files = try FileManager.default.contentsOfDirectory(at: modelDir, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "safetensors" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-        let prefixes = [
-            "model.layers.\(layerIndex).mlp.switch_mlp.",
-            "language_model.model.layers.\(layerIndex).mlp.switch_mlp.",
-            "model.layers.\(layerIndex).experts.",
+    static func routerSites(in root: Module) -> [Int: MoERWPipeline.RouterSite] {
+        var sites = MoERWPipeline.discoverRouters(in: root)
+        for (path, module) in root.namedModules() where path.hasSuffix(".router.proj") {
+            guard let block = PVTuner.textBlockIndex(path), sites[block] == nil else { continue }
+            let dims: (out: Int, inp: Int)? = if let q = module as? QuantizedLinear {
+                (q.weight.dim(0), q.weight.dim(1) * 32 / q.bits)
+            } else if let linear = module as? Linear {
+                linear.shape
+            } else {
+                nil
+            }
+            if let dims {
+                sites[block] = .init(block: block, path: path, module: module, numExperts: dims.out, inFeatures: dims.inp)
+            }
+        }
+        return sites
+    }
+
+    static func measureBlock(
+        _ block: Int, model: any LanguageModel, routers: [Int: MoERWPipeline.RouterSite], batches: [[Int32]]
+    ) throws -> [GroupLatentRow]? {
+        let root = model as Module
+        let switches = MoERWPipeline.collectCandidateTargets(root, blocks: [block]).switches
+        let inputs = switches.filter { !$0.path.hasSuffix("down_proj") }
+        let inputReaders = inputs.compactMap { expertReader($0.module) }
+        guard let first = inputs.first, inputReaders.count == inputs.count,
+              let down = switches.first(where: { $0.path.hasSuffix("down_proj") }),
+              let downReader = expertReader(down.module) else { return nil }
+        let captured = try MoERWPipeline.captureMoEGroup(
+            model: model, root: root, targets: .init(linears: [], switches: [first, down]),
+            routers: routers, batches: batches, maxSwitchRows: .max)
+        let estimator = MoERouterWeightedHessian()
+        guard let inReservoir = captured.switches[first.path], let outReservoir = captured.switches[down.path],
+              let inWhitening = inputWhitening(inReservoir, estimator: estimator) else { return nil }
+        let key = MLXRandom.key(UInt64(6440 + block))
+        let mass = (0 ..< first.numExperts).map { gateMass(inReservoir, expert: $0, estimator: estimator) }
+        let input = GroupLatentSpectrum.energies(count: first.numExperts, dim: first.inFeatures, key: key) { expert in
+            matmul(concatenated(inputReaders.map { $0(expert) }, axis: 0), inWhitening) * mass[expert].squareRoot()
+        }
+        let whiteners = (0 ..< down.numExperts).map { expert in
+            routedHessian(outReservoir, expert: expert, estimator: estimator).map {
+                InputWhitenedSVD.computeWhiteningPair(hessian: $0).s
+            }
+        }
+        let output = GroupLatentSpectrum.energies(count: down.numExperts, dim: down.outFeatures, key: key) { expert in
+            whiteners[expert].map { matmul($0.T, downReader(expert).T) }
+                ?? MLXArray.zeros([down.inFeatures, down.outFeatures], dtype: .float32)
+        }
+        return [
+            GroupLatentRow(layer: block, side: "in", dim: first.inFeatures, energies: input),
+            GroupLatentRow(layer: block, side: "out", dim: down.outFeatures, energies: output),
         ]
-        for file in files {
-            let tensors = try MLX.loadArrays(url: file)
-            for prefix in prefixes {
-                guard let gate = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)gate_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
-                      let up = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)up_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
-                      let down = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)down_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
-                      gate.ndim == 3, up.ndim == 3, down.ndim == 3 else {
-                    continue
-                }
-                let eCount = gate.dim(0)
-                let gateUp = (0 ..< eCount).map { concatenated([gate[$0], up[$0]], axis: 0) }
-                let downT = (0 ..< eCount).map { down[$0].T }
-                eval(gateUp)
-                eval(downT)
-                return (gateUp, downT)
+    }
+
+    static func expertReader(_ module: Module) -> ((Int) -> MLXArray)? {
+        let params = Dictionary(uniqueKeysWithValues: module.parameters().flattened())
+        guard let weight = params["weight"], weight.ndim == 3 else { return nil }
+        if let quantized = module as? QuantizedSwitchLinear, let scales = params["scales"] {
+            let biases = params["biases"]
+            return { expert in
+                dequantized(
+                    weight[expert], scales: scales[expert], biases: biases.map { $0[expert] },
+                    groupSize: quantized.groupSize, bits: quantized.bits, mode: quantized.mode, dtype: .float32)
             }
         }
-        return nil
+        guard type(of: module) == SwitchLinear.self else { return nil }
+        return { weight[$0].asType(.float32) }
     }
 
-    static func dequantizeIfNeeded(tensors: [String: MLXArray], key: String, bits: Int, groupSize: Int) -> MLXArray? {
-        guard let weight = tensors["\(key).weight"] else { return nil }
-        guard let scales = tensors["\(key).scales"] else { return weight.asType(.float32) }
-        let biases = tensors["\(key).biases"]
-        return MLX.dequantized(weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: .affine)
-            .asType(.float32)
+    static func routedHessian(_ reservoir: MoERWSwitchReservoir, expert: Int, estimator: MoERouterWeightedHessian) -> MLXArray? {
+        guard reservoir.countsByExpert[expert] >= estimator.minRoutedTokens else { return nil }
+        return estimator.hessian(
+            activations: concatenated(reservoir.routedX[expert], axis: 0),
+            gatingWeights: MLXArray(reservoir.routedC[expert]))
+    }
+
+    static func gateMass(_ reservoir: MoERWSwitchReservoir, expert: Int, estimator: MoERouterWeightedHessian) -> Float {
+        guard reservoir.countsByExpert[expert] >= estimator.minRoutedTokens else { return 0 }
+        return reservoir.routedC[expert].reduce(0) { $0 + $1 * $1 }
+    }
+
+    static func inputWhitening(_ reservoir: MoERWSwitchReservoir, estimator: MoERouterWeightedHessian) -> MLXArray? {
+        var total: MLXArray?
+        for expert in 0 ..< reservoir.numExperts {
+            guard let hessian = routedHessian(reservoir, expert: expert, estimator: estimator) else { continue }
+            let sum = total.map { $0 + hessian } ?? hessian
+            eval(sum)
+            total = sum
+        }
+        return total.map { InputWhitenedSVD.computeWhiteningPair(hessian: $0).s }
+    }
+
+    static func summarize(_ rows: [GroupLatentRow], log: ModelRunLog) {
+        let format = { (value: Float) in String(format: "%.4f", value) }
+        for side in ["in", "out"] {
+            let sideRows = rows.filter { $0.side == side }
+            for (index, groups) in GroupLatentSpectrum.groupCounts.enumerated() {
+                let half = sideRows.map { $0.energies[index][0] }.sorted()
+                guard !half.isEmpty else { continue }
+                let passing = half.filter { $0 >= 0.97 }.count
+                log.record("GROUPLATENT summary", "side \(side) G \(groups) e(0.5d) >= 0.97 on \(passing)/\(half.count) layers, min \(format(half[0])) median \(format(half[half.count / 2])) max \(format(half[half.count - 1]))")
+                if side == "in", groups == 8 {
+                    let go = Double(passing) >= 0.9 * Double(half.count)
+                    log.record("GROUPLATENT verdict", "\(go ? "GO" : "NO-GO") to S1: input side, G 8, l 0.5d, bar 97% on 90% of layers")
+                }
+            }
+        }
     }
 }
 
-struct GroupLatentBudgetCase: Sendable {
-    let budget: GroupLatentBudget
-    let expectedRatio: Double
-}
-
-@Suite("Group-Latent MoE S0 whitened spectrum, balanced subspace k-means, and byte budgets (#644)", .serialized)
+@Suite("Group-latent MoE S0: router-weighted energy retained by grouped latent projections, from the moe-rw Hessian (#644)", .serialized)
 struct GroupLatentMoESpikeTests {
-    @Test(
-        "Compression ratio arithmetic matches #644 table for Qwen3.6-35B-A3B and Gemma 4 26B-A4B",
-        arguments: [
-            GroupLatentBudgetCase(budget: .init(model: "Qwen3.6-35B-A3B", hiddenDim: 2048, numExperts: 256, intermediateDim: 512, latentDim: 1408, groups: 8), expectedRatio: 1.34),
-            GroupLatentBudgetCase(budget: .init(model: "Qwen3.6-35B-A3B", hiddenDim: 2048, numExperts: 256, intermediateDim: 512, latentDim: 1024, groups: 8), expectedRatio: 1.85),
-            GroupLatentBudgetCase(budget: .init(model: "Qwen3.6-35B-A3B", hiddenDim: 2048, numExperts: 256, intermediateDim: 512, latentDim: 1024, groups: 1), expectedRatio: 1.98),
-            GroupLatentBudgetCase(budget: .init(model: "Gemma 4 26B-A4B", hiddenDim: 2816, numExperts: 128, intermediateDim: 704, latentDim: 1920, groups: 8), expectedRatio: 1.26),
-            GroupLatentBudgetCase(budget: .init(model: "Gemma 4 26B-A4B", hiddenDim: 2816, numExperts: 128, intermediateDim: 704, latentDim: 1408, groups: 8), expectedRatio: 1.71),
-            GroupLatentBudgetCase(budget: .init(model: "Gemma 4 26B-A4B", hiddenDim: 2816, numExperts: 128, intermediateDim: 704, latentDim: 1408, groups: 4), expectedRatio: 1.85),
-        ]
-    )
-    func compressionBudgetMatchesSpecTable(_ item: GroupLatentBudgetCase) {
-        let budget = item.budget
-        #expect(abs(budget.compressionRatio - item.expectedRatio) < 0.01)
-        let plainFourToThreeAffineRatio = (4.0 + 32.0 / 64.0) / (3.0 + 32.0 / 64.0)
-        if budget.latentDim * 2 == budget.hiddenDim {
-            #expect(budget.compressionRatio > plainFourToThreeAffineRatio)
-        }
+    static func recovers(_ labels: [Int], groups: Int, perGroup: Int) -> Bool {
+        let assigned = (0 ..< groups).map { Set(labels[($0 * perGroup) ..< (($0 + 1) * perGroup)]) }
+        return assigned.allSatisfy { $0.count == 1 } && Set(assigned.flatMap { $0 }).count == groups
     }
 
-    @Test("Balanced subspace k-means recovers latent expert groups and crosses the 97% S0 energy bar at l = 0.5d")
-    func balancedSubspaceKMeansRecoversGroupedSpectrum() {
-        MLXRandom.seed(6440)
-        let (d, rowsPerExpert, numGroups, expertsPerGroup) = (32, 12, 4, 4)
-        let halfRank = d / 2
-        let sevenTenthsRank = Int((Double(d) * 0.7).rounded())
-        let scales = MLXArray((0 ..< d).map { Float(exp(Double($0) * 0.05)) }).reshaped(1, d)
-        let x = MLXRandom.normal([96, d], dtype: .float32) * scales
-        let h = matmul(x.T, x)
-
-        var experts: [MLXArray] = []
-        for _ in 0 ..< numGroups {
-            let basis = MLXRandom.normal([halfRank, d], dtype: .float32)
-            for _ in 0 ..< expertsPerGroup {
-                let coeffs = MLXRandom.normal([rowsPerExpert, halfRank], dtype: .float32)
-                let noise = MLXRandom.normal([rowsPerExpert, d], dtype: .float32) * Float(0.02)
-                experts.append(matmul(coeffs, basis) + noise)
+    @Test("Input side: subspace k-means recovers planted expert groups, G = 4 keeps >= 97% at 0.5d where G = 1 does not, and the Gram spectrum matches the SVD")
+    func inputSidePlantedGroups() throws {
+        try withRandomState(MLXRandom.RandomState(seed: 6440)) {
+            let (d, rowsPerExpert, groups, perGroup) = (32, 24, 4, 4)
+            let scales = MLXArray((0 ..< d).map { Float(exp(Double($0) * 0.05)) }).reshaped(1, d)
+            let x = MLXRandom.normal([96, d]) * scales
+            let whitening = InputWhitenedSVD.computeWhiteningPair(hessian: matmul(x.T, x)).s
+            let rows = (0 ..< groups).flatMap { _ in
+                let basis = MLXRandom.normal([d / 2, d])
+                return (0 ..< perGroup).map { _ in
+                    let expert = matmul(MLXRandom.normal([rowsPerExpert, d / 2]), basis) + MLXRandom.normal([rowsPerExpert, d]) * Float(0.02)
+                    return matmul(expert, whitening)
+                }
             }
+            eval(rows)
+            let found = GroupLatentSpectrum.groupings(count: rows.count, dim: d, rank: d / 2, key: MLXRandom.key(6440)) { rows[$0] }
+            let energies = GroupLatentSpectrum.retainedEnergy(found, dim: d, ranks: [d / 2]) { rows[$0] }
+            let g4 = try #require(found.firstIndex { $0.groups == groups })
+            let sigma: MLXArray = MLXLinalg.svd(concatenated(rows, axis: 0), stream: .cpu)
+            let squares = (sigma * sigma).asArray(Float.self)
+            let direct = squares.prefix(d / 2).reduce(0, +) / squares.reduce(0, +)
+
+            #expect(Self.recovers(found[g4].labels, groups: groups, perGroup: perGroup))
+            #expect(energies[g4][0] >= 0.97)
+            #expect(energies[0][0] < energies[g4][0] - 0.05)
+            #expect(abs(energies[0][0] - direct) < 1e-3)
         }
-        eval(experts)
-
-        let (whitened, _, _) = GroupLatentSpectrum.whitenedRows(experts, hessian: h)
-        let labelsG1 = GroupLatentSpectrum.equalSizeSubspaceKMeans(whitenedExperts: whitened, groups: 1, subspaceRank: 4)
-        let labelsG4 = GroupLatentSpectrum.equalSizeSubspaceKMeans(whitenedExperts: whitened, groups: numGroups, subspaceRank: 4)
-
-        for g in 0 ..< numGroups {
-            #expect(labelsG4.filter { $0 == g }.count == expertsPerGroup)
-        }
-
-        let energyG1Half = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labelsG1, groups: 1, rank: halfRank)
-        let energyG4Half = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labelsG4, groups: numGroups, rank: halfRank)
-        let energyG4Seven = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labelsG4, groups: numGroups, rank: sevenTenthsRank)
-
-        #expect(energyG4Half >= 0.97)
-        #expect(energyG4Half > energyG1Half + 0.05)
-        #expect(energyG4Seven >= energyG4Half)
     }
 
-    @Test("Output-side down_proj whitened spectrum and full-rank grouped D_g/U_g reconstruction are exact at l = d")
-    func outputSideSpectrumAndFullRankExactness() {
-        MLXRandom.seed(6441)
-        let (d, inter, numExperts, groups) = (24, 10, 8, 4)
-        let x = MLXRandom.normal([32, d], dtype: .float32)
-        let h = matmul(x.T, x)
-        let downTransposed = (0 ..< numExperts).map { _ in MLXRandom.normal([inter, d], dtype: .float32) }
-        eval(downTransposed)
+    @Test("Output side: per-expert router-weighted whitening of the down rows keeps planted output subspaces, so G = 4 recovers the groups and keeps >= 97% at 0.5d")
+    func outputSidePlantedGroups() throws {
+        try withRandomState(MLXRandom.RandomState(seed: 6441)) {
+            let (d, inter, groups, perGroup) = (32, 8, 4, 3)
+            let estimator = MoERouterWeightedHessian()
+            let rows = (0 ..< groups).flatMap { _ in
+                let basis = MLXRandom.normal([d, d / 4])
+                return (0 ..< perGroup).map { _ in
+                    let down = matmul(basis, MLXRandom.normal([d / 4, inter])) + MLXRandom.normal([d, inter]) * Float(0.02)
+                    let hessian = estimator.hessian(
+                        activations: MLXRandom.normal([48, inter]), gatingWeights: abs(MLXRandom.normal([48])) + Float(0.1))
+                    return matmul(InputWhitenedSVD.computeWhiteningPair(hessian: hessian).s.T, down.T)
+                }
+            }
+            eval(rows)
+            let found = GroupLatentSpectrum.groupings(count: rows.count, dim: d, rank: d / 4, key: MLXRandom.key(6441)) { rows[$0] }
+            let energies = GroupLatentSpectrum.retainedEnergy(found, dim: d, ranks: [d / 2]) { rows[$0] }
+            let g4 = try #require(found.firstIndex { $0.groups == groups })
 
-        let (whitened, _, _) = GroupLatentSpectrum.whitenedRows(downTransposed, hessian: h)
-        let labels = GroupLatentSpectrum.equalSizeSubspaceKMeans(whitenedExperts: whitened, groups: groups, subspaceRank: 4)
-        let fullEnergy = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labels, groups: groups, rank: d)
-        let fullErr = GroupLatentSpectrum.groupedMaxReconstructionError(
-            experts: downTransposed,
-            x: x,
-            hessian: h,
-            groupLabels: labels,
-            groups: groups,
-            rank: d
-        )
-        #expect(abs(fullEnergy - 1.0) < 1e-5)
-        #expect(fullErr < 1e-3)
+            #expect(Self.recovers(found[g4].labels, groups: groups, perGroup: perGroup))
+            #expect(energies[g4][0] >= 0.97)
+            #expect(energies[0][0] < energies[g4][0] - 0.05)
+        }
     }
 
     @Test(
-        "Real-model S0 layer-by-layer safetensors spectrum sweep reports GO/NO-GO at l = 0.5d and G = 8",
+        "Real-model S0: moe-rw energy retained per MoE layer at l in {0.5d, 0.7d} for G in {1, 4, 8}, input and output side",
         .enabled(if: ProcessInfo.processInfo.environment["BASALT_E2E_644_S0"] != nil)
     )
-    func realModelS0LayerSpectrumSweep() throws {
-        let path = try #require(ProcessInfo.processInfo.environment["BASALT_E2E_644_MODEL_PATH"])
-        let modelDir = URL(fileURLWithPath: path)
-        let maxLayers = Int(ProcessInfo.processInfo.environment["BASALT_E2E_644_MAX_LAYERS"] ?? "4") ?? 4
-        var passingLayers = 0
-        var evaluatedLayers = 0
-        for layer in 0 ..< maxLayers {
-            guard let pair = try GroupLatentSafetensorsProbe.loadStackedExpertGateUp(modelDir: modelDir, layerIndex: layer) else {
-                continue
-            }
-            let d = pair.gateUp[0].dim(1)
-            let identityH = MLXArray.eye(d, dtype: .float32)
-            let (whitened, _, _) = GroupLatentSpectrum.whitenedRows(pair.gateUp, hessian: identityH)
-            let labelsG8 = GroupLatentSpectrum.equalSizeSubspaceKMeans(whitenedExperts: whitened, groups: 8, subspaceRank: 4)
-            let eHalfG8 = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labelsG8, groups: 8, rank: d / 2)
-            let eSevenG8 = GroupLatentSpectrum.groupedRetainedEnergy(whitenedExperts: whitened, groupLabels: labelsG8, groups: 8, rank: Int((Double(d) * 0.7).rounded()))
-            print("[S0 #644] layer=\(layer) d=\(d) G=8 e(0.5d)=\(String(format: "%.4f", eHalfG8)) e(0.7d)=\(String(format: "%.4f", eSevenG8))")
-            evaluatedLayers += 1
-            if eHalfG8 >= 0.97 {
-                passingLayers += 1
+    func realModelS0LayerSpectrumSweep() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let path = try #require(env["BASALT_E2E_644_MODEL_PATH"])
+        let maxLayers = env["BASALT_E2E_644_MAX_LAYERS"].flatMap { Int($0) } ?? .max
+        let log = try await ModelRunLog("grouplatent-s0", modelPath: path)
+        defer { log.releaseGPU() }
+        let engine = MLXInferenceEngine(.conversion)
+        defer { await withTaskCancellationShield { await engine.unload(); Memory.clearCache() } }
+        try await log.step("load") { try await engine.load(modelPath: path) }
+        let container = try #require(await engine.container)
+        let config = MACaQConfig()
+        let batches = await GSQRCOConverter.tokenizeCalibration(
+            container, corpus: MultilingualMoECalibrationCorpus.defaultText,
+            count: config.calibrationBatches, seqLen: config.calibrationSeqLen)
+        try #require(!batches.isEmpty)
+        log.record("GROUPLATENT", "layer | side | d | G | e(0.5d) | e(0.7d)")
+        let rows = try await log.step("sweep") {
+            try await container.perform { context in
+                try GroupLatentCapture.sweep(context.model, batches: batches, maxLayers: maxLayers, log: log)
             }
         }
-        #expect(evaluatedLayers > 0)
-        print("[S0 #644] passingLayers=\(passingLayers)/\(evaluatedLayers)")
+        GroupLatentCapture.summarize(rows, log: log)
+        #expect(!rows.isEmpty)
+        #expect(rows.allSatisfy { $0.energies.joined().allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1.0001 } })
     }
 }
