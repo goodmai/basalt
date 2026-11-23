@@ -27,7 +27,7 @@ extension ServeCommand {
     func loadAdapters(into orchestrator: some ModelOrchestrating) async throws {
         guard !adapters.isEmpty else { return }
         do {
-            try await orchestrator.loadAdapters(try Self.adapterDirectories(adapters))
+            try await orchestrator.loadAdapters(try await adapterDirectories())
             let names = await orchestrator.adapterNames
             log("Adapters: \(names.joined(separator: ", "))")
         } catch let error as BasaltError {
@@ -36,15 +36,38 @@ extension ServeCommand {
         }
     }
 
-    static func adapterDirectories(_ specs: [String]) throws -> [String: URL] {
+    static func adapterSources(_ specs: [String]) throws -> [String: AdapterSource] {
+        do throws(AdapterSource.Invalid) {
+            return try AdapterSource.parse(specs)
+        } catch {
+            throw ValidationError(error.description)
+        }
+    }
+
+    func adapterDirectories() async throws -> [String: URL] {
         var directories: [String: URL] = [:]
-        for spec in specs {
-            let parts = spec.split(separator: "=", maxSplits: 1).map(String.init)
-            guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { throw ValidationError("--adapter takes name=directory, got \(spec)") }
-            guard directories[parts[0]] == nil else { throw ValidationError("--adapter \(parts[0]) is given twice") }
-            directories[parts[0]] = URL(fileURLWithPath: (parts[1] as NSString).expandingTildeInPath)
+        for (name, source) in try Self.adapterSources(adapters) {
+            switch source {
+            case .directory(let url): directories[name] = url
+            case .repository(let repo): directories[name] = try await adapterDirectory(repo, name: name)
+            }
         }
         return directories
+    }
+
+    func adapterDirectory(_ repo: String, name: String) async throws -> URL {
+        let cached = ModelCache.cacheDir(for: repo)
+        if AdapterSource.isAdapterDirectory(cached) { return cached }
+        log("Adapter \(bold(name)): \(repo) is not in the local cache. Downloading…")
+        do {
+            let directory = try await HuggingFaceHub(requireVerified: requireVerified).download(
+                repoId: repo, subfolder: nil, token: nil, onFile: DownloadProgressReporter(useStderr: true).callAsFunction)
+            fputs("\n", stderr)
+            return directory
+        } catch {
+            log("\(red("Adapter download failed:")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
     }
 
     func loadEmbeddings() async throws -> (any EmbeddingEngine)? {
