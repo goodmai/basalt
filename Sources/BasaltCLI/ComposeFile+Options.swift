@@ -22,6 +22,7 @@ extension ComposeFile.Walk {
         out.expertCacheGB = number(field["expert_cache_gb"], "\(path).expert_cache_gb")
         out.kvHeadSplit = number(field["kv_head_split"], "\(path).kv_head_split")
         out.questTopK = integer(field["quest_top_k"], "\(path).quest_top_k")
+        out.ropeYarn = number(field["rope_yarn"], "\(path).rope_yarn")
         spec.experimental = out
     }
 

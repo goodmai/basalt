@@ -28,9 +28,13 @@ struct KVCacheOptions: ParsableArguments {
     @Option(name: .customLong("moba-top-k"), help: ArgumentHelp("With --attention-backend moba, number of 64-token middle blocks selected per query head alongside sink and recent blocks (1...4096, default 8)"))
     var mobaTopK: Int = 8
 
+    @Option(name: .customLong("rope-yarn"), help: ArgumentHelp("Extend the context of Qwen 3.5, 3.6 and 3.8 (qwen3_5) with YaRN by this factor (e.g. 2 for about 512K tokens, 4 for about 1M); the model's config is staged with rope_type yarn and original_max_position_embeddings set to its native context. YaRN is static: short prompts pay its small cost too, so use it only for contexts past the native one. Other models, Gemma 4 included, load with their stock RoPE and a warning"))
+    var ropeYarn: Double?
+
     var zones: KVZones? { KVBitsSetting.zones(zoned, evicting: evict) }
 
     func validateCombination() throws {
+        if let ropeYarn, !(ropeYarn > 1 && ropeYarn <= 64) { throw ValidationError("--rope-yarn takes a factor in (1, 64]") }
         try KVBitsSetting.validate(zones: zoned, bits: bits, evict: evict)
         if let headSplit {
             guard (0.05 ... 1).contains(headSplit) else { throw ValidationError("--kv-head-split takes a share of heads in 0.05...1") }

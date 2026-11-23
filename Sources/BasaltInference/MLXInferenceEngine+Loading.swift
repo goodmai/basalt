@@ -148,7 +148,8 @@ extension MLXInferenceEngine {
         do {
             try faults.check(.load)
             if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-            let loaded = try await loadContainer(from: directory)
+            let source = ropeSource(directory, modelType: modelType, modelPath: modelPath)
+            let loaded = try await loadContainer(from: source)
             let smallM = configuration.smallMKernel
             let q3 = configuration.q3Kernel
             try await loaded.perform {
@@ -165,7 +166,7 @@ extension MLXInferenceEngine {
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
                 controlTokens: ControlTokenGuard(modelDirectory: directory),
-                fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: directory),
+                fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: source),
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
                 transcribesAudio: transcribes)
@@ -249,6 +250,20 @@ extension MLXInferenceEngine {
         let drafts = await container.perform { $0.mtpDrafter != nil }
         record(.learned(epoch) { $0.hasMTPDrafter = drafts })
         return drafts
+    }
+
+    static let ropeStagingRoot = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/rope-yarn")
+
+    func ropeSource(_ directory: URL, modelType: String?, modelPath: String) -> URL {
+        guard let factor = configuration.ropeYarn else { return directory }
+        do throws(RopeYarnStage.Refusal) {
+            let staged = try RopeYarnStage.stage(directory: directory, modelType: modelType, factor: factor, root: Self.ropeStagingRoot)
+            logger.info("--rope-yarn \(factor): YaRN over \(staged.nativeContext) native tokens, effective context \(staged.effectiveContext) (config staged at \(staged.directory.path))")
+            return staged.directory
+        } catch {
+            logger.warn("--rope-yarn \(factor) does not apply to \(modelPath): \(error.reason); the model loads with its stock RoPE")
+            return directory
+        }
     }
 
     func loadMTPDrafter(for loaded: ModelContainer, directory: URL, modelPath: String) async -> Bool {
