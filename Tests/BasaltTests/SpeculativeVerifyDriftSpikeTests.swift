@@ -40,7 +40,7 @@ enum SpeculativeDriftProbe {
             let meanDiff = diff.mean().item(Float.self)
             let top2 = sorted(single, axis: -1)
             let vocab = single.dim(-1)
-            let margin = (top2[vocab - 1] - top2[vocab - 2]).item(Float.self)
+            let margin = vocab >= 2 ? (top2[vocab - 1] - top2[vocab - 2]).item(Float.self) : 0
             let singleTop = argMax(single, axis: -1).item(Int32.self)
             let verifyTop = argMax(verify, axis: -1).item(Int32.self)
             results.append(VerifySlotDrift(
@@ -70,7 +70,7 @@ enum SpeculativeDriftProbe {
     }
 }
 
-@Suite("Speculative verify drift S0 spike: per-slot M=1 vs K-token verify logits and kernel thresholds (#646)")
+@Suite("Speculative verify drift S0 spike: per-slot M=1 vs K-token verify logits and kernel thresholds (#646)", .serialized)
 struct SpeculativeVerifyDriftSpikeTests {
     private static let prefix = (0 ..< 16).map { Int32(($0 * 17 + 3) % 240) }
     private static func block(count: Int) -> [Int32] {
