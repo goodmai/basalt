@@ -22,9 +22,9 @@ struct SpeculativeOptions: ParsableArguments {
 
     @Option(
         name: .customLong("mtp-block"),
-        help: "With --mtp, the largest verify round: one token the target already chose plus up to N-1 drafted by the MTP head. Rounds start at one drafted token, grow by one after four fully accepted rounds and drop back to one on a rejection (default 4; Qwen3.5-family targets rewind up to 7 drafted tokens, others clamp to their limit; 2 drafts one token every round)"
+        help: "With --mtp, the largest verify round: one token the target already chose plus up to N-1 drafted by the MTP head. Qwen-style heads start at one drafted token, grow by one after four fully accepted rounds and drop back to one on a rejection; block drafters such as Inkling 2 DSpark pick each round's depth from their acceptance so far (default 4, or the block drafter's own block; Qwen3.5-family targets rewind up to 7 drafted tokens, others clamp to their limit; 2 drafts one token every round)"
     )
-    var mtpBlock = 4
+    var mtpBlock: Int?
 
     @Flag(
         name: .customLong("experimental-mtp-draft-head"),

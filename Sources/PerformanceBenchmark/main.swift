@@ -85,8 +85,8 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("mtp"), help: "Draft with the model's MTP head (mtp.safetensors)")
     var mtp: Bool = false
 
-    @Option(name: .customLong("mtp-block"), help: "With --mtp, the largest verify round, the target's own token plus up to N-1 drafted (default 4)")
-    var mtpBlock = 4
+    @Option(name: .customLong("mtp-block"), help: "With --mtp, the largest verify round, the target's own token plus up to N-1 drafted (default 4, or a block drafter's own block)")
+    var mtpBlock: Int?
 
     @Flag(name: .customLong("experimental-mtp-draft-head"), help: "With --mtp, draft through a 4-bit copy of a target head wider than 4 bits (#209)")
     var mtpDraftHead: Bool = false

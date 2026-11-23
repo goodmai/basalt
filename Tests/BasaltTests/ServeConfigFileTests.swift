@@ -24,7 +24,7 @@ struct ServeConfigFileTests {
         },
         Group(yaml: "serve: { cache_blend: { enabled: true, ratio: 0.5 } }", flags: ["--cache-blend", "--cache-blend-ratio", "0.5"]) { "\($0.promptCache.cacheBlend) \($0.promptCache.cacheBlendRatio)" },
         Group(yaml: "serve: { speculative: { lookup: true, recycling: true, mtp_block: 2 } }", flags: ["--speculative-lookup", "--speculative-recycling", "--mtp-block", "2"]) {
-            "\($0.speculative.speculativeLookup) \($0.speculative.speculativeRecycling) \($0.speculative.mtpBlock)"
+            "\($0.speculative.speculativeLookup) \($0.speculative.speculativeRecycling) \($0.speculative.mtpBlock ?? 0)"
         },
         Group(yaml: "serve: { sampling: { top_k: 40, min_p: 0.05, seed: 7, reasoning_effort: none } }", flags: ["--top-k", "40", "--min-p", "0.05", "--seed", "7", "--reasoning-effort", "none"]) {
             "\($0.sampling.topK ?? 0) \($0.sampling.minP ?? 0) \($0.sampling.seed ?? 0) \($0.sampling.reasoningEffort ?? "")"

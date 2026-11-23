@@ -123,6 +123,10 @@ enum MTPSidecar {
         return ProbingMTPDrafter(stateful, probe: probe)
     }
 
+    static func defaultBlockSize(for drafter: any MTPDrafterModel) -> Int {
+        drafter.draftWidthCost == nil ? 4 : max(2, drafter.maximumBlockSize ?? 4)
+    }
+
     static func file(in directory: URL) -> URL? {
         let config = ModelCache.config(at: directory)
         let declared = (config?["mlx_lm_extra_tensors"] as? [String: Any])?["mtp_file"] as? String

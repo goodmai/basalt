@@ -112,6 +112,7 @@ struct InklingDSparkTests {
         let drafter = try #require(try MTPSidecar.load(directory: directory, target: target) as? GreedyDraftingMTPDrafter)
         let dspark = try #require(drafter.inner as? Inkling2DSparkDraftModel)
         #expect(drafter.draftWidthCost == 0.27 && drafter.maximumBlockSize == 4)
+        #expect(MTPSidecar.defaultBlockSize(for: drafter) == 4 && MTPSidecar.defaultBlockSize(for: SuccessorDrafter(following: [1, 2])) == 4)
         let raw = try MLX.loadArrays(url: directory.appending(component: "mtp.safetensors"))
         let fold = matmul(target.lmHead.weight.asType(.float32), try #require(raw["markov_head.hidden_out.weight"]).asType(.float32))
         #expect(abs(dspark.markovHead.fold.weight.asType(.float32) - fold).max().item(Float.self) < 2e-2)
