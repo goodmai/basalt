@@ -28,16 +28,6 @@ struct Inkling2DSparkConfiguration: Decodable, Sendable, Equatable {
         case blockSize = "block_size", markovRank = "markov_rank", markovHeadType = "markov_head_type", targetLayerIDs = "target_layer_ids"
     }
 
-    init(
-        hiddenSize: Int, hiddenLayers: Int, attentionHeads: Int, kvHeads: Int, headDimensions: Int, intermediateSize: Int,
-        localLayers: Set<Int>, slidingWindow: Int, blockSize: Int, markovRank: Int, targetLayerIDs: [Int]
-    ) {
-        (self.hiddenSize, self.hiddenLayers, self.attentionHeads, self.kvHeads) = (hiddenSize, hiddenLayers, attentionHeads, kvHeads)
-        (self.headDimensions, self.intermediateSize, rmsNormEps, ropeTheta) = (headDimensions, intermediateSize, 1e-6, 1_000_000)
-        (self.localLayers, self.slidingWindow, self.blockSize, self.markovRank) = (localLayers, slidingWindow, blockSize, markovRank)
-        (markovHeadType, self.targetLayerIDs) = ("rnn_hidden", targetLayerIDs)
-    }
-
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Root.self)
         let c = try root.nestedContainer(keyedBy: CodingKeys.self, forKey: .draft)
