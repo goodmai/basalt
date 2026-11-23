@@ -59,11 +59,19 @@ extension ServeCommand {
         let cached = ModelCache.cacheDir(for: repo)
         if ServedAdapterSource.isAdapterDirectory(cached) { return cached }
         log("Adapter \(bold(name)): \(repo) is not in the local cache. Downloading…")
+        let hub = HuggingFaceHub(requireVerified: requireVerified)
         do {
-            let directory = try await HuggingFaceHub(requireVerified: requireVerified).download(
+            let files = try await hub.modelDetails(repoId: repo).siblings?.map(\.rfilename) ?? []
+            guard ServedAdapterSource.hasAdapterFiles(files) else {
+                log("\(red("Adapter refused:")) \(repo) has no adapter_config.json beside adapter_model.safetensors or adapters.safetensors at its top level; nothing was downloaded")
+                throw ExitCode.failure
+            }
+            let directory = try await hub.download(
                 repoId: repo, subfolder: nil, token: nil, onFile: DownloadProgressReporter(useStderr: true).callAsFunction)
             fputs("\n", stderr)
             return directory
+        } catch let exit as ExitCode {
+            throw exit
         } catch {
             log("\(red("Adapter download failed:")) \(error.localizedDescription)")
             throw ExitCode.failure

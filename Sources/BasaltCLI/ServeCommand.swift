@@ -118,7 +118,7 @@ struct ServeCommand: AsyncParsableCommand {
 
     @OptionGroup var mcpOptions: MCPOptions
 
-    @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory or name=org/repo (a Hugging Face repo, taken from the local cache or downloaded and verified like a model); an mlx-lm adapter (adapter_config.json and adapters.safetensors) or a PEFT one (adapter_model.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
+    @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory or name=hf:org/repo (a Hugging Face repo, taken from the local cache or, after checking that it holds an adapter, downloaded and verified like a model); an mlx-lm adapter (adapter_config.json and adapters.safetensors) or a PEFT one (adapter_model.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
 
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
