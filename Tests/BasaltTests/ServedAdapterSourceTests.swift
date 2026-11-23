@@ -55,8 +55,8 @@ struct ServedAdapterSourceTests {
         let local = FileManager.default.temporaryDirectory.appending(path: "served-adapter-\(UUID().uuidString)")
         let command = try ServeCommand.parse(["--adapter", "local=\(local.path)", "--adapter", "pi=\(repo)"])
         let directories = try await command.adapterDirectories()
-        #expect(directories["local"] == local)
-        #expect(directories["pi"] == snapshot)
+        #expect(directories["local"]?.path == local.path)
+        #expect(directories["pi"]?.path == snapshot.path)
         #expect(throws: (any Error).self) { _ = try ServeCommand.adapterSources(["broken"]) }
     }
 }
