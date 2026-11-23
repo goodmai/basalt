@@ -186,3 +186,14 @@ When you edit an English doc:
    ```bash
    swift scripts/check_readme_models.swift
    ```
+
+## Colab model training, merging, and HF publishing
+
+When fine-tuning or distilling models on Google Colab (e.g. `TranslateGemma-4`) and packaging them for Basalt on Apple Silicon, decouple GPU work from BF16 weight merging and avoid pulling full BF16 checkpoints onto the local Mac SSD:
+
+1. **Train LoRA on GPU (`L4` / `A100` / `H100`) and publish the lightweight adapter first** (~100 MB safetensors + `adapter_config.json` + tokenizer + `README.md` with `model-index` YAML). Always wrap sessions with `set -euo pipefail` and `trap 'colab stop -s <name> || true' EXIT`.
+2. **Merge BF16 and upload directly from Colab CPU high-RAM (`colab new -s <name> --high-mem`):**
+   - CPU high-RAM (~53 GB RAM, ~0.07 CU/hr) allocates immediately without waiting on GPU pool capacity (`503 Service Unavailable`).
+   - Run `PeftModel.from_pretrained(...).merge_and_unload()` in `bfloat16` on CPU, save 4 GB safetensors shards, and upload straight from Colab to Hugging Face Hub over datacenter bandwidth (no 24+ GB transfer to the Mac).
+3. **Append official benchmarks in a follow-up commit:** run `WMT24++` / `FLORES+` (`sacrebleu` `chrF++` + `Unbabel/wmt22-comet-da` / `MetricX-24`) when a GPU slot is available and push the `.jsonl` predictions + updated `model-index` YAML to the already-live HF repo.
+4. **Convert to MLX on Mac from Hugging Face:** pull only when building the compact Apple Silicon MLX quant (`basalt models convert <org>/<model> --to macaq:affine:4:64 --output ...`), keeping local disk usage to ~7 GB instead of 24+ GB.
