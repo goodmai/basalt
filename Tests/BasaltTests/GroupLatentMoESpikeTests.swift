@@ -203,10 +203,23 @@ private enum GroupLatentSpectrum {
 }
 
 private enum GroupLatentSafetensorsProbe {
+    static func readQuantizationSpec(modelDir: URL) -> (bits: Int, groupSize: Int) {
+        let cfgURL = modelDir.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: cfgURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (4, 64)
+        }
+        let q = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any])
+        let bits = (q?["bits"] as? Int) ?? 4
+        let groupSize = (q?["group_size"] as? Int) ?? 64
+        return (bits, groupSize)
+    }
+
     static func loadStackedExpertGateUp(
         modelDir: URL,
         layerIndex: Int
     ) throws -> (gateUp: [MLXArray], downTransposed: [MLXArray])? {
+        let qSpec = readQuantizationSpec(modelDir: modelDir)
         let files = try FileManager.default.contentsOfDirectory(at: modelDir, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "safetensors" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -218,9 +231,9 @@ private enum GroupLatentSafetensorsProbe {
         for file in files {
             let tensors = try MLX.loadArrays(url: file)
             for prefix in prefixes {
-                guard let gate = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)gate_proj"),
-                      let up = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)up_proj"),
-                      let down = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)down_proj"),
+                guard let gate = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)gate_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
+                      let up = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)up_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
+                      let down = dequantizeIfNeeded(tensors: tensors, key: "\(prefix)down_proj", bits: qSpec.bits, groupSize: qSpec.groupSize),
                       gate.ndim == 3, up.ndim == 3, down.ndim == 3 else {
                     continue
                 }
@@ -235,15 +248,11 @@ private enum GroupLatentSafetensorsProbe {
         return nil
     }
 
-    static func dequantizeIfNeeded(tensors: [String: MLXArray], key: String) -> MLXArray? {
+    static func dequantizeIfNeeded(tensors: [String: MLXArray], key: String, bits: Int, groupSize: Int) -> MLXArray? {
         guard let weight = tensors["\(key).weight"] else { return nil }
         guard let scales = tensors["\(key).scales"] else { return weight.asType(.float32) }
         let biases = tensors["\(key).biases"]
-        let lastDim = weight.dim(weight.ndim - 1)
-        let scaleCols = scales.dim(scales.ndim - 1)
-        let bits = 4
-        let packedPerGroup = max(1, (lastDim * 32 / bits) / max(1, scaleCols))
-        return MLX.dequantized(weight, scales: scales, biases: biases, groupSize: packedPerGroup, bits: bits, mode: .affine)
+        return MLX.dequantized(weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: .affine)
             .asType(.float32)
     }
 }
@@ -253,7 +262,7 @@ struct GroupLatentBudgetCase: Sendable {
     let expectedRatio: Double
 }
 
-@Suite("Group-Latent MoE S0 whitened spectrum, balanced subspace k-means, and byte budgets (#644)")
+@Suite("Group-Latent MoE S0 whitened spectrum, balanced subspace k-means, and byte budgets (#644)", .serialized)
 struct GroupLatentMoESpikeTests {
     @Test(
         "Compression ratio arithmetic matches #644 table for Qwen3.6-35B-A3B and Gemma 4 26B-A4B",
@@ -286,14 +295,13 @@ struct GroupLatentMoESpikeTests {
         let h = matmul(x.T, x)
 
         var experts: [MLXArray] = []
-        for g in 0 ..< numGroups {
+        for _ in 0 ..< numGroups {
             let basis = MLXRandom.normal([halfRank, d], dtype: .float32)
             for _ in 0 ..< expertsPerGroup {
                 let coeffs = MLXRandom.normal([rowsPerExpert, halfRank], dtype: .float32)
                 let noise = MLXRandom.normal([rowsPerExpert, d], dtype: .float32) * Float(0.02)
                 experts.append(matmul(coeffs, basis) + noise)
             }
-            _ = g
         }
         eval(experts)
 
