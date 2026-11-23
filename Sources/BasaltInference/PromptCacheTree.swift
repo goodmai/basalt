@@ -296,6 +296,15 @@ struct PromptCacheTree {
 }
 
 extension PromptCacheTree {
+    @discardableResult
+    mutating func makeRoom(_ bytes: ByteCount) -> ByteCount {
+        let (budget, before) = (byteBudget, byteCount)
+        byteBudget = max(0, budget - bytes)
+        evict()
+        byteBudget = budget
+        return before - byteCount
+    }
+
     mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
         guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
               cache.isSharable || cache.isSnapshot(of: tokens.count)
