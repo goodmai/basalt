@@ -24,12 +24,13 @@ public enum ServedAdapterSource: Sendable, Equatable {
     }
 
     public static func isAdapterDirectory(_ directory: URL) -> Bool {
-        let names = ["adapter_config.json", "adapter_model.safetensors", "adapters.safetensors"]
+        let names = ["adapter_config.json", "adapter_model.safetensors", "adapters.safetensors", "edit.json", "edit.safetensors"]
         return hasAdapterFiles(names.filter { FileManager.default.fileExists(atPath: directory.appending(component: $0).path) })
     }
 
     public static func hasAdapterFiles(_ names: [String]) -> Bool {
-        names.contains("adapter_config.json") && (names.contains("adapter_model.safetensors") || names.contains("adapters.safetensors"))
+        (names.contains("adapter_config.json") && (names.contains("adapter_model.safetensors") || names.contains("adapters.safetensors")))
+            || (names.contains("edit.json") && names.contains("edit.safetensors"))
     }
 
     static func source(_ value: String) throws(Invalid) -> ServedAdapterSource {
