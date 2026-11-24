@@ -1,6 +1,6 @@
 import Foundation
 
-public enum EditForbiddenTargetKind: String, Sendable, Equatable {
+public enum EditForbiddenTargetKind: String, Sendable, Codable, Equatable {
     case embedding
     case finalNorm = "final_norm"
     case lmHead = "lm_head"
