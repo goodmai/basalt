@@ -148,11 +148,16 @@ extension MLXInferenceEngine {
         refused: (String) -> BasaltError
     ) throws(BasaltError) -> (any ModelAdapter)? {
         if EditAdapter.isEditAdapterDirectory(directory) {
+            let adapter: EditAdapter
             do {
-                return try EditAdapter.from(directory: directory)
+                adapter = try EditAdapter.from(directory: directory)
             } catch {
                 throw refused("invalid edit adapter directory: \(briefly(error))")
             }
+            guard adapter.program.approval == .approved else {
+                throw refused("edit adapter '\(directory.lastPathComponent)' has approval status '\(adapter.program.approval.rawValue)'; approve explicitly via `basalt selfedit --accept-edit \(directory.path)` before serving")
+            }
+            return adapter
         }
         switch probeFineTuneType(directory) {
         case "phm":
