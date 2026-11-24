@@ -276,15 +276,22 @@ public struct SamplingDefaults: Sendable, Equatable {
 }
 
 public enum ModelProfileRegistry {
+    private static let exactProfiles: [String: any ModelProfile] = [
+        "flint": FlintProfile(),
+        "ricursive": RicursiveProfile(),
+        "ripple": RicursiveProfile(),
+        "muse-glimmer": MuseGlimmerProfile(),
+        "gpt_oss": GPTOSSProfile(),
+        "bailing_hybrid": BailingHybridProfile(),
+    ]
+
     public static func profile(forModelType modelType: String?, chatTemplate: String? = nil) -> any ModelProfile {
         guard let t = modelType?.lowercased() else { return GenericProfile() }
+        if let exact = exactProfiles[t] { return exact }
         if t.hasPrefix("qwen3") { return qwenProfile(t, chatTemplate: chatTemplate) }
         if t.hasPrefix("gemma") { return GemmaProfile() }
         if t.hasPrefix("lfm2") { return LiquidProfile() }
-        if t == "flint" { return FlintProfile() }
-        if t == "ricursive" || t == "ripple" { return RicursiveProfile() }
-        if t.hasPrefix("muse_glimmer") || t == "muse-glimmer" { return MuseGlimmerProfile() }
-        if t == "gpt_oss" { return GPTOSSProfile() }
+        if t.hasPrefix("muse_glimmer") { return MuseGlimmerProfile() }
         if t.hasPrefix("inkling2") { return InklingProfile() }
         if t == "nemotron_h" || t == "nemotron_lightning" || t == "nemotron-lightning" {
             return NemotronProfile(switchesThinkingInConversation: chatTemplate?.contains("/no_think") == true)

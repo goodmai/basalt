@@ -74,12 +74,14 @@ struct AnatomyScan: Sendable {
                 modules[index, default: ""] += name + " "
                 if name.contains("attention"), heads[index] == nil { heads[index] = Self.reflectedHeads(module) }
             }
-            if hiddenSize == nil, let embedding = module as? Embedding, path.hasSuffix("embed_tokens") {
+            if hiddenSize == nil, let embedding = module as? Embedding,
+               path.hasSuffix("embed_tokens") || path.hasSuffix("word_embeddings")
+            {
                 hiddenSize = (embedding as? QuantizedEmbedding).map { (embedding.weight.dim(-1) * 32) / $0.bits } ?? embedding.weight.dim(-1)
             }
         }
         var experts: [Int: Int] = [:]
-        for (path, array) in parameters where array.ndim == 3 && path.contains("switch") {
+        for (path, array) in parameters where array.ndim == 3 && (path.contains("switch") || path.contains(".experts.")) {
             if let index = Self.layerIndex(path) { experts[index] = array.dim(0) }
         }
         var layers = (0 ..< ((modules.keys.max() ?? -1) + 1)).map { index in
@@ -177,7 +179,9 @@ struct AnatomyConfig {
             layer.kvHeads = int("num_key_value_heads") == nil ? scan.heads.kvHeads ?? layer.kvHeads : layer.kvHeads
             layer.headDim = layer.headDim ?? scan.heads.headDim
         case .linearAttention?:
-            (layer.heads, layer.kvHeads, layer.headDim) = (int("linear_num_value_heads"), int("linear_num_key_heads"), int("linear_key_head_dim"))
+            layer.heads = int("linear_num_value_heads") ?? scan.heads.heads
+            layer.kvHeads = int("linear_num_key_heads") ?? scan.heads.kvHeads
+            layer.headDim = int("linear_key_head_dim") ?? scan.heads.headDim
         case .mamba?:
             (layer.heads, layer.headDim) = (int("mamba_num_heads"), int("mamba_head_dim"))
         case .conv?, nil:

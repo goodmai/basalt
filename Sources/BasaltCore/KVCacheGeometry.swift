@@ -350,7 +350,7 @@ extension KVCacheGeometry {
         guard let keyHeads = c["linear_num_key_heads"] as? Int,
               let valueHeads = c["linear_num_value_heads"] as? Int,
               let keyDim = c["linear_key_head_dim"] as? Int,
-              let valueDim = c["linear_value_head_dim"] as? Int else { return 0 }
+              let valueDim = c["linear_value_head_dim"] as? Int else { return bailingLinearStateBytes(c) }
         let kernel = c["linear_conv_kernel_dim"] as? Int ?? 4
         let convChannels = 2 * keyHeads * keyDim + valueHeads * valueDim
         let conv = Double(max(0, kernel - 1) * convChannels) * activationBytes

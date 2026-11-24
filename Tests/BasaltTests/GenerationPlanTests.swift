@@ -156,29 +156,6 @@ struct GenerationPlanTests {
         zoned, GenerationPlan.Settings(kvHeadMask: KVHeadMask(retrieval: [[0, 1]]), questTopK: 16), GenerationPlan.Settings(questTopK: 16),
     ]
 
-    @Test("Every known family keeps today's plan for the facts its caches produce", arguments: mtp + batch + cache)
-    func knownFamiliesKeepTodaysPlan(_ row: Case) {
-        for (modelType, capabilities) in ModelCapabilities.families {
-            for base in [row.settings] + Self.layouts {
-                var (today, facts) = (base, row.facts)
-                if !capabilities.allows(.mtp) { facts.hasMTPDrafter = false }
-                if !capabilities.allows(.cacheBlend) { facts.modelIsHybrid = true }
-                if !capabilities.allows(.quest) { today.questTopK = nil }
-                if !capabilities.allows(.kvHeadSplit) { today.kvHeadMask = nil }
-                if !capabilities.allows(.kvZones) { today.kvZones = nil }
-                var verified = today
-                verified.capabilities = capabilities
-                var expected = GenerationPlan.make(row.request, today, facts)
-                if !capabilities.allows(.batchedDecode) { expected.batchable = false }
-                #expect(GenerationPlan.make(row.request, verified, facts) == expected, "\(modelType)")
-                #expect(GenerationPlan.plainPrompt(row.request, verified, carriesMoreThanTokens: facts.carriesMoreThanTokens)
-                    == GenerationPlan.plainPrompt(row.request, today, carriesMoreThanTokens: facts.carriesMoreThanTokens), "\(modelType)")
-                #expect(GenerationPlan.cacheNamespace(row.request, verified, cacheEnabled: true, media: .text, sameEpoch: true)
-                    == GenerationPlan.cacheNamespace(row.request, today, cacheEnabled: true, media: .text, sameEpoch: true), "\(modelType)")
-            }
-        }
-    }
-
     @Test("Each feature a known family leaves out is one the runtime already refuses for that family's caches",
           arguments: [
               (TinyModel.Family.qwen3Small, "qwen3"), (.qwen3, "qwen3"), (.qwen3Moe, "qwen3_moe"), (.qwen35, "qwen3_5"), (.qwen35Moe, "qwen3_5_moe"),
@@ -220,6 +197,33 @@ struct GenerationPlanTests {
 }
 
 extension GenerationPlanTests {
+    @Test("Every known family keeps today's plan for the facts its caches produce", arguments: mtp + batch + cache)
+    func knownFamiliesKeepTodaysPlan(_ row: Case) {
+        for (modelType, capabilities) in ModelCapabilities.families {
+            for base in [row.settings] + Self.layouts {
+                var (today, facts, request) = (base, row.facts, row.request)
+                if !capabilities.allows(.mtp) { facts.hasMTPDrafter = false }
+                if !capabilities.allows(.cacheBlend) { facts.modelIsHybrid = true }
+                if !capabilities.allows(.quest) { today.questTopK = nil }
+                if !capabilities.allows(.kvHeadSplit) { today.kvHeadMask = nil }
+                if !capabilities.allows(.kvZones) { today.kvZones = nil }
+                if !capabilities.allows(.speculativeLookup) {
+                    today.speculativeLookup = false
+                    if request.speculativeLookup == true { request = request.withSpeculativeLookup(false) }
+                }
+                var verified = today
+                verified.capabilities = capabilities
+                var expected = GenerationPlan.make(request, today, facts)
+                if !capabilities.allows(.batchedDecode) { expected.batchable = false }
+                #expect(GenerationPlan.make(row.request, verified, facts) == expected, "\(modelType)")
+                #expect(GenerationPlan.plainPrompt(row.request, verified, carriesMoreThanTokens: facts.carriesMoreThanTokens)
+                    == GenerationPlan.plainPrompt(row.request, today, carriesMoreThanTokens: facts.carriesMoreThanTokens), "\(modelType)")
+                #expect(GenerationPlan.cacheNamespace(row.request, verified, cacheEnabled: true, media: .text, sameEpoch: true)
+                    == GenerationPlan.cacheNamespace(row.request, today, cacheEnabled: true, media: .text, sameEpoch: true), "\(modelType)")
+            }
+        }
+    }
+
     @Test("Head split runs on the full-precision cache or inside zones, never under uniform quantization; Quest steps aside for head split")
     func headSplitAndQuest() {
         let mask = KVHeadMask(retrieval: [[0, 1]])
