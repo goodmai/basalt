@@ -85,6 +85,21 @@ public struct SelfEditCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Optional JSONL session transcript path (defaults to ~/.basalt/selfedit/<session>.jsonl).")
     public var transcript: String?
 
+    @Option(name: .long, help: "Optional JSON report output path for session metrics and fingerprint integrity.")
+    public var report: String?
+
+    @Option(name: .long, help: "Max generation tokens per paired-test answer.")
+    public var maxEvalTokens: Int = 512
+
+    @Option(name: .long, help: "Max generation tokens per local editor turn.")
+    public var maxEditorTokens: Int = 1024
+
+    @Option(name: .long, help: "Comma-separated deterministic seeds for paired evaluation (default: 42).")
+    public var seeds: String = "42"
+
+    @Flag(name: .long, help: "Validate flags, dataset split, and repair task without loading model weights.")
+    public var dryRun: Bool = false
+
     public init() {}
 
     public struct PreparedHarness: Sendable {
@@ -156,7 +171,13 @@ public struct SelfEditCommand: AsyncParsableCommand {
             print("Approved edit adapter at \(dir.path) (session=\(program.sessionId), ops=\(program.ops.count))")
             return
         }
-        let prepared = try prepareHarness()
-        print("SelfEdit prepared: model=\(model ?? "") editor=\(prepared.editorSpec) task=\(prepared.taskMode.label) practice=\(prepared.split.practice.count) reserved=\(prepared.split.reservedCount) removed=\(prepared.removedDuplicates) transcript=\(prepared.transcriptURL.path)")
+        let sessionId = "selfedit-\(UUID().uuidString.prefix(8))"
+        let prepared = try prepareHarness(sessionId: sessionId)
+        if dryRun {
+            print("SelfEdit dry-run: model=\(model ?? "") editor=\(prepared.editorSpec) task=\(prepared.taskMode.label) practice=\(prepared.split.practice.count) reserved=\(prepared.split.reservedCount) removed=\(prepared.removedDuplicates) transcript=\(prepared.transcriptURL.path)")
+            return
+        }
+        let liveReport = try await executeLiveSession(sessionId: sessionId, prepared: prepared)
+        print("SelfEdit finished: session=\(liveReport.sessionId) phase=\(liveReport.phase) turns=\(liveReport.turnCount) verified=\(liveReport.integrity.originalFingerprintVerified) ops=\(liveReport.artifacts.submittedOpsCount) adapter=\(liveReport.artifacts.savedAdapterPath ?? "-")")
     }
 }
