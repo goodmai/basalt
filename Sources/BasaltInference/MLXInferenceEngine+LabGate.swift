@@ -203,6 +203,7 @@ extension MLXInferenceEngine {
         guard let linear = model.namedModules().first(where: { $0.0 == path })?.1 as? Linear, restorable(linear) else {
             throw refused("not a plain Linear or QuantizedLinear layer without an adapter; model_tensors lists the layers (the tensor name without .weight)")
         }
+        if let reason = microscaledLoRARefusal(linear, path: path) { throw refused(reason) }
         let (outputs, inputs) = linear.shape
         guard input.count == inputs, output.count == outputs else {
             throw refused("input needs \(inputs) values and output \(outputs), got \(input.count) and \(output.count)")
@@ -257,9 +258,11 @@ extension MLXInferenceEngine {
         let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
         let rank = adapter.configuration.loraParameters.rank
         for (key, value) in adapter.parameters.flattened() {
-            guard let linear = modules[key.split(separator: ".").dropLast().joined(separator: ".")] as? Linear else {
+            let path = key.split(separator: ".").dropLast().joined(separator: ".")
+            guard let linear = modules[path] as? Linear else {
                 throw refused("\(key) belongs to no linear layer of this model")
             }
+            if let reason = microscaledLoRARefusal(linear, path: path) { throw refused(reason) }
             let (outputs, inputs) = linear.shape
             let expected = key.hasSuffix(".lora_a") ? [inputs, rank] : key.hasSuffix(".lora_b") ? [rank, outputs] : value.shape
             guard value.shape == expected else { throw refused("\(key) has shape \(value.shape), the layer needs \(expected)") }
@@ -290,6 +293,11 @@ extension MLXInferenceEngine {
         } catch {
             throw .inferenceError("adapter: \(path) could not be swapped: \(briefly(error))")
         }
+    }
+
+    static func microscaledLoRARefusal(_ module: Module, path: String) -> String? {
+        guard let quantized = module as? QuantizedLinear, !quantized.scales.dtype.isFloatingPoint else { return nil }
+        return "\(path) is a \(quantized.mode) layer with \(quantized.scales.dtype) scales; LoRA on it computes in integers until the mlx-swift-lm fork fix (#746), so it is refused"
     }
 
     static func restorable(_ module: Module) -> Bool {
