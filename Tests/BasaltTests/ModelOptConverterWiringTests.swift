@@ -75,4 +75,35 @@ struct ModelOptConverterWiringTests {
         let worst = reference.map { key, exact in decoded[key].map { abs($0.asType(.float32) - exact.asType(.float32)).max().item(Float.self) } ?? .infinity }.max() ?? 0
         #expect(worst < 1e-3, "worst element difference \(worst)")
     }
+
+    @Test("convert --to nvfp4 from a ModelOpt source takes the lossless importer path: the output arrays are bit-identical to ModelOptImporter's, with no dense staging")
+    func modelOptToNVFP4IsLossless() async throws {
+        let root = ModelOptImporterTests.temporary("lossless")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(component: "modelopt")
+        _ = try ModelOptImporterTests.write(.gemma4Moe, at: source, algorithm: "NVFP4") { _ in false }
+        let direct = root.appending(component: "direct")
+        _ = try ModelOptImporter(source: source).run(output: direct, model: try TinyModel.make(.gemma4Moe))
+        let converted = root.appending(component: "converted")
+        let request = ModelConversionRequest(source: source.path, outputId: "local/nvfp4", target: .nvfp4, stream: false)
+        let result = try await UniversalModelConverter.convertToDirectory(request: request, sourceURL: source, outputURL: converted) { _ in }
+        #expect(result.shards >= 1)
+        let a = try ModelOptImporter.loadShards(in: direct), b = try ModelOptImporter.loadShards(in: converted)
+        #expect(Set(a.keys) == Set(b.keys))
+        #expect(a.keys.allSatisfy { arrayEqual(a[$0]!, b[$0]!).item(Bool.self) })
+    }
+
+    @Test("The deep check sees an nvfp4 checkpoint with global scales as loadable, with no unexpected global_scale keys")
+    func deepCheckAcceptsGlobalScales() async throws {
+        let root = ModelOptImporterTests.temporary("deepcheck")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (dense, output) = (root.appending(component: "dense"), root.appending(component: "nvfp4"))
+        try Self.denseDirectory(.gemma4Moe, at: dense)
+        _ = try WeightConverter(precision: .nvfp4).run(source: dense, output: output)
+        let arrays = try ModelOptImporter.loadShards(in: output)
+        let names: [DType: String] = [.uint32: "U32", .uint8: "U8", .float32: "F32", .float16: "F16", .bfloat16: "BF16"]
+        let tensors = arrays.mapValues { ModelInspector.Tensor(dtype: names[$0.dtype] ?? "F32", shape: $0.shape, end: 0) }
+        let problems = await ModelDeepCheck.loadProblems(configuration: try Data(contentsOf: output.appending(component: "config.json")), tensors: tensors, metadata: [:])
+        #expect(problems.isEmpty, "\(problems.prefix(5))")
+    }
 }

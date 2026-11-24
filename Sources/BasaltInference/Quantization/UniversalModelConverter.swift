@@ -128,6 +128,9 @@ extension UniversalModelConverter {
         }
 
         do {
+            if detected.format.hasPrefix("modelopt:"), request.target == .nvfp4, !request.pvTune, !request.macaqRefine {
+                return try await importModelOpt(request: request, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
+            }
             if request.target.isDense {
                 return try await exportDenseTarget(
                     request: request, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
@@ -161,6 +164,23 @@ extension UniversalModelConverter {
             bytesBefore: Int64(summary.bytesBefore),
             bytesAfter: Int64(summary.bytesAfter),
             shards: summary.shards)
+    }
+
+    private static func importModelOpt(
+        request: ModelConversionRequest,
+        detected: DetectedSourceCheckpoint,
+        sourceURL: URL,
+        outputURL: URL,
+        onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
+    ) async throws -> ModelConversionResult {
+        onProgress(.init(phase: "importing", completed: 1, total: 2, message: "Lossless \(detected.format) to nvfp4 import"))
+        let importer = try ModelOptImporter(source: sourceURL)
+        let summary = try importer.run(output: outputURL, model: try await ModelOptImporter.skeleton(source: sourceURL))
+        let message = "Imported \(summary.nvfp4) nvfp4, \(summary.fp8) fp8 and \(summary.plain) plain tensors, \(summary.stackedExperts) expert groups"
+        onProgress(.init(phase: "writing", completed: 2, total: 2, message: message))
+        let shards = (try? FileManager.default.contentsOfDirectory(atPath: outputURL.path).filter { $0.hasSuffix(".safetensors") }.count) ?? 1
+        return ModelConversionResult(
+            outputId: request.outputId, bytesBefore: detected.totalBytes, bytesAfter: Int64(summary.bytes), shards: shards)
     }
 
     private static func runQuantizedPipeline(

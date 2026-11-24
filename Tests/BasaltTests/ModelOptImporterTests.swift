@@ -102,6 +102,24 @@ struct ModelOptImporterTests {
         #expect((config["basalt_import"] as? [String: Any])?["quant_algo"] as? String == algorithm)
     }
 
+    @Test("Sidecars that are Hugging Face cache symlinks are copied as real files, so the output does not hold dangling links")
+    func symlinkedSidecarsAreResolved() throws {
+        let root = Self.temporary("symlink")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(component: "snapshots/rev")
+        _ = try Self.write(.gemma4Moe, at: source, algorithm: "NVFP4") { _ in false }
+        let blobs = root.appending(component: "blobs")
+        try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
+        try FileManager.default.removeItem(at: source.appending(component: "tokenizer.json"))
+        try Data(#"{"version": "1.0"}"#.utf8).write(to: blobs.appending(component: "abc"))
+        try FileManager.default.createSymbolicLink(atPath: source.appending(component: "tokenizer.json").path, withDestinationPath: "../../blobs/abc")
+        let output = root.appending(component: "out")
+        _ = try ModelOptImporter(source: source).run(output: output, model: try TinyModel.make(.gemma4Moe))
+        let copied = output.appending(component: "tokenizer.json")
+        #expect((try copied.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true)
+        #expect(try String(contentsOf: copied, encoding: .utf8) == #"{"version": "1.0"}"#)
+    }
+
     @Test("Re-importing the same source writes identical weights")
     func reimportIsIdempotent() throws {
         let root = Self.temporary("idempotent")
