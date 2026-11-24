@@ -100,10 +100,24 @@ struct ExpertPlan {
             throw .inferenceError("expert streaming: the checkpoint has no stacked expert weight for \(path)")
         }
         var layout = ExpertLayout(path: path, numExperts: experts, weight: weight)
-        (layout.scales, layout.biases, layout.bias) = (try tensor("scales", experts: experts), try tensor("biases", experts: experts), try tensor("bias", experts: experts))
+        (layout.scales, layout.biases, layout.bias) = (
+            try tensor("scales", experts: experts),
+            try tensor("biases", experts: experts),
+            try tensor("bias", experts: experts))
+        if let gsArray = sanitized["\(path).global_scale"] {
+            if let source = sources[ObjectIdentifier(gsArray)] {
+                dropped[source.shard, default: []].insert(source.key)
+            }
+            let f32 = gsArray.asType(.float32)
+            eval(f32)
+            layout.globalScales = f32.asArray(Float.self)
+        }
         if layout.scales != nil {
             guard let config = quantization else {
                 throw .inferenceError("expert streaming: \(path) is quantized without a quantization config this build can stream")
+            }
+            if layout.globalScales != nil && config.mode != .nvfp4 {
+                throw .inferenceError("expert streaming: \(path).global_scale is only supported for nvfp4 mode")
             }
             layout.quantization = config
         }

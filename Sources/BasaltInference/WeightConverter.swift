@@ -104,9 +104,6 @@ package struct WeightConverter: Sendable {
         let configURL = source.appending(component: "config.json")
         guard let config = ModelCache.config(at: source) else { throw Failure.malformed("\(configURL.path) is missing or unreadable") }
         let layout = try SourceLayout(directory: source, config: config, configData: Data(contentsOf: configURL))
-        guard !layout.shardOf.keys.contains(where: { $0.hasSuffix(".global_scale") }) else {
-            throw Failure.refused("\(source.path) is an nvfp4 checkpoint with global scales; converting it is not supported yet")
-        }
         try checkNF4Source(layout, source: source)
         let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
         var converter = self
@@ -146,7 +143,7 @@ extension WeightConverter {
                 guard let tensor = arrays.removeValue(forKey: key) else { continue }
                 let packed = try layout.packed(key, taking: &arrays)
                 let outputs = try convert(key, tensor, packed: packed, lora: lora, sourceQuantized: layout.quantization != nil)
-                let inputs = [tensor, packed?.scales, packed?.biases].compactMap { $0 }
+                let inputs = [tensor, packed?.scales, packed?.biases, packed?.globalScale].compactMap { $0 }
                 summary.tensors += inputs.count
                 summary.bytesBefore += inputs.reduce(0) { $0 + $1.nbytes }
                 summary.outputTensors += outputs.count
@@ -210,11 +207,17 @@ extension WeightConverter {
     }
 
     static func dense(_ tensor: MLXArray, _ packed: PackedWeight?) -> MLXArray {
-        packed.map {
-            MLX.dequantized(
-                tensor, scales: $0.scales, biases: $0.biases,
-                groupSize: $0.quantization.groupSize, bits: $0.quantization.bits, mode: $0.quantization.mode)
-        } ?? tensor
+        guard let packed else { return tensor }
+        if let globalScale = packed.globalScale, tensor.ndim == 3, globalScale.ndim == 1 {
+            let deq = MLX.dequantized(
+                tensor, scales: packed.scales, biases: packed.biases,
+                groupSize: packed.quantization.groupSize, bits: packed.quantization.bits, mode: packed.quantization.mode)
+            return (deq * (globalScale / (448 * 6)).reshaped([-1, 1, 1])).asType(deq.dtype)
+        }
+        return MLX.dequantized(
+            tensor, scales: packed.scales, biases: packed.biases,
+            groupSize: packed.quantization.groupSize, bits: packed.quantization.bits, mode: packed.quantization.mode,
+            globalScale: packed.globalScale)
     }
 
     static func isLinearLike(_ key: String, _ tensor: MLXArray) -> Bool {
@@ -332,11 +335,13 @@ extension WeightConverter {
 struct PackedWeight {
     var scales: MLXArray
     var biases: MLXArray?
+    var globalScale: MLXArray? = nil
     var quantization: BaseConfiguration.Quantization
 
     func arrays(_ base: String, weight: MLXArray) -> [String: MLXArray] {
         var arrays = [base + ".weight": weight, base + ".scales": scales]
         arrays[base + ".biases"] = biases
+        arrays[base + ".global_scale"] = globalScale
         return arrays
     }
 }
@@ -358,7 +363,7 @@ struct SourceLayout {
             for key in try loadArrays(url: shard).keys { shardOf[key] = shard }
         }
         self.shardOf = shardOf
-        quantization = config["quantization"] == nil
+        quantization = (config["quantization"] == nil && config["quantization_config"] == nil)
             ? nil : try JSONDecoder.json5().decode(BaseConfiguration.self, from: configData).perLayerQuantization
         for key in shardOf.keys where key.hasSuffix(".scales") {
             let base = String(key.dropLast(".scales".count))
@@ -369,8 +374,11 @@ struct SourceLayout {
     }
 
     func isCompanion(_ key: String) -> Bool {
-        guard key.hasSuffix(".scales") || key.hasSuffix(".biases") else { return false }
-        let base = String(key.dropLast(".scales".count))
+        let base: String
+        if key.hasSuffix(".scales") { base = String(key.dropLast(".scales".count)) }
+        else if key.hasSuffix(".biases") { base = String(key.dropLast(".biases".count)) }
+        else if key.hasSuffix(".global_scale") { base = String(key.dropLast(".global_scale".count)) }
+        else { return false }
         return shardOf[base + ".weight"] != nil && shardOf[base + ".scales"] != nil
     }
 
@@ -383,7 +391,9 @@ struct SourceLayout {
             return try arrays.removeValue(forKey: name) ?? loadArrays(url: shard)[name]
         }
         guard let scales = try take(base + ".scales") else { return nil }
-        return PackedWeight(scales: scales, biases: try take(base + ".biases"), quantization: quantization)
+        return PackedWeight(
+            scales: scales, biases: try take(base + ".biases"),
+            globalScale: try take(base + ".global_scale"), quantization: quantization)
     }
 }
 

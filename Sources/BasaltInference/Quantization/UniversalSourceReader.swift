@@ -55,7 +55,7 @@ package enum UniversalSourceReader {
             return DetectedSourceCheckpoint(format: "prism-hadamard", effectiveBPW: 4.5, totalBytes: bytes, requiresCanonicalDecode: true)
         }
         if let quant = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any]) {
-            return detectStandardQuant(quant, bytes: bytes)
+            return detectStandardQuant(quant, at: directory, bytes: bytes)
         }
         let dtype = ((json["torch_dtype"] as? String) ?? "bfloat16").lowercased()
         let label = dtype.contains("float16") && !dtype.contains("bfloat") ? "dense:f16" : "dense:bf16"
@@ -102,7 +102,7 @@ package enum UniversalSourceReader {
         return DetectedSourceCheckpoint(format: label, effectiveBPW: bpw, totalBytes: bytes, requiresCanonicalDecode: true)
     }
 
-    private static func detectStandardQuant(_ quant: [String: Any], bytes: Int64) -> DetectedSourceCheckpoint {
+    private static func detectStandardQuant(_ quant: [String: Any], at directory: URL, bytes: Int64) -> DetectedSourceCheckpoint {
         let mode = ((quant["mode"] as? String) ?? "affine").lowercased()
         let bits = (quant["bits"] as? Int) ?? 4
         let group = (quant["group_size"] as? Int) ?? 64
@@ -113,13 +113,34 @@ package enum UniversalSourceReader {
             return DetectedSourceCheckpoint(format: "nf4:\(group)", effectiveBPW: 4.0 + 16.0 / Double(max(1, group)), totalBytes: bytes, requiresCanonicalDecode: true)
         }
         if mode == "nvfp4" {
-            return DetectedSourceCheckpoint(format: "nvfp4", effectiveBPW: 4.5, totalBytes: bytes, requiresCanonicalDecode: true)
+            let hasGlobal = hasGlobalScale(in: directory, quant: quant)
+            return DetectedSourceCheckpoint(
+                format: hasGlobal ? "nvfp4+global" : "nvfp4",
+                effectiveBPW: 4.5, totalBytes: bytes, requiresCanonicalDecode: true)
         }
         return DetectedSourceCheckpoint(
             format: "affine:\(bits):\(group)",
             effectiveBPW: Double(bits) + 32.0 / Double(max(1, group)),
             totalBytes: bytes,
             requiresCanonicalDecode: false)
+    }
+
+    private static func hasGlobalScale(in directory: URL, quant: [String: Any]) -> Bool {
+        if quant["global_scale"] as? Bool == true { return true }
+        for value in quant.values {
+            if let dict = value as? [String: Any], dict["global_scale"] as? Bool == true { return true }
+        }
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: directory.path) else { return false }
+        for name in names where name.hasSuffix(".safetensors") {
+            let url = directory.appending(component: name)
+            let size = (try? fm.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            if case .success(let header) = ModelInspector.readSafetensors(at: url, fileSize: size),
+               header.tensors.keys.contains(where: { $0.hasSuffix(".global_scale") }) {
+                return true
+            }
+        }
+        return false
     }
 
     static func directoryWeightBytes(_ directory: URL) -> Int64 {

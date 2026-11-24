@@ -76,6 +76,14 @@ struct WeightView {
         guard let quantization else { return (array.ndim == 0 ? array.reshaped(1) : array)[range] }
         switch quantization {
         case .standard(let layer, let scales, let biases, let globalScale):
+            if let globalScale, array.ndim == 3, globalScale.ndim == 1 {
+                let deq = dequantized(
+                    array[range], scales: scales[range], biases: biases?[range],
+                    groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode,
+                    globalScale: nil)
+                let factor = (globalScale[range] / (448 * 6)).reshaped([-1, 1, 1])
+                return (deq * factor).asType(deq.dtype)
+            }
             return dequantized(
                 array[range], scales: scales[range], biases: biases?[range],
                 groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode,

@@ -20,9 +20,6 @@ extension WeightConverter {
             throw Failure.malformed("\(configURL.path) is missing or unreadable")
         }
         let layout = try SourceLayout(directory: source, config: config, configData: Data(contentsOf: configURL))
-        guard !layout.shardOf.keys.contains(where: { $0.hasSuffix(".global_scale") }) else {
-            throw Failure.refused("\(source.path) is an nvfp4 checkpoint with global scales; converting it is not supported yet")
-        }
         try checkNF4Source(layout, source: source)
         let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
         var converter = self

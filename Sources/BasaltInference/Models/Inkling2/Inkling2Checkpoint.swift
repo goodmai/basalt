@@ -3,7 +3,7 @@ import MLX
 
 enum Inkling2Checkpoint {
     static let text = "model.language_model."
-    static let quantParts = ["weight", "scales", "biases"]
+    static let quantParts = ["weight", "scales", "biases", "global_scale"]
     static let messageGates = ["q", "k", "v", "mlp"]
 
     static func sanitized(_ weights: [String: MLXArray], config: Inkling2Configuration) -> [String: MLXArray] {
