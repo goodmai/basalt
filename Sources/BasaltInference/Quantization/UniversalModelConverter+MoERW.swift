@@ -19,6 +19,7 @@ final class MoERouterGateBox {
     let expertScale: MLXArray?
     var lastInput: MLXArray?
     var lastLogits: MLXArray?
+    var lastRouted: (indices: MLXArray, gates: MLXArray)?
     var pooledInputs: [MLXArray] = []
     var pooledLogits: [MLXArray] = []
     var pooledRows = 0
@@ -27,6 +28,12 @@ final class MoERouterGateBox {
         self.numExperts = max(1, numExperts)
         self.inFeatures = max(1, inFeatures)
         self.expertScale = expertScale
+    }
+
+    func recordRouted(indices: MLXArray, gates: MLXArray) {
+        let routed = (indices.reshaped(-1).asType(.int32), gates.reshaped(-1).asType(.float32))
+        eval(routed.0, routed.1)
+        lastRouted = routed
     }
 
     func record(input: MLXArray, logits: MLXArray) {
@@ -85,6 +92,7 @@ final class MoERWSwitchReservoir {
     var poolProbs: [MLXArray] = []
     var poolCount = 0
     var totalAssignments = 0
+    var unweightedCalls = 0
 
     init(inFeatures: Int, numExperts: Int, maxRows: Int, gateBox: MoERouterGateBox?) {
         self.inFeatures = inFeatures
@@ -113,27 +121,34 @@ final class MoERWSwitchReservoir {
     }
 
     private func resolveGates(idCount: Int, xRows: Int, xFlat: MLXArray, sortedIndices: Bool) -> [Float] {
+        if let routed = gateBox?.lastRouted, routed.indices.size == idCount {
+            recordFallbackPool(xFlat: xFlat, probs: nil)
+            return ordered(routed.gates, indices: routed.indices, sortedIndices: sortedIndices)
+        }
         guard let z = gateBox?.lastLogits else {
             recordFallbackPool(xFlat: xFlat, probs: nil)
+            unweightedCalls += 1
             return Array(repeating: 1.0, count: idCount)
         }
         let zRows = max(1, z.size / max(1, numExperts))
         let topK = max(1, idCount / zRows)
         guard zRows * topK == idCount else {
             recordFallbackPool(xFlat: xFlat, probs: nil)
+            unweightedCalls += 1
             return Array(repeating: 1.0, count: idCount)
         }
         let top = MoERouterWeightedHessian.topKGating(logits: z, topK: topK)
         let scale = gateBox?.expertScale
         let weights = scale.map { top.weights * $0.take(top.indices, axis: 0) } ?? top.weights
         recordFallbackPool(xFlat: xFlat, probs: xRows == zRows ? scale.map { top.fullProbs * $0 } ?? top.fullProbs : nil)
-        if sortedIndices {
-            let order = argSort(top.indices.reshaped(-1))
-            let sortedW = weights.reshaped(-1).take(order, axis: 0)
-            eval(sortedW)
-            return sortedW.asArray(Float.self)
-        }
-        return weights.reshaped(-1).asArray(Float.self)
+        return ordered(weights, indices: top.indices, sortedIndices: sortedIndices)
+    }
+
+    private func ordered(_ gates: MLXArray, indices: MLXArray, sortedIndices: Bool) -> [Float] {
+        guard sortedIndices else { return gates.reshaped(-1).asArray(Float.self) }
+        let sortedW = gates.reshaped(-1).take(argSort(indices.reshaped(-1)), axis: 0)
+        eval(sortedW)
+        return sortedW.asArray(Float.self)
     }
 
     private func recordFallbackPool(xFlat: MLXArray, probs: MLXArray?) {

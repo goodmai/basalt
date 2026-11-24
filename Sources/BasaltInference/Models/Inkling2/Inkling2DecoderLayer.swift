@@ -59,16 +59,17 @@ final class Inkling2DecoderLayer: Module {
     }
 
     func callAsFunction(
-        _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
+        _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?, probe: (any ForwardProbe)? = nil
     ) -> (MLXArray, MLXArray?) {
-        if (1 ... Self.compiledRows).contains(hidden.dim(1)), !training, let out = compiledDecode(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages) { return out }
-        return eager(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages)
+        if probe == nil, (1 ... Self.compiledRows).contains(hidden.dim(1)), !training,
+           let out = compiledDecode(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages) { return out }
+        return eager(hidden, blocks: blocks, cache: cache, conv: conv, messages: messages, probe: probe)
     }
 
     static let compiledRows = 8
 
     func eager(
-        _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?
+        _ hidden: MLXArray, blocks: MLXArray?, cache: KVCache?, conv: ArraysCache?, messages: MLXArray?, probe: (any ForwardProbe)? = nil
     ) -> (MLXArray, MLXArray?) {
         let dtype = hidden.dtype
         var states: [MLXArray?] = (0 ..< 4).map { conv?[$0] }
@@ -87,7 +88,7 @@ final class Inkling2DecoderLayer: Module {
         }
         var x = mlpInput(blocks!, Inkling2Ops.unitRMS(residual))[.ellipsis, 0, 0...]
         if let mlpGate, let messages { x = mlpGate(x, message: messages[.ellipsis, 3, 0...]) }
-        let (afterMLP, mlpWindow) = postMLPConv(mlp(postAttentionNorm(x).asType(dtype)), state: states[3])
+        let (afterMLP, mlpWindow) = postMLPConv(mlp(postAttentionNorm(x).asType(dtype), probe: probe, layer: index), state: states[3])
         states[3] = mlpWindow
         if let conv {
             let windows = states.compactMap { $0 }
