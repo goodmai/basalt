@@ -180,6 +180,8 @@ public struct EditProgram: Sendable, Codable, Equatable {
     public var baseModelFingerprint: String
     public var approval: EditApprovalStatus
     public var pairedTest: PairedTestSummary?
+    public var targetScope: EditTargetScope?
+    public var maxAlpha: Float?
     public var ops: [EditOp]
 
     enum CodingKeys: String, CodingKey {
@@ -188,6 +190,8 @@ public struct EditProgram: Sendable, Codable, Equatable {
         case baseModelFingerprint = "base_model_fingerprint"
         case approval
         case pairedTest = "paired_test"
+        case targetScope = "target_scope"
+        case maxAlpha = "max_alpha"
         case ops
     }
 
@@ -204,7 +208,16 @@ public struct EditProgram: Sendable, Codable, Equatable {
         self.baseModelFingerprint = baseModelFingerprint
         self.approval = approval
         self.pairedTest = pairedTest
+        self.targetScope = nil
+        self.maxAlpha = nil
         self.ops = ops
+    }
+
+    public func withPolicy(targetScope: EditTargetScope? = nil, maxAlpha: Float? = nil) -> EditProgram {
+        var copy = self
+        if let targetScope { copy.targetScope = targetScope }
+        if let maxAlpha { copy.maxAlpha = maxAlpha }
+        return copy
     }
 
     public var referencedTensorKeys: [String] {
@@ -235,6 +248,28 @@ public struct EditOpMetrics: Sendable, Codable, Equatable {
     ) {
         self.opIndex = opIndex
         self.target = target
+        self.rmse = rmse
+        self.maxAbsError = maxAbsError
+        self.relativeError = relativeError
+    }
+}
+
+public struct QuantizationRoundTripMetrics: Sendable, Codable, Equatable {
+    public let tensor: String
+    public let format: String
+    public let rmse: Float
+    public let maxAbsError: Float
+    public let relativeError: Float
+
+    public init(
+        tensor: String,
+        format: String,
+        rmse: Float,
+        maxAbsError: Float,
+        relativeError: Float
+    ) {
+        self.tensor = tensor
+        self.format = format
         self.rmse = rmse
         self.maxAbsError = maxAbsError
         self.relativeError = relativeError

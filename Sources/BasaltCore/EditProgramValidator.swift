@@ -4,6 +4,8 @@ public enum EditForbiddenTargetKind: String, Sendable, Equatable {
     case embedding
     case finalNorm = "final_norm"
     case lmHead = "lm_head"
+    case multimodalTower = "multimodal_tower"
+    case perLayerProjection = "per_layer_projection"
 }
 
 public enum EditValidationError: Error, Sendable, Equatable, CustomStringConvertible {
@@ -38,7 +40,7 @@ public enum EditValidationError: Error, Sendable, Equatable, CustomStringConvert
         case .wholeTensorRescale(let target, let reason):
             return "whole-tensor rescale refused on '\(target)': \(reason)"
         case .alphaOutOfRange(let module, let alpha):
-            return "rank1Damp alpha on '\(module)' must be finite with |alpha| <= 1, got \(alpha)"
+            return "rank1Damp alpha on '\(module)' must be finite and within maxAlpha, got \(alpha)"
         case .nonFiniteValue(let target, let detail):
             return "non-finite value for '\(target)': \(detail)"
         case .invalidClipFactor(let tensor, let factor):
@@ -60,6 +62,9 @@ public enum EditValidationError: Error, Sendable, Equatable, CustomStringConvert
 }
 
 public enum EditProgramValidator {
+    public static let defaultMaxAlpha: Float = 1.0
+    public static let maxAllowedResearchAlpha: Float = 10.0
+
     private static let wrapperPrefixes: Set<String> = [
         "base_model", "language_model", "model", "transformer", "backbone", "text_model", "decoder",
     ]
@@ -72,8 +77,15 @@ public enum EditProgramValidator {
     private static let lmHeadSegments: Set<String> = [
         "lm_head", "output_head", "unembed",
     ]
+    private static let multimodalSegments: Set<String> = [
+        "vision_tower", "audio_tower", "vision_embedder", "embed_vision", "embed_audio",
+        "multi_modal_projector", "mm_projector",
+    ]
+    private static let perLayerModelProjectionSegments: Set<String> = [
+        "per_layer_model_projection", "per_layer_projection_norm",
+    ]
     private static let scaleLeafSegments: Set<String> = [
-        "scales", "global_scale", "weight_scale", "layer_scalar", "per_expert_scale",
+        "scale", "scales", "global_scale", "weight_scale", "layer_scalar", "per_expert_scale",
         "input_scale", "output_scale", "pre_scale", "row_scale",
     ]
 
@@ -89,6 +101,10 @@ public enum EditProgramValidator {
         guard maxOps > 0 else { throw .tooManyOps(count: program.ops.count, limit: maxOps) }
         guard !program.ops.isEmpty else { throw .emptyProgram }
         guard program.ops.count <= maxOps else { throw .tooManyOps(count: program.ops.count, limit: maxOps) }
+        let alphaLimit = program.maxAlpha ?? Self.defaultMaxAlpha
+        guard alphaLimit.isFinite, alphaLimit > 0, alphaLimit <= Self.maxAllowedResearchAlpha else {
+            throw .alphaOutOfRange(module: "program.max_alpha", alpha: alphaLimit)
+        }
         if let paired = program.pairedTest {
             try validatePairedTest(paired)
         }
@@ -99,8 +115,14 @@ public enum EditProgramValidator {
                 guard referenced.contains(key) else { throw .unexpectedTensor(key: key) }
             }
         }
+        let policy = OpValidationPolicy(
+            scope: program.targetScope ?? .textBackboneOnly,
+            maxAlpha: alphaLimit,
+            tensorShapes: tensorShapes,
+            tensorValues: tensorValues
+        )
         for op in program.ops {
-            try validateOp(op, tensorShapes: tensorShapes, tensorValues: tensorValues)
+            try validateOp(op, policy: policy)
         }
     }
 
@@ -122,15 +144,22 @@ public enum EditProgramValidator {
         }
     }
 
-    public static func forbiddenTargetKind(for path: String) -> EditForbiddenTargetKind? {
+    public static func forbiddenTargetKind(
+        for path: String,
+        scope: EditTargetScope = .textBackboneOnly
+    ) -> EditForbiddenTargetKind? {
         let segments = path.split(separator: ".").map { $0.lowercased() }
         guard !segments.isEmpty else { return nil }
         for segment in segments {
-            if embeddingSegments.contains(segment) || segment.hasPrefix("embed_") || segment.hasPrefix("word_embedding") || segment.hasPrefix("tok_embedding") {
+            if embeddingSegments.contains(segment) || segment.hasPrefix("embed_tokens") || segment.hasPrefix("word_embedding") || segment.hasPrefix("tok_embedding") {
                 return .embedding
             }
             if lmHeadSegments.contains(segment) {
                 return .lmHead
+            }
+            if scope == .textBackboneOnly {
+                if multimodalSegments.contains(segment) { return .multimodalTower }
+                if perLayerModelProjectionSegments.contains(segment) { return .perLayerProjection }
             }
         }
         var stripped = segments[...]
@@ -148,6 +177,18 @@ public enum EditProgramValidator {
         return scaleLeafSegments.contains(leaf)
     }
 
+    public static func isPartialExpertScaleShift(_ op: EditOp, shape: [Int]?) -> Bool {
+        guard case .shift(let tensor, let start, let count, _) = op,
+              tensor.split(separator: ".").last?.lowercased() == "per_expert_scale",
+              start >= 0, count > 0
+        else {
+            return false
+        }
+        guard let shape else { return true }
+        guard shape.count == 1, let total = shape.first, total > 1 else { return false }
+        return count < total
+    }
+
     public static func isNormWeight(_ path: String) -> Bool {
         let segments = path.split(separator: ".").map { $0.lowercased() }
         guard segments.count >= 2, segments.last == "weight" else { return false }
@@ -157,6 +198,13 @@ public enum EditProgramValidator {
 }
 
 extension EditProgramValidator {
+    private struct OpValidationPolicy {
+        let scope: EditTargetScope
+        let maxAlpha: Float
+        let tensorShapes: [String: [Int]]?
+        let tensorValues: [String: [Float]]?
+    }
+
     private static func validatePairedTest(_ summary: PairedTestSummary) throws(EditValidationError) {
         let metrics = [summary.baseAccuracy, summary.editedAccuracy, summary.delta, summary.standardError]
         guard summary.problemCount >= 0, summary.wrongToRight >= 0, summary.rightToWrong >= 0,
@@ -167,13 +215,12 @@ extension EditProgramValidator {
 
     private static func validateOp(
         _ op: EditOp,
-        tensorShapes: [String: [Int]]?,
-        tensorValues: [String: [Float]]?
+        policy: OpValidationPolicy
     ) throws(EditValidationError) {
-        try validateTargetAndOperands(op, tensorValues: tensorValues)
+        try validateTargetAndOperands(op, policy: policy)
         switch op {
         case .rank1Damp(let module, _, let alpha):
-            guard alpha.isFinite, abs(alpha) <= 1.0 else {
+            guard alpha.isFinite, abs(alpha) <= policy.maxAlpha else {
                 throw .alphaOutOfRange(module: module, alpha: alpha)
             }
         case .rank1(let module, _, _, let scale):
@@ -181,31 +228,31 @@ extension EditProgramValidator {
                 throw .nonFiniteValue(target: module, detail: "scale must be finite")
             }
         case .shift(let tensor, let start, let count, _):
-            try validateShift(tensor: tensor, start: start, count: count, shape: tensorShapes?[tensor])
+            try validateShift(tensor: tensor, start: start, count: count, shape: policy.tensorShapes?[tensor])
         case .clip(let tensor, let factor):
             guard factor.isFinite, factor > 0 else {
                 throw .invalidClipFactor(tensor: tensor, factor: factor)
             }
         case .rows(let tensor, let rowIndices, _):
-            try validateRows(tensor: tensor, rowIndices: rowIndices, shape: tensorShapes?[tensor])
+            try validateRows(tensor: tensor, rowIndices: rowIndices, shape: policy.tensorShapes?[tensor])
         }
     }
 
     private static func validateTargetAndOperands(
         _ op: EditOp,
-        tensorValues: [String: [Float]]?
+        policy: OpValidationPolicy
     ) throws(EditValidationError) {
         try validateIdentifier(op.targetName, field: "target")
         for key in op.tensorKeys {
             try validateIdentifier(key, field: "tensor_key")
         }
-        if let forbidden = forbiddenTargetKind(for: op.targetName) {
+        if let forbidden = forbiddenTargetKind(for: op.targetName, scope: policy.scope) {
             throw .forbiddenTarget(target: op.targetName, kind: forbidden)
         }
-        if isScaleTensor(op.targetName) {
+        if isScaleTensor(op.targetName), !isPartialExpertScaleShift(op, shape: policy.tensorShapes?[op.targetName]) {
             throw .wholeTensorRescale(target: op.targetName, reason: "mutating scale parameters rescales the tensor")
         }
-        guard let tensorValues else { return }
+        guard let tensorValues = policy.tensorValues else { return }
         for key in op.tensorKeys {
             guard let values = tensorValues[key] else { throw .missingTensor(key: key) }
             guard values.allSatisfy(\.isFinite) else {

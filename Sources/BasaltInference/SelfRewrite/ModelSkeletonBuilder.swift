@@ -73,9 +73,8 @@ enum ModelSkeletonBuilder {
            let config: Qwen3Configuration = reflectedChild(of: qwen3, matching: Qwen3Configuration.self) {
             return Qwen3Model(config)
         }
-        if let gemma4 = original as? MLXLLM::Gemma4TextModel,
-           let config: MLXLLM::Gemma4TextConfiguration = reflectedChild(of: gemma4, matching: MLXLLM::Gemma4TextConfiguration.self) {
-            return MLXLLM::Gemma4TextModel(config)
+        if let gemma4 = try buildGemma4FromMirror(original) {
+            return gemma4
         }
         if let lfm2 = original as? LFM2Model,
            let config: LFM2Configuration = reflectedChild(of: lfm2, matching: LFM2Configuration.self) {
@@ -133,7 +132,9 @@ extension ModelSkeletonBuilder {
     static func extractLoRAScales(from model: Module) -> [String: Float] {
         var scales: [String: Float] = [:]
         for (path, module) in model.namedModules() where module is LoRALayer {
-            if let scale: Float = reflectedChild(of: module, matching: Float.self) {
+            if let edit = module as? EditRankOneLinear {
+                scales[path] = edit.scale
+            } else if let scale: Float = reflectedChild(of: module, matching: Float.self) {
                 scales[path] = scale
             }
         }
@@ -175,10 +176,18 @@ extension ModelSkeletonBuilder {
     static func cloneLeafSharingArrays(_ module: Module) -> Module? {
         if let cloned = cloneLoRASharingBase(module) { return cloned }
         if let cloned = cloneLinearSharingArrays(module) { return cloned }
+        if let cloned = cloneSwitchSharingArrays(module) { return cloned }
         return cloneEmbeddingSharingArrays(module)
     }
 
     private static func cloneLoRASharingBase(_ module: Module) -> Module? {
+        if let edit = module as? EditRankOneLinear {
+            let base = (cloneLinearSharingArrays(edit.baseLinear) as? Linear) ?? edit.baseLinear
+            let cloned = EditRankOneLinear(base: base, loraA: edit.loraA, loraB: edit.loraB, scale: edit.scale)
+            cloned.loraEnabled = edit.loraEnabled
+            cloned.train(edit.training)
+            return cloned
+        }
         guard module is LoRALinear || module is QLoRALinear,
               let lora = module as? LoRALayer,
               let base = lora.reverted() as? Linear else { return nil }
@@ -193,10 +202,18 @@ extension ModelSkeletonBuilder {
 
     private static func cloneLinearSharingArrays(_ module: Module) -> Module? {
         if let nf4 = module as? NF4Linear {
-            return try? NF4Linear(weight: nf4.weight, bias: nf4.bias, scales: nf4.scales, groupSize: nf4.groupSize)
+            let cloned = try? NF4Linear(weight: nf4.weight, bias: nf4.bias, scales: nf4.scales, groupSize: nf4.groupSize)
+            cloned?.train(nf4.training)
+            return cloned
         }
         if let mac = module as? MACaQQuantizedLinear {
-            return cloneMACaQ(mac)
+            let packed = MACaQPackedWeights(weight: mac.weight, scales: mac.scales, biases: mac.biases)
+            return EditOpExecutor.makeMACaQ(from: mac, packed: packed, bias: mac.bias)
+        }
+        if let smallM = module as? SmallMQuantizedLinear {
+            let cloned = SmallMQuantizedLinear(replacing: smallM)
+            cloned.train(smallM.training)
+            return cloned
         }
         if let quantized = module as? QuantizedLinear,
            ObjectIdentifier(type(of: quantized)) == ObjectIdentifier(QuantizedLinear.self) {
@@ -216,21 +233,6 @@ extension ModelSkeletonBuilder {
         return nil
     }
 
-    private static func cloneMACaQ(_ mac: MACaQQuantizedLinear) -> Module {
-        var spec = MACaQLayerSpec(bits: mac.bits, groupSize: mac.groupSize, mode: mac.mode, hadamardBlock: mac.hadamardBlock)
-        spec.scaleDType = "\(mac.scales.dtype)"
-        spec.hasBias = mac.bias != nil
-        let packed = MACaQPackedWeights(weight: mac.weight, scales: mac.scales, biases: mac.biases)
-        let cloned = MACaQQuantizedLinear(
-            packed: packed, bias: mac.bias, preScale: mac.preScale,
-            spec: spec, rowScale: mac.rowScale, activationMode: mac.activationMode
-        )
-        cloned.useSmallMKernel = mac.useSmallMKernel
-        cloned.useQ3Kernel = mac.useQ3Kernel
-        cloned.train(mac.training)
-        return cloned
-    }
-
     private static func cloneEmbeddingSharingArrays(_ module: Module) -> Module? {
         if let quantizedEmbed = module as? QuantizedEmbedding,
            ObjectIdentifier(type(of: quantizedEmbed)) == ObjectIdentifier(QuantizedEmbedding.self) {
@@ -245,6 +247,81 @@ extension ModelSkeletonBuilder {
         if let embed = module as? Embedding, ObjectIdentifier(type(of: embed)) == ObjectIdentifier(Embedding.self) {
             let cloned = Embedding(weight: embed.weight)
             cloned.train(embed.training)
+            return cloned
+        }
+        return nil
+    }
+}
+
+extension ModelSkeletonBuilder {
+    static func buildGemma4FromMirror(_ original: any LanguageModel) throws -> (any LanguageModel)? {
+        if let gemma4 = original as? MLXLLM::Gemma4TextModel,
+           let config: MLXLLM::Gemma4TextConfiguration = reflectedChild(of: gemma4, matching: MLXLLM::Gemma4TextConfiguration.self) {
+            return MLXLLM::Gemma4TextModel(config)
+        }
+        if let gemma4Wrapper = original as? MLXLLM::Gemma4Model,
+           let textModel = gemma4Wrapper.namedModules().first(where: { $0.0 == "language_model" })?.1 as? MLXLLM::Gemma4TextModel,
+           let textConfig: MLXLLM::Gemma4TextConfiguration = reflectedChild(of: textModel, matching: MLXLLM::Gemma4TextConfiguration.self) {
+            let encoded = try JSONEncoder().encode(textConfig)
+            let wrapperConfig = try JSONDecoder().decode(MLXLLM::Gemma4Configuration.self, from: encoded)
+            return MLXLLM::Gemma4Model(wrapperConfig)
+        }
+        if let gemma4VLM = original as? MLXVLM::Gemma4 {
+            return MLXVLM::Gemma4(gemma4VLM.config)
+        }
+        if let gemma4Unified = original as? MLXVLM::Gemma4Unified {
+            return MLXVLM::Gemma4Unified(gemma4Unified.config)
+        }
+        return nil
+    }
+
+    static func cloneSwitchSharingArrays(_ module: Module) -> Module? {
+        if let mac = module as? MACaQSwitchLinear {
+            let params = Dictionary(mac.parameters().flattened(), uniquingKeysWith: { first, _ in first })
+            guard let weight = params["weight"] else { return nil }
+            let geometry = MACaQSwitchGeometry(experts: weight.dim(0), outputs: weight.dim(1), inputs: mac.scales.dim(2) * mac.groupSize)
+            var spec = MACaQLayerSpec(bits: mac.bits, groupSize: mac.groupSize, mode: mac.mode, hadamardBlock: mac.hadamardBlock)
+            spec.scaleDType = "\(mac.scales.dtype)"
+            spec.hasBias = params["bias"] != nil
+            spec.perExpertPreScale = mac.preScale.ndim == 2
+            let packed = MACaQPackedWeights(weight: weight, scales: mac.scales, biases: mac.biases)
+            let cloned = MACaQSwitchLinear(geometry: geometry, packed: packed, bias: params["bias"], preScale: mac.preScale, spec: spec)
+            cloned.activationDType = mac.activationDType
+            cloned.useQ3Kernel = mac.useQ3Kernel
+            cloned.train(mac.training)
+            return cloned
+        }
+        if let nf4 = module as? NF4SwitchLinear {
+            let params = Dictionary(nf4.parameters().flattened(), uniquingKeysWith: { first, _ in first })
+            guard let weight = params["weight"] else { return nil }
+            let cloned = try? NF4SwitchLinear(
+                inputDims: weight.dim(2) * 8, outputDims: weight.dim(1), numExperts: weight.dim(0),
+                weight: weight, bias: params["bias"], scales: nf4.scales, groupSize: nf4.groupSize
+            )
+            cloned?.train(nf4.training)
+            return cloned
+        }
+        if let quantized = module as? QuantizedSwitchLinear,
+           ObjectIdentifier(type(of: quantized)) == ObjectIdentifier(QuantizedSwitchLinear.self) {
+            let params = Dictionary(quantized.parameters().flattened(), uniquingKeysWith: { first, _ in first })
+            guard let weight = params["weight"], let scales = params["scales"] else { return nil }
+            let cloned = QuantizedSwitchLinear(
+                weight: weight, scales: scales, biases: params["biases"], bias: params["bias"],
+                inputDims: scales.dim(2) * quantized.groupSize, outputDims: weight.dim(1), numExperts: weight.dim(0),
+                groupSize: quantized.groupSize, bits: quantized.bits, mode: quantized.mode, globalScale: quantized.globalScale
+            )
+            cloned.train(quantized.training)
+            return cloned
+        }
+        if let sw = module as? SwitchLinear,
+           ObjectIdentifier(type(of: sw)) == ObjectIdentifier(SwitchLinear.self) {
+            let params = Dictionary(sw.parameters().flattened(), uniquingKeysWith: { first, _ in first })
+            guard let weight = params["weight"] else { return nil }
+            let cloned = SwitchLinear(
+                inputDims: weight.dim(2), outputDims: weight.dim(1), numExperts: weight.dim(0),
+                weight: weight, bias: params["bias"]
+            )
+            cloned.train(sw.training)
             return cloned
         }
         return nil

@@ -109,6 +109,10 @@ public struct WeightCopy: ~Copyable {
         return try WeightCopyBudgetPlanner.plan(program: program, state: state, budgetBytes: budgetBytes?.rawValue)
     }
 
+    public func measureRoundTrip(tensor: String) throws -> QuantizationRoundTripMetrics {
+        try EditOpExecutor.measureQuantizationRoundTrip(tensorName: tensor, on: try model)
+    }
+
     public var accounting: WeightCopyAccounting {
         guard let copyModel else {
             return WeightCopyAccounting(editedBytes: 0, fusedProjectionBytes: 0, editedTensors: [], fusedGroups: [])
@@ -328,7 +332,7 @@ extension WeightCopy {
             let module = modules[modulePath]
             let moduleBytes = module.map { Int64(TensorPacker.bytes($0)) } ?? Int64(view.array.nbytes)
             let computeBytes: Int64 = if let linear = module as? Linear {
-                Int64(PEFTLoRAReader.computeType(of: linear).size)
+                Int64(EditOpExecutor.computeType(of: linear).size)
             } else {
                 Int64(view.array.itemSize)
             }
@@ -354,7 +358,7 @@ extension WeightCopy {
                     shape: [outputs, inputs],
                     byteCount: Int64(base.weight.nbytes),
                     moduleByteCount: Int64(TensorPacker.bytes(base)),
-                    computeElementBytes: Int64(PEFTLoRAReader.computeType(of: base).size),
+                    computeElementBytes: Int64(EditOpExecutor.computeType(of: base).size),
                     fusedGroupKey: memberToGroup[path]
                 )
             }
