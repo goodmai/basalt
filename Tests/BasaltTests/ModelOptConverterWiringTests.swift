@@ -44,7 +44,9 @@ struct ModelOptConverterWiringTests {
             guard let scales = written[stem + ".scales"], let global = written[stem + ".global_scale"], let exact = original[key] else { continue }
             let deq = MLX.dequantized(weight, scales: scales, biases: nil, groupSize: 16, bits: 4, mode: .nvfp4, dtype: .float32)
             let factor = (global.asType(.float32) / (448 * 6)).reshaped(global.ndim == 1 ? [-1, 1, 1] : [])
-            worst = max(worst, Self.relativeRMSE(deq * factor, exact))
+            let error = Self.relativeRMSE(deq * factor, exact)
+            #expect(error.isFinite, "\(stem) relative RMSE \(error)")
+            worst = max(worst, error)
             #expect(global.ndim == (weight.ndim == 3 ? 1 : 0), "\(stem) global_scale shape \(global.shape)")
             expertScales += weight.ndim == 3 ? 1 : 0
             checked += 1
