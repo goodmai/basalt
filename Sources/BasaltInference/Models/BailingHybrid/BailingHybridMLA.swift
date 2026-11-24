@@ -30,7 +30,7 @@ package final class BailingHybridMLAAttention: Module {
     package init(_ config: BailingHybridConfiguration, layerIdx: Int) {
         self.layerIdx = layerIdx
         self.numHeads = config.numAttentionHeads
-        self.kvHeads = config.numAttentionHeads
+        self.kvHeads = 1
         self.qkNopeHeadDim = config.qkNopeHeadDim
         self.qkRopeHeadDim = config.qkRopeHeadDim
         self.qkHeadDim = config.qkHeadDim
@@ -82,59 +82,25 @@ package final class BailingHybridMLAAttention: Module {
     ) -> MLXArray {
         let batch = x.dim(0)
         let length = x.dim(1)
-
-        let rawQ = projectQuery(x).reshaped(batch, length, numHeads, qkHeadDim).transposed(0, 2, 1, 3)
-        let splitQ = split(rawQ, indices: [qkNopeHeadDim], axis: -1)
-        let (qNope, qPeRaw) = (splitQ[0], splitQ[1])
-
-        let compressed = kvAProjWithMqa(x)
-        let splitCompressed = split(compressed, indices: [kvLoraRank], axis: -1)
-        let kvLatent = kvALayerNorm(splitCompressed[0])
-        let kPeRaw = splitCompressed[1].reshaped(batch, length, 1, qkRopeHeadDim).transposed(0, 2, 1, 3)
-
-        let kv = kvBProj(kvLatent)
-            .reshaped(batch, length, numHeads, qkNopeHeadDim + vHeadDim)
-            .transposed(0, 2, 1, 3)
-        let splitKV = split(kv, indices: [qkNopeHeadDim], axis: -1)
-        let (kNope, values) = (splitKV[0], splitKV[1])
-
-        let offset = cache?.ropeOffset
-        let qPe = applyRotaryPosition(rope, to: qPeRaw, offset: offset)
-        let kPeRotated = applyRotaryPosition(rope, to: kPeRaw, offset: offset)
-        let kPe = broadcast(kPeRotated, to: [batch, numHeads, length, qkRopeHeadDim])
-
-        let queries = concatenated([qNope, qPe], axis: -1)
-        let keys = concatenated([kNope, kPe], axis: -1)
-
-        let attended = attentionWithCacheUpdate(
-            queries: queries,
-            keys: keys,
-            values: values,
-            cache: cache,
-            scale: scale,
+        let (qNope, qPe) = projectAndRotateQuery(x, batch: batch, length: length, offset: cache?.ropeOffset)
+        let (kvLatent, kPe) = projectAndRotateLatentKV(x, batch: batch, length: length, offset: cache?.ropeOffset)
+        let (cachedLatent, cachedKPe): (MLXArray, MLXArray)
+        if let cache {
+            (cachedLatent, cachedKPe) = cache.update(keys: kvLatent, values: kPe)
+        } else {
+            (cachedLatent, cachedKPe) = (kvLatent, kPe)
+        }
+        let attended = attendFromLatent(
+            qNope: qNope,
+            qPe: qPe,
+            cachedLatent: cachedLatent,
+            cachedKPe: cachedKPe,
             mask: mask
         )
-        var merged = attended.transposed(0, 2, 1, 3)
-        if let gProj {
-            let gate = sigmoid(gProj(x).asType(.float32)).asType(x.dtype)
-            if gateGranularity == "head_wise" {
-                merged = merged * gate.expandedDimensions(axis: -1)
-            } else {
-                merged = merged * gate.reshaped(batch, length, numHeads, vHeadDim)
-            }
-        }
-        if let probe {
-            var perHead = merged.transposed(0, 2, 1, 3)
-            if let headMask = probe.headMask(layer: layerIdx) {
-                perHead = perHead * headMask.reshaped(1, numHeads, 1, 1).asType(perHead.dtype)
-            }
-            probe.headOutputs(layer: layerIdx, perHead)
-            merged = perHead.transposed(0, 2, 1, 3)
-        }
-        return dense(merged.reshaped(batch, length, -1))
+        return finalizeOutput(attended, input: x, batch: batch, length: length, probe: probe)
     }
 
-    private func projectQuery(_ x: MLXArray) -> MLXArray {
+    func projectQuery(_ x: MLXArray) -> MLXArray {
         if let qAProj, let qALayerNorm, let qBProj {
             return qBProj(qALayerNorm(qAProj(x)))
         }
@@ -155,5 +121,175 @@ package final class BailingHybridMLAAttention: Module {
         let mscale = 0.1 * mscaleAllDim * log(factor) + 1.0
         scale *= mscale * mscale
         return scale
+    }
+}
+
+extension BailingHybridMLAAttention {
+    package func forwardNonAbsorbed(
+        _ x: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode,
+        cache: KVCache?,
+        probe: (any ForwardProbe)? = nil
+    ) -> MLXArray {
+        let batch = x.dim(0)
+        let length = x.dim(1)
+        let (qNope, qPe) = projectAndRotateQuery(x, batch: batch, length: length, offset: cache?.ropeOffset)
+        let (kvLatent, kPeRotated) = projectAndRotateLatentKV(x, batch: batch, length: length, offset: cache?.ropeOffset)
+        let kv = kvBProj(kvLatent.squeezed(axis: 1))
+            .reshaped(batch, length, numHeads, qkNopeHeadDim + vHeadDim)
+            .transposed(0, 2, 1, 3)
+        let splitKV = split(kv, indices: [qkNopeHeadDim], axis: -1)
+        let (kNope, values) = (splitKV[0], splitKV[1])
+        let kPe = broadcast(kPeRotated, to: [batch, numHeads, length, qkRopeHeadDim])
+        let queries = concatenated([qNope, qPe], axis: -1)
+        let keys = concatenated([kNope, kPe], axis: -1)
+        let attended = attentionWithCacheUpdate(
+            queries: queries,
+            keys: keys,
+            values: values,
+            cache: cache,
+            scale: scale,
+            mask: mask
+        )
+        return finalizeOutput(attended, input: x, batch: batch, length: length, probe: probe)
+    }
+
+    func projectAndRotateQuery(
+        _ x: MLXArray,
+        batch: Int,
+        length: Int,
+        offset: RoPEOffset?
+    ) -> (MLXArray, MLXArray) {
+        let rawQ = projectQuery(x).reshaped(batch, length, numHeads, qkHeadDim).transposed(0, 2, 1, 3)
+        let splitQ = split(rawQ, indices: [qkNopeHeadDim], axis: -1)
+        let qPe = applyRotaryPosition(rope, to: splitQ[1], offset: offset)
+        return (splitQ[0], qPe)
+    }
+
+    func projectAndRotateLatentKV(
+        _ x: MLXArray,
+        batch: Int,
+        length: Int,
+        offset: RoPEOffset?
+    ) -> (MLXArray, MLXArray) {
+        let compressed = kvAProjWithMqa(x)
+        let splitCompressed = split(compressed, indices: [kvLoraRank], axis: -1)
+        let kvLatent = kvALayerNorm(splitCompressed[0])
+            .reshaped(batch, length, 1, kvLoraRank)
+            .transposed(0, 2, 1, 3)
+        let kPeRaw = splitCompressed[1]
+            .reshaped(batch, length, 1, qkRopeHeadDim)
+            .transposed(0, 2, 1, 3)
+        let kPe = applyRotaryPosition(rope, to: kPeRaw, offset: offset)
+        return (kvLatent, kPe)
+    }
+}
+
+extension BailingHybridMLAAttention {
+    func attendFromLatent(
+        qNope: MLXArray,
+        qPe: MLXArray,
+        cachedLatent: MLXArray,
+        cachedKPe: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        if let absorbed = attendAbsorbed(
+            qNope: qNope,
+            qPe: qPe,
+            cachedLatent: cachedLatent,
+            cachedKPe: cachedKPe,
+            mask: mask
+        ) {
+            return absorbed
+        }
+        return attendExpandedFromLatent(
+            qNope: qNope,
+            qPe: qPe,
+            cachedLatent: cachedLatent,
+            cachedKPe: cachedKPe,
+            mask: mask
+        )
+    }
+
+    private func attendAbsorbed(
+        qNope: MLXArray,
+        qPe: MLXArray,
+        cachedLatent: MLXArray,
+        cachedKPe: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray? {
+        guard BailingHybridMLAAbsorption.canAbsorb(kvBProj) else { return nil }
+        let queries: MLXArray
+        let keys: MLXArray
+        if qkNopeHeadDim > 0 {
+            guard let qAbsorbed = BailingHybridMLAAbsorption.embedQuery(
+                qNope, kvBProj: kvBProj, heads: numHeads, nopeDim: qkNopeHeadDim, vDim: vHeadDim
+            ) else { return nil }
+            queries = concatenated([qAbsorbed, qPe], axis: -1)
+            keys = concatenated([cachedLatent, cachedKPe], axis: -1)
+        } else {
+            queries = qPe
+            keys = cachedKPe
+        }
+        let latentOut = MLXFast.scaledDotProductAttention(
+            queries: queries,
+            keys: keys,
+            values: cachedLatent,
+            scale: scale,
+            mask: mask
+        )
+        return BailingHybridMLAAbsorption.unembedOutput(
+            latentOut, kvBProj: kvBProj, heads: numHeads, nopeDim: qkNopeHeadDim, vDim: vHeadDim
+        )
+    }
+
+    private func attendExpandedFromLatent(
+        qNope: MLXArray,
+        qPe: MLXArray,
+        cachedLatent: MLXArray,
+        cachedKPe: MLXArray,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        let batch = cachedLatent.dim(0)
+        let total = cachedLatent.dim(2)
+        let kv = kvBProj(cachedLatent.squeezed(axis: 1))
+            .reshaped(batch, total, numHeads, qkNopeHeadDim + vHeadDim)
+            .transposed(0, 2, 1, 3)
+        let splitKV = split(kv, indices: [qkNopeHeadDim], axis: -1)
+        let kPe = broadcast(cachedKPe, to: [batch, numHeads, total, qkRopeHeadDim])
+        return MLXFast.scaledDotProductAttention(
+            queries: concatenated([qNope, qPe], axis: -1),
+            keys: concatenated([splitKV[0], kPe], axis: -1),
+            values: splitKV[1],
+            scale: scale,
+            mask: mask
+        )
+    }
+
+    func finalizeOutput(
+        _ attended: MLXArray,
+        input x: MLXArray,
+        batch: Int,
+        length: Int,
+        probe: (any ForwardProbe)?
+    ) -> MLXArray {
+        var merged = attended.transposed(0, 2, 1, 3)
+        if let gProj {
+            let gate = sigmoid(gProj(x).asType(.float32)).asType(x.dtype)
+            if gateGranularity == "head_wise" {
+                merged = merged * gate.expandedDimensions(axis: -1)
+            } else {
+                merged = merged * gate.reshaped(batch, length, numHeads, vHeadDim)
+            }
+        }
+        if let probe {
+            var perHead = merged.transposed(0, 2, 1, 3)
+            if let headMask = probe.headMask(layer: layerIdx) {
+                perHead = perHead * headMask.reshaped(1, numHeads, 1, 1).asType(perHead.dtype)
+            }
+            probe.headOutputs(layer: layerIdx, perHead)
+            merged = perHead.transposed(0, 2, 1, 3)
+        }
+        return dense(merged.reshaped(batch, length, -1))
     }
 }

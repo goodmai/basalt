@@ -118,7 +118,7 @@ public final class BailingHybridModel: Module, LLMModel, KVCacheDimensionProvide
     public init(_ config: BailingHybridConfiguration) {
         self.configuration = config
         self.vocabularySize = config.vocabSize
-        self.kvHeads = Array(repeating: config.numAttentionHeads, count: config.numHiddenLayers)
+        self.kvHeads = (0 ..< config.numHiddenLayers).map { config.isMLALayer($0) ? 1 : config.numAttentionHeads }
         self._model.wrappedValue = BailingHybridModelInner(config)
         if !config.tieWordEmbeddings {
             self._lmHead.wrappedValue = Linear(config.hiddenSize, config.vocabSize, bias: false)

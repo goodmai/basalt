@@ -206,8 +206,13 @@ public struct KVCacheGeometry: Sendable, Equatable {
     static func fullAttentionShape(
         _ c: [String: Any], heads: Int, kvHeads: Int, headDim: Int
     ) -> (heads: Int, keyDim: Int, valueDim: Int) {
-        if c["kv_lora_rank"] is Int, let nope = c["qk_nope_head_dim"] as? Int, let rope = c["qk_rope_head_dim"] as? Int {
-            return (heads, nope + rope, c["v_head_dim"] as? Int ?? nope)
+        if let rank = c["kv_lora_rank"] as? Int, let rope = c["qk_rope_head_dim"] as? Int {
+            if (c["model_type"] as? String) == "bailing_hybrid" || c["layer_group_size"] is Int {
+                return (1, rank, rope)
+            }
+            if let nope = c["qk_nope_head_dim"] as? Int {
+                return (heads, nope + rope, c["v_head_dim"] as? Int ?? nope)
+            }
         }
         let dim = c["global_head_dim"] as? Int ?? headDim
         let globalHeads = c["attention_k_eq_v"] as? Bool == true ? c["num_global_key_value_heads"] as? Int : nil
