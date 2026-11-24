@@ -144,7 +144,7 @@ enum GroupLatentCapture {
     static func sweep(_ model: any LanguageModel, batches: [[Int32]], maxLayers: Int, log: ModelRunLog) throws -> [GroupLatentRow] {
         let root = model as Module
         root.train(false)
-        let routers = routerSites(in: root)
+        let routers = MoERWPipeline.discoverRouters(in: root)
         let blocks = Set(root.namedModules().compactMap { PVTuner.textBlockIndex($0.0) }).sorted().prefix(maxLayers)
         var rows: [GroupLatentRow] = []
         for block in blocks {
@@ -156,24 +156,6 @@ enum GroupLatentCapture {
             Memory.clearCache()
         }
         return rows
-    }
-
-    static func routerSites(in root: Module) -> [Int: MoERWPipeline.RouterSite] {
-        var sites = MoERWPipeline.discoverRouters(in: root)
-        for (path, module) in root.namedModules() where path.hasSuffix(".router.proj") {
-            guard let block = PVTuner.textBlockIndex(path), sites[block] == nil else { continue }
-            let dims: (out: Int, inp: Int)? = if let q = module as? QuantizedLinear {
-                (q.weight.dim(0), q.weight.dim(1) * 32 / q.bits)
-            } else if let linear = module as? Linear {
-                linear.shape
-            } else {
-                nil
-            }
-            if let dims {
-                sites[block] = .init(block: block, path: path, module: module, numExperts: dims.out, inFeatures: dims.inp)
-            }
-        }
-        return sites
     }
 
     static func measureBlock(
