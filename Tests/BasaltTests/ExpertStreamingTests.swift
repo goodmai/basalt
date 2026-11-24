@@ -158,8 +158,8 @@ struct ExpertStreamingParityTests {
         return directory
     }
 
-    static func quantized(_ family: String) async throws -> URL {
-        let source = fixtures.appendingPathComponent(family)
+    static func quantized(_ source: URL) async throws -> URL {
+        let family = source.lastPathComponent
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-\(family)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var config = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: source.appendingPathComponent("config.json"))) as? [String: Any])
@@ -174,10 +174,11 @@ struct ExpertStreamingParityTests {
     }
 
     @Test("Logits are bitwise equal and 16 greedy tokens identical with a cache that holds every expert, half of them, or none beyond the current call",
-          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe"], [false, true])
+          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe", "qwen3_next"], [false, true])
     func parity(family: String, quantized: Bool) async throws {
-        let directory = quantized ? try await Self.quantized(family) : Self.fixtures.appendingPathComponent(family)
-        defer { if quantized { try? FileManager.default.removeItem(at: directory) } }
+        let source = try Self.source(family)
+        let directory = quantized ? try await Self.quantized(source) : source
+        defer { Self.removeGenerated(source, directory) }
         let resident = try await Self.outputs(try await loadModelContainer(from: directory, using: ByteTokenizerLoader()))
         let full = try await Self.streamed(directory, cache: ByteCount(1 << 30))
         let total = try #require(await full.perform { ExpertStreamingLoader.store(in: $0.model)?.expertBytes })
@@ -359,10 +360,11 @@ struct ExpertStreamingPrefetchTests {
         #expect(warm.stats.hitRate > cold.stats.hitRate)
     }
 
-    @Test("Next-layer speculative prefetch resolves routers across all four MoE families, issues async reads, and matches unprefetched greedy decode bitwise",
-          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe"])
+    @Test("Next-layer speculative prefetch resolves routers across all five MoE families, issues async reads, and matches unprefetched greedy decode bitwise",
+          arguments: ["lfm2_moe", "gemma4_moe", "qwen3_moe", "qwen3_5_moe", "qwen3_next"])
     func nextLayerPrefetchParity(family: String) async throws {
-        let directory = ExpertStreamingParityTests.fixtures.appendingPathComponent(family)
+        let directory = try ExpertStreamingParityTests.source(family)
+        defer { ExpertStreamingParityTests.removeGenerated(directory) }
         func runSingleToken(prefetch: Bool) async throws -> (tokens: [Int], logits: [Float], stats: ExpertCacheStats) {
             let container = try await ExpertStreamingParityTests.streamed(directory, cache: ByteCount(1 << 30))
             return try await container.perform { context in
@@ -386,5 +388,23 @@ struct ExpertStreamingPrefetchTests {
         #expect(prefetched.tokens == plain.tokens, "\(family)")
         #expect(prefetched.logits == plain.logits, "\(family)")
         #expect(prefetched.stats.prefetched > 0 && plain.stats.prefetched == 0, "\(family)")
+    }
+}
+
+extension ExpertStreamingParityTests {
+    static func source(_ family: String) throws -> URL {
+        guard family == "qwen3_next" else { return fixtures.appendingPathComponent(family) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-qwen3-next-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data(TinyModel.Family.qwen3Next.config.utf8).write(to: directory.appendingPathComponent("config.json"))
+        let model = try TinyModel.make(.qwen3Next)
+        try save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("model.safetensors"))
+        return directory
+    }
+
+    static func removeGenerated(_ directories: URL...) {
+        for directory in directories where !directory.path.hasPrefix(fixtures.path) {
+            try? FileManager.default.removeItem(at: directory)
+        }
     }
 }
