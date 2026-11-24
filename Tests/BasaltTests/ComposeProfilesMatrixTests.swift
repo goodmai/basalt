@@ -41,7 +41,7 @@ struct ComposeProfilesMatrixTests {
         let bundledKeys = ComposeFile.bundled.keys.sorted()
         #expect(ComposeProfileCatalog.flux3Combinations.count == 5)
         #expect(ComposeProfileCatalog.videoCombinations.count == 5)
-        #expect(ComposeProfileCatalog.v22Specialists.count == 9)
+        #expect(ComposeProfileCatalog.v22Specialists.count == 14)
         #expect(bundledKeys.count == 91 + 4 * 13 + 3 + 5 + 5 + ComposeProfileCatalog.v22Specialists.count)
         for key in bundledKeys {
             let spec = try ComposeFile.load(key)
