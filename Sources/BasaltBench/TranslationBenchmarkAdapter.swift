@@ -162,6 +162,7 @@ public struct TranslationBenchmarkAdapter: BenchmarkAdapter {
     public let id = "basalt:translation"
     public let tier = BenchmarkAdapterTier.pureSwift
     public let summary = "Pure-Swift translation quality benchmark (chrF++, COMET, MetricX-24, technical Markdown fidelity) with lite and full modes"
+    public var defaultSubmissionTarget: SubmissionTarget? { .mtLeaderboard }
 
     public init() {}
 
@@ -253,6 +254,8 @@ public struct TranslationBenchmarkAdapter: BenchmarkAdapter {
             record.completionTokens = usage.completion
             record.passed = passed
             record.metadata["target_lang"] = item.targetLang
+            record.metadata["lang_pair"] = "en-\(item.targetLang)"
+            record.metadata["reference"] = item.reference
             record.metadata["chrf_pp"] = String(format: "%.2f", score.chrfPP)
             record.metadata["comet"] = String(format: "%.4f", score.comet)
             record.metadata["metricx24"] = String(format: "%.2f", score.metricX24)
