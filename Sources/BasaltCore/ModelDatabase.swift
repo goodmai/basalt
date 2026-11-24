@@ -275,19 +275,16 @@ public struct ModelDatabase: Sendable {
                 ramMB: 59500, contextWindow: 131072, quantization: "bfloat16", quality: 0.97,
                 totalParameters: 30.0, activeParameters: 30.0)
         )
-    ]
+    ] + translateGemmaModels
 
-    /// Zero-I/O compile-time lookup by exact ID
     public static func find(id: String) -> ModelDefinition? {
         allModels.first { $0.id == id }
     }
 
-    /// Zero-I/O compile-time filter by model family
     public static func models(for family: ModelFamily) -> [ModelDefinition] {
         allModels.filter { $0.family == family }
     }
 
-    /// Zero-I/O compile-time filter by task
     public static func models(for task: ModelTask) -> [ModelDefinition] {
         allModels.filter { $0.task == task }
     }
