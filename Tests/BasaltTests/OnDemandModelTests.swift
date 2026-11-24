@@ -1,56 +1,110 @@
 import Testing
 import Foundation
+import Synchronization
 @testable import BasaltCore
 @testable import BasaltServer
 
-actor ManualSleep {
-    private var waiting: [Int: CheckedContinuation<Void, Error>] = [:]
-    private var watchers: [CheckedContinuation<Void, Never>] = []
-    private var next = 0
+final class SteppingClock: Clock, Sendable {
+    struct Instant: InstantProtocol, Sendable {
+        let offset: Duration
 
-    var pending: Int { waiting.count }
+        func advanced(by duration: Duration) -> Instant {
+            Instant(offset: offset + duration)
+        }
 
-    func sleep() async throws {
-        let id = next
-        next += 1
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                waiting[id] = continuation
-                for watcher in watchers { watcher.resume() }
-                watchers.removeAll()
-            }
-        } onCancel: {
-            Task { await self.cancel(id) }
+        func duration(to other: Instant) -> Duration {
+            other.offset - offset
+        }
+
+        static func < (lhs: Instant, rhs: Instant) -> Bool {
+            lhs.offset < rhs.offset
         }
     }
 
-    func cancel(_ id: Int) {
-        waiting.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    private struct Waiter: Sendable {
+        let deadline: Instant
+        let continuation: CheckedContinuation<Void, any Error>
     }
 
-    func fire() {
-        let all = waiting
-        waiting.removeAll()
-        for continuation in all.values { continuation.resume() }
+    private struct State: Sendable {
+        var now = Instant(offset: .zero)
+        var nextID = 0
+        var pending: Set<Int> = []
+        var waiters: [Int: Waiter] = [:]
+        var cancelled: Set<Int> = []
     }
 
-    func waitForSleeper() async {
-        guard waiting.isEmpty else { return }
-        await withCheckedContinuation { watchers.append($0) }
+    private let state = Mutex(State())
+
+    var now: Instant { state.withLock { $0.now } }
+    var minimumResolution: Duration { .nanoseconds(1) }
+    var pendingWaiters: Int { state.withLock { $0.waiters.count } }
+
+    func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
+        try Task.checkCancellation()
+        let id = state.withLock { state -> Int? in
+            if deadline <= state.now { return nil }
+            let id = state.nextID
+            state.nextID += 1
+            state.pending.insert(id)
+            return id
+        }
+        guard let id else { return }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let action: Result<Void, any Error>? = state.withLock { state in
+                    state.pending.remove(id)
+                    if state.cancelled.remove(id) != nil { return .failure(CancellationError()) }
+                    if deadline <= state.now { return .success(()) }
+                    state.waiters[id] = Waiter(deadline: deadline, continuation: continuation)
+                    return nil
+                }
+                switch action {
+                case .success: continuation.resume()
+                case .failure(let error): continuation.resume(throwing: error)
+                case nil: break
+                }
+            }
+        } onCancel: {
+            let continuation = state.withLock { state -> CheckedContinuation<Void, any Error>? in
+                if let waiter = state.waiters.removeValue(forKey: id) {
+                    return waiter.continuation
+                }
+                if state.pending.contains(id) {
+                    state.cancelled.insert(id)
+                }
+                return nil
+            }
+            continuation?.resume(throwing: CancellationError())
+        }
+    }
+
+    func advance(by duration: Duration) {
+        guard duration > .zero else { return }
+        let due: [CheckedContinuation<Void, any Error>] = state.withLock { state in
+            state.now = state.now.advanced(by: duration)
+            let expiredIDs = state.waiters.compactMap { $0.value.deadline <= state.now ? $0.key : nil }
+            return expiredIDs.compactMap { state.waiters.removeValue(forKey: $0)?.continuation }
+        }
+        for continuation in due {
+            continuation.resume()
+        }
     }
 }
 
 @Suite("On-demand models: loaded by the first use, kept while in use, unloaded after the idle time, reloaded on the next use (#412)", .timeLimit(.minutes(1)))
 struct OnDemandModelTests {
-    static func model(_ engine: MockInferenceEngine, _ clock: ManualSleep) async throws -> OnDemandModel {
+    static func model(_ engine: MockInferenceEngine, _ clock: SteppingClock) async throws -> OnDemandModel {
         let directory = try OCRAPITests.modelDirectory("GLM-OCR", modelType: "glm_ocr")
         let orchestrator = ModelOrchestratorActor(engine: engine, telemetry: TelemetryTracker())
-        return OnDemandModel(model: orchestrator, path: directory.path, idle: .seconds(120)) { _ in try await clock.sleep() }
+        return OnDemandModel(model: orchestrator, path: directory.path, idle: .seconds(120), clock: clock)
     }
 
     static func waitUntil(_ model: OnDemandModel, _ phase: OnDemandCore.Phase) async {
         guard await model.phase != phase else { return }
-        for await next in model.phases where next == phase { return }
+        for await next in model.phases where next == phase {
+            if await model.phase == phase { return }
+        }
     }
 
     @Test("The core: one load for concurrent users, an expiry only for the last release, and a stale expiry is ignored")
@@ -67,22 +121,28 @@ struct OnDemandModelTests {
         #expect(core.expire(now) && core.phase == .unloading && core.enter() == .wait)
         core.unloaded()
         #expect(core.enter() == .load)
+        core.loaded(true)
+        let currentEpoch = core.loadEpoch
+        #expect(core.enter() == .ready && core.leave(epoch: currentEpoch - 1) == nil && core.users == 1)
+        #expect(core.leave(epoch: currentEpoch) != nil && core.users == 0)
     }
 
     @Test("First acquire loads and reports the load time, the next reuses; the idle timer unloads, and the next acquire reloads")
     func lifecycle() async throws {
-        let (engine, clock) = (MockInferenceEngine(), ManualSleep())
+        let (engine, clock) = (MockInferenceEngine(), SteppingClock())
         let model = try await Self.model(engine, clock)
         #expect(await model.phase == .unloaded)
         _ = try await model.acquire()
         #expect(try await model.acquire() == .zero)
         await model.release()
-        #expect(await clock.pending == 0)
+        clock.advance(by: .seconds(120))
+        let warmPhase = await model.phase
+        #expect(clock.pendingWaiters == 0 && warmPhase == .loaded)
         await model.release()
-        await clock.waitForSleeper()
+        clock.advance(by: .seconds(119))
         let (loaded, loads) = (await engine.isLoaded, await engine.loadCount)
         #expect(loaded && loads == 1)
-        await clock.fire()
+        clock.advance(by: .seconds(1))
         await Self.waitUntil(model, .unloaded)
         #expect(await !engine.isLoaded)
         _ = try await model.acquire()
@@ -92,13 +152,13 @@ struct OnDemandModelTests {
 
     @Test("A use before the idle time cancels the pending unload")
     func useCancelsExpiry() async throws {
-        let (engine, clock) = (MockInferenceEngine(), ManualSleep())
+        let (engine, clock) = (MockInferenceEngine(), SteppingClock())
         let model = try await Self.model(engine, clock)
         _ = try await model.acquire()
         await model.release()
-        await clock.waitForSleeper()
+        clock.advance(by: .seconds(60))
         _ = try await model.acquire()
-        await clock.fire()
+        clock.advance(by: .seconds(120))
         let (phase, loaded) = (await model.phase, await engine.isLoaded)
         #expect(phase == .loaded && loaded)
         await model.release()
@@ -106,7 +166,7 @@ struct OnDemandModelTests {
 
     @Test("A failed load is thrown, leaves the model unloaded, and the next acquire tries again")
     func failedLoad() async throws {
-        let (engine, clock) = (MockInferenceEngine(), ManualSleep())
+        let (engine, clock) = (MockInferenceEngine(), SteppingClock())
         let model = try await Self.model(engine, clock)
         await engine.failLoads(1)
         await #expect(throws: BasaltError.self) { _ = try await model.acquire() }
@@ -119,7 +179,7 @@ struct OnDemandModelTests {
 
     @Test("End to end on /v1/pipeline: an on-demand OCR model loads on the first document, the receipt shows the load time, it unloads after the idle time and reloads for the next document")
     func pipeline() async throws {
-        let (ocrEngine, clock) = (MockInferenceEngine(), ManualSleep())
+        let (ocrEngine, clock) = (MockInferenceEngine(), SteppingClock())
         await ocrEngine.setResponder { _ in "Invoice total: 42" }
         let held = try await Self.model(ocrEngine, clock)
         var stages = PipelineStages(ocr: held.model, abstainBelow: 0.5)
@@ -130,9 +190,8 @@ struct OnDemandModelTests {
         #expect(first.status == .ok)
         #expect(((first.json["perceived"] as? [String: Any])?["pages"] as? [[String: Any]])?.first?["markdown"] as? String == "Invoice total: 42")
         #expect((first.json["receipt"] as? [String: Any])?["swap_ms"] is Int)
-        await clock.waitForSleeper()
         #expect(await ocrEngine.isLoaded)
-        await clock.fire()
+        clock.advance(by: .seconds(120))
         await Self.waitUntil(held, .unloaded)
         let second = try await PipelineAPITests.post(chat, decisions: nil, stages: stages, body)
         #expect(second.status == .ok)

@@ -58,6 +58,15 @@ public struct OnDemandCore: Sendable, Equatable {
         users = 0
         generation += 1
     }
+
+    static func idleWaiter<C: Clock>(
+        _ clock: C
+    ) -> @Sendable (Duration) -> @Sendable () async throws -> Void where C.Duration == Duration {
+        { duration in
+            let deadline = clock.now.advanced(by: duration)
+            return { try await clock.sleep(until: deadline, tolerance: nil) }
+        }
+    }
 }
 
 public actor OnDemandModel {
@@ -67,7 +76,7 @@ public actor OnDemandModel {
     public private(set) var adapters: [String: URL]
     public nonisolated let phases: AsyncStream<OnDemandCore.Phase>
     private let announce: AsyncStream<OnDemandCore.Phase>.Continuation
-    private let sleep: @Sendable (Duration) async throws -> Void
+    private let makeIdleWait: @Sendable (Duration) -> @Sendable () async throws -> Void
     private var core = OnDemandCore()
     private var transition: Task<Result<Void, BasaltError>, Never>?
     private var timer: Task<Void, Never>?
@@ -79,7 +88,18 @@ public actor OnDemandModel {
         adapters: [String: URL] = [:],
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
-        (self.model, self.path, self.idle, self.adapters, self.sleep) = (model, path, idle, adapters, sleep)
+        (self.model, self.path, self.idle, self.adapters) = (model, path, idle, adapters)
+        self.makeIdleWait = { duration in { try await sleep(duration) } }
+        (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+    }
+
+    public init<C: Clock>(
+        model: any ModelOrchestrating, path: String, idle: Duration,
+        adapters: [String: URL] = [:],
+        clock: C
+    ) where C.Duration == Duration {
+        (self.model, self.path, self.idle, self.adapters) = (model, path, idle, adapters)
+        self.makeIdleWait = OnDemandCore.idleWaiter(clock)
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -196,8 +216,9 @@ public actor OnDemandModel {
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [weak self, sleep, idle] in
-            guard (try? await sleep(idle)) != nil else { return }
+        let wait = makeIdleWait(idle)
+        timer = Task { [weak self] in
+            guard (try? await wait()) != nil else { return }
             await self?.expire(generation)
         }
     }
@@ -205,7 +226,7 @@ public actor OnDemandModel {
     func expire(_ generation: Int) async {
         guard core.expire(generation) else { return }
         let task = Task { [model] () async -> Result<Void, BasaltError> in
-            await model.unloadModel()
+            await withTaskCancellationShield { await model.unloadModel() }
             return .success(())
         }
         transition = task

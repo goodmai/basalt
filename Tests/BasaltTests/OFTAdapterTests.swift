@@ -392,10 +392,12 @@ struct OFTTrainingPipelineAndSurfaceTests {
         let engine = try await TinyModel.engine(.qwen3)
         let container = try #require(await engine.container)
         let before = await DistillTests.baseWeights(container)
-        var request = try OnPolicyDistillTests.onPolicy(host, prompts: 8, in: directory)
+        var request = try OnPolicyDistillTests.onPolicy(host, prompts: 16, in: directory)
+        request.layers = [1, 3]
         request.method = .oft(blockSize: 8, parameterization: .cayley, blockShared: false)
-        request.iterations = 40
-        request.learningRate = 5e-3
+        request.batchSize = 2
+        request.iterations = 16
+        request.learningRate = 3e-3
         let report = try await engine.distill(
             request,
             session: URLSession(configuration: StubURLProtocol.configuration),
@@ -404,7 +406,7 @@ struct OFTTrainingPipelineAndSurfaceTests {
         )
         let klBefore = try #require(report.reverseKLBefore)
         let klAfter = try #require(report.reverseKLAfter)
-        #expect(klAfter < klBefore, "\(klBefore) -> \(klAfter)")
+        #expect(klAfter < klBefore, "\(klBefore) -> \(klAfter), losses \(report.losses)")
         let saved = try OFTAdapterContainer.from(directory: directory.appending(path: "adapter"))
         #expect(saved.configuration.oftParameters.parameterization == .cayley)
         if let overlay = report.verdict?.overlay { try await engine.undo(overlay.id) }

@@ -49,7 +49,11 @@ struct OnPolicyRun: Sendable {
     func sample(_ prompt: OnPolicyPrompt, seed: UInt64, _ context: ModelContext) throws -> DistillRow {
         try Task.checkCancellation()
         let stops = MLXInferenceEngine.stopTokenIds(context)
-        let parameters = GenerateParameters(maxTokens: min(request.teacher.maxTokens, request.maxSeqLen - prompt.ids.count), temperature: request.teacher.temperature)
+        let parameters = GenerateParameters(
+            maxTokens: min(request.teacher.maxTokens, request.maxSeqLen - prompt.ids.count),
+            temperature: request.teacher.temperature,
+            seed: seed
+        )
         let completion = try withRandomState(MLXRandom.RandomState(seed: seed)) {
             var iterator = try TokenIterator(input: LMInput(tokens: MLXArray(prompt.ids.map(Int32.init))), model: context.model, parameters: parameters)
             var tokens: [Int] = []

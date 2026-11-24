@@ -337,7 +337,7 @@ extension MLXInferenceEngine {
         let stops = stopTokenIds(context)
         let promptIds = try labPrompt(prompt, context)
         let tokens = try withRandomState(MLXRandom.RandomState(seed: seed)) {
-            let params = GenerateParameters(maxTokens: answerTokens, temperature: 0.9)
+            let params = GenerateParameters(maxTokens: answerTokens, temperature: 0.9, seed: seed)
             var iterator = try TokenIterator(
                 input: LMInput(tokens: MLXArray(promptIds.map(Int32.init))),
                 model: context.model,
