@@ -336,9 +336,6 @@ extension EditOpExecutor {
             throw WeightCopyError.invalidOperation("module '\(path)' not found")
         }
         if let lora = module as? LoRALayer, let base = lora.reverted() as? Linear, MLXInferenceEngine.restorable(base) {
-            if let reason = MLXInferenceEngine.microscaledLoRARefusal(base, path: path) {
-                throw WeightCopyError.invalidOperation(reason)
-            }
             let params = Dictionary(lora.parameters().flattened(), uniquingKeysWith: { first, _ in first })
             guard let loraA = params["lora_a"], let loraB = params["lora_b"] else {
                 throw WeightCopyError.invalidOperation("module '\(path)' carries a non-LoRA adapter")
@@ -347,9 +344,6 @@ extension EditOpExecutor {
         }
         guard let linear = module as? Linear, MLXInferenceEngine.restorable(linear) else {
             throw WeightCopyError.invalidOperation("module '\(path)' is not a plain Linear or QuantizedLinear")
-        }
-        if let reason = MLXInferenceEngine.microscaledLoRARefusal(linear, path: path) {
-            throw WeightCopyError.invalidOperation(reason)
         }
         return (linear, nil)
     }
