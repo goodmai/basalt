@@ -151,7 +151,8 @@ extension MLXInferenceEngine {
         do {
             try faults.check(.load)
             if let gpuCacheLimit = configuration.gpuCacheLimit { Memory.cacheLimit = gpuCacheLimit }
-            let source = ropeSource(directory, modelType: modelType, modelPath: modelPath)
+            let rope = ropeSourceWithStatus(directory, modelType: modelType, modelPath: modelPath)
+            let source = rope.url
             let loaded = try await loadContainer(from: source)
             let smallM = configuration.smallMKernel
             let q3 = configuration.q3Kernel
@@ -172,7 +173,8 @@ extension MLXInferenceEngine {
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: source),
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
-                transcribesAudio: transcribes, prefillScratch: prefillScratch(at: directory))
+                transcribesAudio: transcribes, prefillScratch: prefillScratch(at: directory),
+                ropeStatus: rope.status)
             guard attach(loaded, facts: facts, epoch: epoch, warming: true) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await warmUp(loaded, directory: directory, epoch: epoch)
@@ -257,15 +259,26 @@ extension MLXInferenceEngine {
 
     static let ropeStagingRoot = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".basalt/rope-yarn")
 
+    public var ropeStatus: ModelRoPEStatus { modelFacts.ropeStatus }
+
     func ropeSource(_ directory: URL, modelType: String?, modelPath: String) -> URL {
-        guard let factor = configuration.ropeYarn else { return directory }
+        ropeSourceWithStatus(directory, modelType: modelType, modelPath: modelPath).url
+    }
+
+    func ropeSourceWithStatus(_ directory: URL, modelType: String?, modelPath: String) -> (url: URL, status: ModelRoPEStatus) {
+        let native = RopeYarnStage.nativeContext(at: directory)
+        guard let factor = configuration.ropeYarn else {
+            return (directory, ModelRoPEStatus(factor: nil, nativeContext: native, effectiveContext: native))
+        }
         do throws(RopeYarnStage.Refusal) {
             let staged = try RopeYarnStage.stage(directory: directory, modelType: modelType, factor: factor, root: Self.ropeStagingRoot)
             logger.info("--rope-yarn \(factor): YaRN over \(staged.nativeContext) native tokens, effective context \(staged.effectiveContext) (config staged at \(staged.directory.path))")
-            return staged.directory
+            let status = ModelRoPEStatus(factor: factor, nativeContext: staged.nativeContext, effectiveContext: staged.effectiveContext)
+            return (staged.directory, status)
         } catch {
-            logger.warn("--rope-yarn \(factor) does not apply to \(modelPath): \(error.reason); the model loads with its stock RoPE")
-            return directory
+            let warning = "--rope-yarn \(factor) does not apply to \(modelPath): \(error.reason); the model loads with its stock RoPE"
+            logger.warn(warning)
+            return (directory, ModelRoPEStatus(factor: nil, nativeContext: native, effectiveContext: native, loadWarnings: [warning]))
         }
     }
 

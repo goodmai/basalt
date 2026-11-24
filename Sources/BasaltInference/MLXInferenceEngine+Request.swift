@@ -236,6 +236,12 @@ extension MLXInferenceEngine {
 
     func launching(_ input: LMInput, _ prompt: CachedPrompt, options: LaunchOptions, container: ModelContainer) async throws -> GenerationLaunch {
         try faults.check(.launch)
+        if let warning = modelFacts.ropeStatus.contextOverflowWarning(
+            promptTokens: input.text.tokens.dim(-1),
+            maxTokens: options.params.maxTokens ?? 0
+        ) {
+            logger.warn(warning)
+        }
         return try await container.performEvaluating(nonSendable: (input, prompt)) { context, values in
             try Self.launch(input: values.0, prompt: values.1, options: options, context: context)
         }

@@ -14,6 +14,16 @@ enum RopeYarnStage {
 
     static let modelTypes: Set<String> = ["qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text"]
 
+    static func nativeContext(at directory: URL) -> Int? {
+        guard let data = try? Data(contentsOf: directory.appending(component: "config.json")),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let text = (root["text_config"] as? [String: Any]) ?? root
+        guard let native = text["max_position_embeddings"] as? Int, native > 0 else { return nil }
+        return native
+    }
+
     static func refusal(modelType: String?) -> Refusal? {
         guard let modelType else { return Refusal(reason: "config.json names no model_type") }
         if modelType.hasPrefix("gemma4") {

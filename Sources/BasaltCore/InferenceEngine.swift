@@ -22,6 +22,7 @@ public protocol InferenceEngine: AudioTranscriber {
     func pace(with pacer: PrefillPacer) async
     var adapterNames: [String] { get async }
     var activeAdapter: String? { get async }
+    var ropeStatus: ModelRoPEStatus { get async }
     func loadAdapters(_ directories: [String: URL]) async throws(BasaltError)
     func useAdapter(_ name: String?) async throws(BasaltError)
     var transcribesAudio: Bool { get async }
@@ -47,6 +48,7 @@ extension InferenceEngine {
     public func pace(with pacer: PrefillPacer) async {}
     public var adapterNames: [String] { get async { [] } }
     public var activeAdapter: String? { get async { nil } }
+    public var ropeStatus: ModelRoPEStatus { get async { .empty } }
     public func useAdapter(_ name: String?) async throws(BasaltError) {}
     public var transcribesAudio: Bool { get async { false } }
     public var takesImages: Bool { get async { true } }

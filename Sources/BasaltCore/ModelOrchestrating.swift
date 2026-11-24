@@ -21,6 +21,7 @@ public protocol ModelOrchestrating: Actor {
     var modelInfo: String { get }
     var isLoaded: Bool { get async }
     var adapterNames: [String] { get async }
+    var ropeStatus: ModelRoPEStatus { get async }
     var transcribesAudio: Bool { get async }
     var readsDocuments: Bool { get }
 
@@ -63,6 +64,10 @@ public protocol ModelOrchestrating: Actor {
 }
 
 extension ModelOrchestrating {
+    public var ropeStatus: ModelRoPEStatus {
+        get async { .empty }
+    }
+
     public func sharedImagePromptEmbedding(_ prompt: String, dimension: Int) async throws -> [Float]? {
         nil
     }
