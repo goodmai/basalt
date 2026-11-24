@@ -221,7 +221,7 @@ struct BatchRotatingKVCacheTests {
 struct BatchedDecoderTests {
 
     @Test("Four prompts of different lengths decoded together match their solo greedy decode for 32 steps, on plain attention, recurrent hybrids and sliding-window models",
-          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
+          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe, .bailingHybrid])
     func fourRowsMatchSolo(family: TinyModel.Family) async throws {
         let model = try TinyModel.make(family)
         let expected = try BatchFixture.prompts.map { BatchFixture.text(try BatchFixture.soloGreedy(model, $0, steps: 32)) }
@@ -235,7 +235,7 @@ struct BatchedDecoderTests {
     }
 
     @Test("A row joining mid-flight and rows retiring on EOS or max tokens leave the other rows' tokens unchanged, on plain attention, recurrent hybrids and sliding-window models",
-          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe])
+          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .gemma4, .gemma4Moe, .bailingHybrid])
     func joinAndRetire(family: TinyModel.Family) async throws {
         let model = try TinyModel.make(family)
         let prompts = BatchFixture.prompts
@@ -330,7 +330,7 @@ struct BatchedRoutingTests {
     }
 
     @Test("With 4 batch slots and 4 concurrent generations, streaming or not, each request gets its solo output and telemetry, on plain attention and on recurrent hybrids",
-          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2])
+          .timeLimit(.minutes(10)), arguments: [TinyModel.Family.qwen3Small, .qwen35, .nemotronH, .lfm2, .bailingHybrid])
     func orchestratorBatchesFourRequests(family: TinyModel.Family) async throws {
         let expected = try await Self.solo(4, family: family)
         let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 4)

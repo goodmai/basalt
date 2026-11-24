@@ -12,7 +12,7 @@ struct FeatureMatrixTests {
 
         func applies(to family: TinyModel.Family) -> Bool {
             switch self {
-            case .lookup: ![.qwen35Moe, .qwen3Next, .lfm2Moe, .sigmoidMoe].contains(family)
+            case .lookup: ![.qwen35Moe, .qwen3Next, .lfm2Moe, .sigmoidMoe, .bailingHybrid].contains(family)
             case .mtp: [.qwen35, .prism].contains(family)
             case .cacheBlend: [.qwen3, .qwen3HeadDim32].contains(family)
             case .kvZones, .headSplit, .headSplitZoned: [.qwen3HeadDim32, .qwen3Next].contains(family)

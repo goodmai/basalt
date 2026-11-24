@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid
 
         func model(_ config: Data) throws -> any LanguageModel {
             let decoder = JSONDecoder.json5()
@@ -26,7 +26,7 @@ enum TinyModel {
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next: try multimodalModel(config, decoder: decoder)
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -41,6 +41,7 @@ enum TinyModel {
             if self == .gemma4Unified { return try TinyGemma4Unified.model(config) }
             if self == .inkling2Loop { return try Inkling2Model(configurationData: config) }
             if self == .qwen3Next { return Qwen3NextModel(try decoder.decode(Qwen3NextConfiguration.self, from: config)) }
+            if self == .bailingHybrid { return try BailingHybridModel(configurationData: config) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
             if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
@@ -71,13 +72,14 @@ enum TinyModel {
             case .ltxVideo: 584
             case .kandinskyCrossDiT: 585
             case .moeVideoDiT: 586
+            case .bailingHybrid: 672
             }
         }
 
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid: 1
             }
         }
 
@@ -219,56 +221,8 @@ enum TinyModel {
                   "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
                  "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
-            case .flint: """
-                {"model_type": "flint", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
-                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
-                 "sliding_window": \(slidingWindow), "use_sliding_window": true,
-                 "layer_types": ["full_attention", "sliding_attention", "sliding_attention", "full_attention"],
-                 "no_rope_layer_indices": [0, 3], "mlp_only_layers": [0, 1],
-                 "num_experts": 8, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
-                 "shared_expert_intermediate_size": 32, "router_score_function": "sigmoid",
-                 "norm_topk_prob": true, "router_expert_bias": true, "softmax_type": "learnable",
-                 "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false}
-                """
-            case .ricursive: """
-                {"model_type": "ricursive", "hidden_size": 64, "num_hidden_layers": 5, "intermediate_size": 128,
-                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
-                 "sliding_window": \(slidingWindow),
-                 "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
-                 "use_gated_attention": true, "gate_full_precision": true, "use_valres": true,
-                 "ffn_clamp_threshold": 20.0, "embed_scale": 8.0, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
-                 "tie_word_embeddings": false}
-                """
-            case .museGlimmerText: """
-                {"model_type": "muse_glimmer_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
-                 "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
-                 "sliding_window": \(slidingWindow), "qk_scale_factor": 3.87, "output_multiplier": 0.19611613,
-                 "final_logit_softcapping": 20.0, "rms_norm_eps": 1e-5, "post_norm_eps": 1e-8,
-                 "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
-                 "layer_rope_theta": [500000.0, 500000.0, 500000.0, 0.0], "tie_word_embeddings": false}
-                """
-            case .museGlimmer: """
-                {"model_type": "muse_glimmer", "image_token_id": 254, "video_token_id": 253,
-                 "out_hidden_size": 64, "projector_hidden_size": 64,
-                 "text_config": \(Self.museGlimmerText.config),
-                 "vision_config": {"model_type": "muse_glimmer_vision", "hidden_size": 16, "intermediate_size": 32,
-                  "num_hidden_layers": 2, "num_attention_heads": 2, "patch_size": 14, "patch_temporal": 2, "merge_size": 2,
-                  "max_position_embeddings": 16, "pos_emb_height": 4, "pos_emb_width": 4, "layer_norm_eps": 1e-5,
-                  "layer_types": ["window_attention", "full_attention"]}}
-                """
-            case .ltxVideo: """
-                {"model_type": "ltx_video", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
-                 "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
-                """
-            case .kandinskyCrossDiT: """
-                {"model_type": "kandinsky_cross_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
-                 "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
-                """
-            case .moeVideoDiT: """
-                {"model_type": "moe_video_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
-                 "num_attention_heads": 4, "intermediate_size": 64, "video_channels": 16, "audio_channels": 8,
-                 "num_experts": 4, "num_experts_per_tok": 2}
-                """
+            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid:
+                extendedConfig
             }
         }
     }
@@ -281,28 +235,7 @@ enum TinyModel {
         let config = "{" + extra + family.config.dropFirst()
         let model = try withRandomState(MLXRandom.RandomState(seed: family.seed)) {
             let model = try family.model(Data(config.utf8))
-            if family == .sigmoidMoe {
-                let router = model.parameters().flattened().filter { $0.0.hasSuffix(".gate.weight") || $0.0.hasSuffix(".e_score_correction_bias") }
-                model.update(parameters: ModuleParameters.unflattened(router.map { ($0.0, MLXRandom.normal($0.1.shape)) }))
-            } else if family == .flint {
-                let specialized = model.parameters().flattened().filter {
-                    $0.0.hasSuffix(".gate.weight") || $0.0.hasSuffix(".expert_bias") || $0.0.hasSuffix(".softmax_offset")
-                }
-                model.update(parameters: ModuleParameters.unflattened(specialized.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.25) }))
-            } else if family == .inkling2Loop {
-                let zeroed = model.parameters().flattened().filter { key, _ in
-                    [".query", ".proj", ".static_weight", "conv1d.weight", ".gate.weight", ".e_score_correction_bias"].contains { key.hasSuffix($0) }
-                }
-                model.update(parameters: ModuleParameters.unflattened(zeroed.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.25) }))
-            } else if family == .ricursive {
-                let lambdas = model.parameters().flattened().filter { $0.0.hasSuffix(".value_res_lambda") }
-                model.update(parameters: ModuleParameters.unflattened(lambdas.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.5) }))
-            } else if family == .museGlimmer || family == .museGlimmerText {
-                let centered = model.parameters().flattened().filter {
-                    $0.0.hasSuffix("_layernorm.weight")
-                }
-                model.update(parameters: ModuleParameters.unflattened(centered.map { ($0.0, MLXRandom.normal($0.1.shape) * 0.2) }))
-            }
+            seedSpecialParameters(model, family: family)
             return model
         }
         if family.weightScale != 1 {
@@ -334,5 +267,102 @@ enum TinyModel {
 
     static func tokens(_ prompt: String) -> [Int] {
         ByteTokenizer().encode(text: prompt, addSpecialTokens: false) + [ByteTokenizer.endOfUserTurn]
+    }
+}
+
+extension TinyModel.Family {
+    var extendedConfig: String {
+        switch self {
+        case .flint: """
+            {"model_type": "flint", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+             "sliding_window": \(TinyModel.slidingWindow), "use_sliding_window": true,
+             "layer_types": ["full_attention", "sliding_attention", "sliding_attention", "full_attention"],
+             "no_rope_layer_indices": [0, 3], "mlp_only_layers": [0, 1],
+             "num_experts": 8, "num_experts_per_tok": 2, "moe_intermediate_size": 32,
+             "shared_expert_intermediate_size": 32, "router_score_function": "sigmoid",
+             "norm_topk_prob": true, "router_expert_bias": true, "softmax_type": "learnable",
+             "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false}
+            """
+        case .ricursive: """
+            {"model_type": "ricursive", "hidden_size": 64, "num_hidden_layers": 5, "intermediate_size": 128,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+             "sliding_window": \(TinyModel.slidingWindow),
+             "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+             "use_gated_attention": true, "gate_full_precision": true, "use_valres": true,
+             "ffn_clamp_threshold": 20.0, "embed_scale": 8.0, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
+             "tie_word_embeddings": false}
+            """
+        case .museGlimmerText: """
+            {"model_type": "muse_glimmer_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "vocab_size": 256,
+             "sliding_window": \(TinyModel.slidingWindow), "qk_scale_factor": 3.87, "output_multiplier": 0.19611613,
+             "final_logit_softcapping": 20.0, "rms_norm_eps": 1e-5, "post_norm_eps": 1e-8,
+             "layer_types": ["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+             "layer_rope_theta": [500000.0, 500000.0, 500000.0, 0.0], "tie_word_embeddings": false}
+            """
+        case .museGlimmer: """
+            {"model_type": "muse_glimmer", "image_token_id": 254, "video_token_id": 253,
+             "out_hidden_size": 64, "projector_hidden_size": 64,
+             "text_config": \(Self.museGlimmerText.config),
+             "vision_config": {"model_type": "muse_glimmer_vision", "hidden_size": 16, "intermediate_size": 32,
+              "num_hidden_layers": 2, "num_attention_heads": 2, "patch_size": 14, "patch_temporal": 2, "merge_size": 2,
+              "max_position_embeddings": 16, "pos_emb_height": 4, "pos_emb_width": 4, "layer_norm_eps": 1e-5,
+              "layer_types": ["window_attention", "full_attention"]}}
+            """
+        case .ltxVideo: """
+            {"model_type": "ltx_video", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+             "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
+            """
+        case .kandinskyCrossDiT: """
+            {"model_type": "kandinsky_cross_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+             "num_attention_heads": 4, "intermediate_size": 128, "video_channels": 16, "audio_channels": 8}
+            """
+        case .moeVideoDiT: """
+            {"model_type": "moe_video_dit", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+             "num_attention_heads": 4, "intermediate_size": 64, "video_channels": 16, "audio_channels": 8,
+             "num_experts": 4, "num_experts_per_tok": 2}
+            """
+        case .bailingHybrid: """
+            {"model_type": "bailing_hybrid", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 6,
+             "layer_group_size": 3, "intermediate_size": 128, "num_attention_heads": 4, "num_key_value_heads": 4,
+             "head_dim": 32, "short_conv_kernel_size": 4, "no_kda_lora": true, "kda_safe_gate": true,
+             "kda_lower_bound": -5.0, "q_lora_rank": 32, "kv_lora_rank": 32, "qk_nope_head_dim": 32,
+             "qk_rope_head_dim": 16, "v_head_dim": 32, "rope_theta": 6000000.0, "rope_interleave": true,
+             "gated_attention_proj_granularity_type": "head_wise", "num_experts": 8, "num_experts_per_tok": 2,
+             "n_group": 4, "topk_group": 2, "num_shared_experts": 1, "moe_intermediate_size": 32,
+             "moe_shared_expert_intermediate_size": 32, "first_k_dense_replace": 1, "routed_scaling_factor": 2.5,
+             "norm_topk_prob": true, "moe_router_enable_expert_bias": true, "rms_norm_eps": 1e-6,
+             "tie_word_embeddings": false}
+            """
+        default:
+            preconditionFailure("Unexpected TinyModel.Family in extendedConfig: \(self)")
+        }
+    }
+}
+
+extension TinyModel {
+    static func seedSpecialParameters(_ model: any LanguageModel, family: Family) {
+        let suffixes: [String]
+        let scale: Float
+        switch family {
+        case .sigmoidMoe:
+            (suffixes, scale) = ([".gate.weight", ".e_score_correction_bias"], 1.0)
+        case .flint:
+            (suffixes, scale) = ([".gate.weight", ".expert_bias", ".softmax_offset"], 0.25)
+        case .inkling2Loop:
+            (suffixes, scale) = ([".query", ".proj", ".static_weight", "conv1d.weight", ".gate.weight", ".e_score_correction_bias"], 0.25)
+        case .ricursive:
+            (suffixes, scale) = ([".value_res_lambda"], 0.5)
+        case .museGlimmer, .museGlimmerText:
+            (suffixes, scale) = (["_layernorm.weight"], 0.2)
+        case .bailingHybrid:
+            (suffixes, scale) = ([".gate.weight", ".gate.expert_bias", ".A_log", ".dt_bias"], 0.25)
+        default:
+            return
+        }
+        let matching = model.parameters().flattened().filter { key, _ in suffixes.contains { key.hasSuffix($0) } }
+        let values = matching.map { ($0.0, scale == 1 ? MLXRandom.normal($0.1.shape) : MLXRandom.normal($0.1.shape) * scale) }
+        model.update(parameters: ModuleParameters.unflattened(values))
     }
 }

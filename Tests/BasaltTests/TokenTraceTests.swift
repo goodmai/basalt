@@ -58,7 +58,7 @@ struct TraceParity: Sendable {
 @Suite("trace_tokens records heads, experts and projections per token with the stock graph's output (#405)", .serialized)
 struct TokenTraceParityTests {
     static let prompt = "the cat sat on the mat"
-    static let families: [TinyModel.Family] = [.qwen3, .qwen3Moe, .qwen35, .qwen35Moe, .gemma4, .gemma4Moe, .lfm2, .lfm2Moe, .nemotronH, .sigmoidMoe]
+    static let families: [TinyModel.Family] = [.qwen3, .qwen3Moe, .qwen35, .qwen35Moe, .gemma4, .gemma4Moe, .lfm2, .lfm2Moe, .nemotronH, .sigmoidMoe, .bailingHybrid]
     static let softmaxRouters: Set<TinyModel.Family> = [.qwen3Moe, .qwen35Moe, .gemma4Moe]
 
     static func parity(_ family: TinyModel.Family, maxTokens: Int = 8) async throws -> TraceParity {
@@ -108,7 +108,7 @@ struct TokenTraceParityTests {
         #expect(result.tokens == ByteTokenizer().encode(text: Self.prompt, addSpecialTokens: true).count + result.traced.count)
         #expect(result.headLayers > 0)
         #expect(result.headError < 1e-4)
-        let moe: Set<TinyModel.Family> = [.qwen3Moe, .qwen35Moe, .gemma4Moe, .lfm2Moe, .sigmoidMoe]
+        let moe: Set<TinyModel.Family> = [.qwen3Moe, .qwen35Moe, .gemma4Moe, .lfm2Moe, .sigmoidMoe, .bailingHybrid]
         #expect((result.expertLayers > 0) == moe.contains(family))
         #expect(result.idsMatch)
         #expect(result.gateError < 1e-5)

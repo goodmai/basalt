@@ -112,12 +112,15 @@ extension MLXInferenceEngine {
         }
         VLMProcessorLoadingRegistry.shared.register(ModelTypeProcessorResolver(processorTypes: [DeepSeekOCR2.modelType: DeepSeekOCRProcessor.ocr2ProcessorType]))
         await registerMuseGlimmerAliases()
+        await registerBailingHybridAliases()
     }
 
     public static func registerAliases() async {
         await aliasRegistration.value
     }
+}
 
+extension MLXInferenceEngine {
     public var isLoaded: Bool { container != nil }
 
     static func imageToken(in config: [String: Any]?) -> Int? {
