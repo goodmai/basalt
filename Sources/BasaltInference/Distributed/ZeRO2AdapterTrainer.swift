@@ -134,15 +134,15 @@ public enum ZeRO2CollectiveCore {
             var rankSlices: [[Float]] = []
             rankSlices.reserveCapacity(owned.count)
             for slice in owned {
-                var accum = [Float](repeating: 0, count: slice.elementCount)
+                var accum = [Double](repeating: 0, count: slice.elementCount)
                 for contrib in rankGradients where contrib.microbatchCount > 0 {
                     guard let gFull = contrib.grads[slice.paramKey] else { continue }
-                    let weight = Float(contrib.microbatchCount) / Float(totalSamples)
+                    let weight = Double(contrib.microbatchCount) / Double(totalSamples)
                     for i in 0 ..< slice.elementCount {
-                        accum[i] += weight * gFull[slice.elementStart + i]
+                        accum[i] += weight * Double(gFull[slice.elementStart + i])
                     }
                 }
-                rankSlices.append(accum)
+                rankSlices.append(accum.map(Float.init))
             }
             out[r] = rankSlices
         }

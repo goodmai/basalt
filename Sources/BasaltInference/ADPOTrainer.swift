@@ -327,7 +327,7 @@ extension ADPOTrainer {
                 try Task.checkCancellation()
                 let seed = UInt64(0x5710_0000) ^ (UInt64(pIndex) << 16) ^ UInt64(draw)
                 let generated = try withRandomState(MLXRandom.RandomState(seed: seed)) {
-                    let params = GenerateParameters(maxTokens: 12, temperature: 0.8)
+                    let params = GenerateParameters(maxTokens: 12, temperature: 0.8, seed: seed)
                     var iterator = try TokenIterator(
                         input: LMInput(tokens: MLXArray(prompt.map(Int32.init))),
                         model: model,

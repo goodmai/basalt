@@ -20,7 +20,7 @@ public actor OnDemandDecision: DecisionEngine {
     public nonisolated let phases: AsyncStream<OnDemandCore.Phase>
     private let announce: AsyncStream<OnDemandCore.Phase>.Continuation
     private let loader: @Sendable () async throws -> any DecisionEngine
-    private let sleep: @Sendable (Duration) async throws -> Void
+    private let makeIdleWait: @Sendable (Duration) -> @Sendable () async throws -> Void
     private var core = OnDemandCore()
     private var current: (any DecisionEngine)?
     private var transition: Transition?
@@ -34,7 +34,19 @@ public actor OnDemandDecision: DecisionEngine {
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         (self.modelID, self.path, self.idle, self.runsBesideDecode) = (modelID, path, idle, runsBesideDecode)
-        (self.loader, self.sleep) = (loader, sleep)
+        self.loader = loader
+        self.makeIdleWait = { duration in { try await sleep(duration) } }
+        (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+    }
+
+    public init<C: Clock>(
+        modelID: String, path: String, idle: Duration, runsBesideDecode: Bool = false,
+        clock: C,
+        loader: @escaping @Sendable () async throws -> any DecisionEngine
+    ) where C.Duration == Duration {
+        (self.modelID, self.path, self.idle, self.runsBesideDecode) = (modelID, path, idle, runsBesideDecode)
+        self.loader = loader
+        self.makeIdleWait = OnDemandCore.idleWaiter(clock)
         (phases, announce) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
@@ -47,7 +59,8 @@ public actor OnDemandDecision: DecisionEngine {
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
         let engine = try await acquire()
-        defer { release() }
+        let epoch = core.loadEpoch
+        defer { release(epoch: epoch) }
         return try await engine.decide(request)
     }
 
@@ -150,16 +163,19 @@ public actor OnDemandDecision: DecisionEngine {
         announce.yield(core.phase)
     }
 
-    public func release() {
+    public func release() { release(epoch: nil) }
+
+    private func release(epoch: Int?) {
         lastUsed = Date()
-        guard let generation = core.leave() else { return }
+        guard let generation = core.leave(epoch: epoch) else { return }
         schedule(generation)
     }
 
     private func schedule(_ generation: Int) {
         timer?.cancel()
-        timer = Task { [weak self, sleep, idle] in
-            guard (try? await sleep(idle)) != nil else { return }
+        let wait = makeIdleWait(idle)
+        timer = Task { [weak self] in
+            guard (try? await wait()) != nil else { return }
             await self?.expire(generation)
         }
     }

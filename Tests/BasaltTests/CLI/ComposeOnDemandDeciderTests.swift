@@ -37,7 +37,9 @@ struct ComposeOnDemandDeciderTests {
 
     static func waitUntil(_ decision: OnDemandDecision, _ phase: OnDemandCore.Phase) async {
         guard await decision.phase != phase else { return }
-        for await next in decision.phases where next == phase { return }
+        for await next in decision.phases where next == phase {
+            if await decision.phase == phase { return }
+        }
     }
 
     @Test("A local decider accepts keep: on-demand and idle_unload, counts as resident in the plan, and refuses sequential modes")
@@ -61,8 +63,10 @@ struct ComposeOnDemandDeciderTests {
 
     @Test("OnDemandDecision loads on first decide, reuses while warm, unloads on idle expiry, retries after failure, and explicit unload clears state")
     func lifecycle() async throws {
-        let (tracked, clock) = (TrackedDecider(), ManualSleep())
-        let decider = OnDemandDecision(modelID: "org/tracked-jev", path: "/models/tracked", idle: .seconds(45), loader: { try await tracked.recordLoad() }, sleep: { _ in try await clock.sleep() })
+        let (tracked, clock) = (TrackedDecider(), SteppingClock())
+        let decider = OnDemandDecision(modelID: "org/tracked-jev", path: "/models/tracked", idle: .seconds(45), clock: clock) {
+            try await tracked.recordLoad()
+        }
         let (initialPhase, initialUsed) = (await decider.phase, await decider.lastUsed)
         #expect(initialPhase == .unloaded && initialUsed == nil)
         await tracked.failOnce()
@@ -70,20 +74,51 @@ struct ComposeOnDemandDeciderTests {
         let (failedPhase, failedLoads) = (await decider.phase, await tracked.loads)
         #expect(failedPhase == .unloaded && failedLoads == 0)
         _ = try await decider.decide(ComposeProbe.request)
-        await clock.waitForSleeper()
+        clock.advance(by: .seconds(20))
         _ = try await decider.decide(ComposeProbe.request)
-        await clock.waitForSleeper()
-        let (loads1, phase1, used1) = (await tracked.loads, await decider.phase, await decider.lastUsed)
-        #expect(loads1 == 1 && phase1 == .loaded && used1 != nil)
-        await clock.fire()
+        clock.advance(by: .seconds(30))
+        let (loads1, phase1, used1, unloads1) = (await tracked.loads, await decider.phase, await decider.lastUsed, await tracked.unloads)
+        #expect(loads1 == 1 && phase1 == .loaded && used1 != nil && unloads1 == 0)
+        clock.advance(by: .seconds(15))
         await Self.waitUntil(decider, .unloaded)
         #expect(await tracked.unloads == 1)
         _ = try await decider.decide(ComposeProbe.request)
-        await clock.waitForSleeper()
         #expect(await tracked.loads == 2)
         await decider.unload()
         let (finalPhase, finalUnloads) = (await decider.phase, await tracked.unloads)
         #expect(finalPhase == .unloaded && finalUnloads == 2)
+    }
+
+    @Test("OnDemandDecision handles zero idle timeout, repeated idle expiry cycles, and idempotent explicit unload cleanly")
+    func idleEdgeCasesAndIdempotentUnload() async throws {
+        let (zeroTracked, zeroClock) = (TrackedDecider(), SteppingClock())
+        let immediate = OnDemandDecision(modelID: "org/zero-jev", path: "/models/zero", idle: .zero, clock: zeroClock) {
+            try await zeroTracked.recordLoad()
+        }
+        _ = try await immediate.decide(ComposeProbe.request)
+        await Self.waitUntil(immediate, .unloaded)
+        let (zeroLoads, zeroUnloads) = (await zeroTracked.loads, await zeroTracked.unloads)
+        #expect(zeroLoads == 1 && zeroUnloads == 1)
+
+        let (tracked, clock) = (TrackedDecider(), SteppingClock())
+        let decider = OnDemandDecision(modelID: "org/repeat-jev", path: "/models/repeat", idle: .seconds(10), clock: clock) {
+            try await tracked.recordLoad()
+        }
+        for cycle in 1 ... 2 {
+            _ = try await decider.decide(ComposeProbe.request)
+            clock.advance(by: .seconds(10))
+            await Self.waitUntil(decider, .unloaded)
+            let (loads, unloads) = (await tracked.loads, await tracked.unloads)
+            #expect(loads == cycle && unloads == cycle)
+        }
+        _ = try await decider.decide(ComposeProbe.request)
+        await decider.unload()
+        await decider.unload()
+        let cancelledSleep = Task { try await clock.sleep(until: clock.now.advanced(by: .seconds(30)), tolerance: nil) }
+        cancelledSleep.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelledSleep.value }
+        let (endPhase, endUnloads) = (await decider.phase, await tracked.unloads)
+        #expect(endPhase == .unloaded && endUnloads == 3 && clock.pendingWaiters == 0)
     }
 
     @Test("ComposeHost registers an on-demand decider without loading it, probes its bundle on disk, loads on first decision, and reloads on apply")

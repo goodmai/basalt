@@ -50,6 +50,29 @@ struct OnPolicyDistillTests {
         #expect(OnPolicyRun.rolloutSeed(ids, round: 0, slot: 0) != OnPolicyRun.rolloutSeed([5, 19, 43], round: 0, slot: 0))
     }
 
+    @Test("OnPolicyRun.sample threads rolloutSeed into GenerateParameters so temperature-1 rollouts are bit-identical across runs and unaffected by global RNG (#752)")
+    func seededRolloutSamplingIsBitIdentical() async throws {
+        let directory = try DistillTests.scratch()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let host = try Self.teacherHost()
+        let engine = try await TinyModel.engine(.qwen3)
+        let request = try Self.onPolicy(host, prompts: 4, in: directory)
+        let teacher = try TeacherClient(request.teacher.url, model: request.teacher.model, provider: request.teacher.provider, environment: [:], session: URLSession(configuration: StubURLProtocol.configuration))
+        let steps = try await engine.adapterSteps(layers: nil, method: .lora(rank: 4, scale: 10.0), lease: nil, what: "on-policy distillation")
+        let promptIds = try ByteTokenizer().applyChatTemplate(messages: Self.messages, tools: nil, additionalContext: nil)
+        let prompt = OnPolicyPrompt(text: "Name a colour.", ids: promptIds)
+        let plan = OnPolicyPlan(train: [prompt], heldOut: [prompt], tokenizer: MLXInferenceEngine.tokenizerFingerprint(ByteTokenizer()), vocabulary: 256, tooLong: 0)
+        let run = OnPolicyRun(request: request, plan: plan, teacher: teacher, steps: steps)
+        let seedA = OnPolicyRun.rolloutSeed(prompt.ids, round: 0, slot: 0)
+        let seedB = OnPolicyRun.rolloutSeed(prompt.ids, round: 1, slot: 0)
+        let first = try await steps.read { context in try run.sample(prompt, seed: seedA, context) }
+        _ = MLXRandom.normal([16, 16])
+        let second = try await steps.read { context in try run.sample(prompt, seed: seedA, context) }
+        let other = try await steps.read { context in try run.sample(prompt, seed: seedB, context) }
+        #expect(first == second)
+        #expect(first != other)
+    }
+
     @Test("Reverse KL over the teacher's top-k plus one tail bucket matches a hand computation, ignores masked positions, and is zero when the student equals the teacher")
     func reverseKLByHand() {
         let studentLogits: [Float] = [1, 0, -1, 0.5]
