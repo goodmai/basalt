@@ -23,6 +23,13 @@ public struct ExpertStreaming: Sendable, Equatable {
         cacheBytes ?? ByteCount(Int64(Double(experts.rawValue) * ExpertStreamingFootprint.expertCacheShare))
     }
 
+    public func arenaPlan(workload: ExpertArenaWorkload, host: ExpertArenaHost) -> ExpertArenaPlan {
+        let overrideGB = cacheBytes.map { Double($0.rawValue) / Double(ExpertArenaPlanner.gib) }
+        return ExpertArenaPlanner.plan(
+            ExpertArenaInput(host: host, workload: workload, explicitOverrideGB: overrideGB)
+        )
+    }
+
     public func residentBytes(weights: ByteCount, modelId: String) -> ByteCount {
         let total = ModelDefinition.inferTotalParameters(id: modelId, name: "", ramMB: weights.rawValue >> 20)
         let active = ModelDefinition.inferActiveParameters(id: modelId, name: "", total: total)
@@ -56,6 +63,26 @@ public struct ExpertStreamingFootprint: Sendable, Codable, Equatable {
         guard expertBytes > .zero else { return nil }
         self.residentWeights = max(.zero, residentWeights)
         expertCache = streaming.cache(forExperts: expertBytes)
+        self.kv = kv
+    }
+
+    public init?(
+        residentWeights: ByteCount,
+        expertBytes: ByteCount,
+        kv: ByteCount,
+        host: ExpertArenaHost,
+        streaming: ExpertStreaming = ExpertStreaming()
+    ) {
+        guard expertBytes > .zero else { return nil }
+        let resident = max(.zero, residentWeights)
+        let workload = ExpertArenaWorkload(
+            denseWeightsBytes: resident,
+            kvCacheBytes: max(.zero, kv),
+            expertBytesTotal: expertBytes
+        )
+        let plan = streaming.arenaPlan(workload: workload, host: host)
+        self.residentWeights = resident
+        self.expertCache = plan.arenaBytes
         self.kv = kv
     }
 

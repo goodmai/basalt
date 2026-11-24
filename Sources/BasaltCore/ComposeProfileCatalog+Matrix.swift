@@ -234,6 +234,19 @@ extension ComposeProfileCatalog {
             keepsSidecarsResident: true
         ),
         ComposeTierPalette(
+            tier: .gb96,
+            chat: "mlx-community/flint-8bit", chatGB: 42.0,
+            coder: "mlx-community/Ricursive-Ripple-65B-4bit", coderGB: 36.5,
+            reasoner: "goodmai/Qwen3.6-35B-A3B-8bit", reasonerGB: 37.7,
+            ocr: "goodmai/DeepSeek-OCR-2-8bit",
+            judge: "goodmai/OpenJev-Flash-9B-MLX-4bit",
+            duplexASR: "divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX",
+            duplexTTS: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", duplexVoice: "Serena",
+            imageMain: "black-forest-labs/FLUX.2-klein-4B",
+            moeModel: "mlx-community/Ricursive-Ripple-65B-4bit", moeGB: 36.5, moeStreams: false, expertCacheGB: 0,
+            keepsSidecarsResident: true
+        ),
+        ComposeTierPalette(
             tier: .gb128,
             chat: "mlx-community/flint-8bit", chatGB: 42.0,
             coder: "mlx-community/Ricursive-Ripple-65B-4bit", coderGB: 36.5,
@@ -244,6 +257,19 @@ extension ComposeProfileCatalog {
             duplexTTS: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", duplexVoice: "Serena",
             imageMain: "black-forest-labs/FLUX.2-klein-4B",
             moeModel: "mlx-community/Ricursive-Ripple-65B-4bit", moeGB: 36.5, moeStreams: false, expertCacheGB: 0,
+            keepsSidecarsResident: true
+        ),
+        ComposeTierPalette(
+            tier: .gb192,
+            chat: "mlx-community/Ricursive-Ripple-65B-8bit", chatGB: 69.0,
+            coder: "Recursive/Flint-40B-A2.5B-bf16", coderGB: 80.0,
+            reasoner: "mlx-community/Ricursive-Ripple-65B-8bit", reasonerGB: 69.0,
+            ocr: "goodmai/DeepSeek-OCR-2-8bit",
+            judge: "goodmai/OpenJev-Flash-9B-MLX-4bit",
+            duplexASR: "divergentlabs/Nemotron-3.5-Transcribe-30B-A4B-MLX",
+            duplexTTS: "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", duplexVoice: "Serena",
+            imageMain: "black-forest-labs/FLUX.2-klein-4B",
+            moeModel: "mlx-community/Ricursive-Ripple-65B-8bit", moeGB: 69.0, moeStreams: false, expertCacheGB: 0,
             keepsSidecarsResident: true
         ),
         ComposeTierPalette(
@@ -263,7 +289,7 @@ extension ComposeProfileCatalog {
 
     private static func buildAllProfiles() -> [ComposeBundledProfile] {
         var list: [ComposeBundledProfile] = []
-        list.reserveCapacity(91)
+        list.reserveCapacity(palettes.count * ComposeProfileArchetype.allCases.count)
         for palette in palettes {
             for archetype in ComposeProfileArchetype.allCases {
                 list.append(makeProfile(palette: palette, archetype: archetype))

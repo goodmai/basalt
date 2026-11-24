@@ -256,16 +256,19 @@ extension MemoryEvaluator {
     ) -> MemoryAssessment {
         let id = modelId ?? directory.lastPathComponent
         let localSize = OrchestratorPolicy.resolvedDirectorySize(at: directory)
-        let modelMB = Int(localSize / (1024 * 1024))
+        let ssdResident = ModelFitAnalyzer.ssdResidentBytes(in: directory)
+        let workingSize = max(Int64(0), localSize - ssdResident.rawValue)
+        let modelMB = Int(workingSize / (1024 * 1024))
         let total = ModelDefinition.inferTotalParameters(id: id, name: "", ramMB: Int64(modelMB))
         let kv = KVCacheGeometry.load(modelDirectory: directory) ?? KVCacheGeometry.forModel(id, parameters: total)
-        let loaded = ByteCount(Int64(Double(localSize) * 1.15))
+        let loaded = ByteCount(Int64(Double(workingSize) * 1.15))
         let kvBytes = kv.bytes(tokens: TokenCount(contextLength), kvPrecision: kvPrecision, zones: kvZones)
-        var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(localSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
+        var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(workingSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
         let selectedStreaming = expertStreaming ?? ExpertStreaming()
         if let stacked = ModelFitAnalyzer.stackedExperts(in: directory) {
             footprint.streaming = ExpertStreamingFootprint(
-                residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes, streaming: selectedStreaming)
+                residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes,
+                host: ExpertArenaHost(resources: resources), streaming: selectedStreaming)
             footprint.admitsStreaming = expertStreaming != nil || (!disableExpertStreaming && !ExpertStreaming.isDisabledByEnvironment())
         } else {
             footprint.streaming = streaming(

@@ -78,6 +78,9 @@ struct ExpertPlan {
                 ?? (sanitized["\(path).scales"] != nil ? quantization?.quantization(layer: path)?.asTuple : nil)
             try add(path, sanitized: sanitized, sources: sources, shards: shards, quantization: layerQuant)
         }
+        for (shardIndex, pleKeys) in NGramRowStore.droppedResidentKeys(in: shards) {
+            dropped[shardIndex, default: []].formUnion(pleKeys)
+        }
     }
 
     private mutating func add(
@@ -169,7 +172,21 @@ public enum ExpertStreamingLoader {
         let shards = try shardURLs(in: directory).map { try SafetensorsShard(url: $0) }
         let plan = try ExpertPlan(model: model, shards: shards, quantization: base.perLayerQuantization)
         guard !plan.layouts.isEmpty else { return nil }
-        let store = try ExpertStore(files: shards.map(\.url), layouts: plan.layouts, capacity: streaming.cache(forExperts: plan.expertBytes))
+        let totalShardBytes = ByteCount(shards.reduce(Int64(0)) { $0 + $1.fileSize })
+        let ssdResident = ModelFitAnalyzer.ssdResidentBytes(in: directory)
+        let denseWeights = max(.zero, totalShardBytes - plan.expertBytes - ssdResident)
+        let capacity: ByteCount = if let explicit = streaming.cacheBytes {
+            explicit
+        } else {
+            ExpertArenaPlanner.planForCurrentHost(
+                workload: ExpertArenaWorkload(
+                    denseWeightsBytes: denseWeights,
+                    expertBytesTotal: plan.expertBytes,
+                    ngramRowCacheBytes: ssdResident > .zero ? ModelFitAnalyzer.defaultNGramRowCacheBytes : .zero
+                )
+            ).arenaBytes
+        }
+        let store = try ExpertStore(files: shards.map(\.url), layouts: plan.layouts, capacity: capacity)
         try install(store, in: model)
         let view = try residentView(of: directory, shards: shards, plan: plan)
         defer { try? FileManager.default.removeItem(at: view) }
