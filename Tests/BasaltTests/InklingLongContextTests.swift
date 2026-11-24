@@ -17,10 +17,10 @@ struct InklingLongContextTests {
         let model = try #require(try TinyModel.make(.inkling2Loop) as? Inkling2Model)
         let heads = model.config.heads
         #expect(model.prefillStepCap(keys: 4096 * 24 / heads) == nil)
-        #expect(model.prefillStepCap(keys: 1 << 30) == Inkling2Model.minimumPrefillStep)
-        #expect(model.prefillStepCap(keys: Int.max) == Inkling2Model.minimumPrefillStep)
+        #expect(model.prefillStepCap(keys: 1 << 30) == PrefillAttentionScratch.minimumStep)
+        #expect(model.prefillStepCap(keys: Int.max) == PrefillAttentionScratch.minimumStep)
         let keys = 32_768 * 24 / heads
-        #expect(model.prefillStepCap(keys: keys) == Inkling2Model.maskBudgetBytes / (heads * keys * 4))
+        #expect(model.prefillStepCap(keys: keys) == PrefillAttentionScratch.budgetBytes / (heads * keys * 4))
         let parameters = GenerateParameters()
         #expect(parameters.capped(for: model, promptTokens: keys).prefill.stepSize == model.prefillStepCap(keys: keys))
         #expect(parameters.capped(for: model, promptTokens: 1024).prefill.stepSize == parameters.prefill.stepSize)
@@ -34,8 +34,8 @@ struct InklingLongContextTests {
         let whole = model(tokens, cache: try model.newCache(parameters: nil))[0..., (-1)..., 0...]
         let cache = try model.newCache(parameters: nil)
         var last = whole
-        for start in stride(from: 0, to: 300, by: Inkling2Model.minimumPrefillStep) {
-            last = model(tokens[0..., start ..< min(start + Inkling2Model.minimumPrefillStep, 300)], cache: cache)[0..., (-1)..., 0...]
+        for start in stride(from: 0, to: 300, by: PrefillAttentionScratch.minimumStep) {
+            last = model(tokens[0..., start ..< min(start + PrefillAttentionScratch.minimumStep, 300)], cache: cache)[0..., (-1)..., 0...]
         }
         #expect(abs(last - whole).max().item(Float.self) < 1e-3)
         #expect(argMax(last, axis: -1).asArray(Int32.self) == argMax(whole, axis: -1).asArray(Int32.self))

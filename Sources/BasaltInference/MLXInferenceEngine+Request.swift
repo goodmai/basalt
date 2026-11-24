@@ -231,7 +231,7 @@ extension MLXInferenceEngine {
         (options.attentionBackend, options.mobaTopK) = (plan.attentionBackend, plan.mobaTopK)
         options.kEqVRow = plan.kEqVRow
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
-        options.pacer = prefillPacer
+        (options.pacer, options.prefillScratch) = (prefillPacer, modelFacts.prefillScratch)
     }
 
     func launching(_ input: LMInput, _ prompt: CachedPrompt, options: LaunchOptions, container: ModelContainer) async throws -> GenerationLaunch {

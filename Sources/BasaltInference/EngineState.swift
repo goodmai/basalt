@@ -27,6 +27,7 @@ struct ModelFacts: Sendable {
     var capabilities = ModelCapabilities.unrestricted
     var imageToken: Int?
     var transcribesAudio = false
+    var prefillScratch: PrefillAttentionScratch?
     var visionTower: CoreAIVisionTower?
     var polarRotated: Int?
     var deltas: [String: AppliedDelta] = [:]

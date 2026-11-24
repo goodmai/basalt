@@ -172,7 +172,7 @@ extension MLXInferenceEngine {
                 fingerprint: promptCacheDisk == nil ? nil : PromptCacheDiskStore.fingerprint(modelDirectory: source),
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
-                transcribesAudio: transcribes)
+                transcribesAudio: transcribes, prefillScratch: prefillScratch(at: directory))
             guard attach(loaded, facts: facts, epoch: epoch, warming: true) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await warmUp(loaded, directory: directory, epoch: epoch)
