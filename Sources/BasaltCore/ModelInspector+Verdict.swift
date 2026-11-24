@@ -76,7 +76,13 @@ extension ModelInspector {
             } else if let quantization = json["quantization_config"] as? [String: Any] {
                 bits = quantization["bits"] as? Int ?? quantization["weight_bits"] as? Int
                 groupSize = quantization["group_size"] as? Int
-                mode = quantization["quant_method"] as? String
+                let quantMethod = quantization["quant_method"] as? String
+                mode = (quantMethod == nil || quantMethod == "mlx") ? (quantization["mode"] as? String) : quantMethod
+                for (layer, value) in quantization {
+                    if let override = value as? [String: Any], let size = override["group_size"] as? Int {
+                        layerGroupSizes[layer] = size
+                    }
+                }
             }
             if let qtip = json["qtip_quantization"] as? [String: Any], let bpw = qtip["bpw"] as? Double {
                 qtipBPW = bpw
