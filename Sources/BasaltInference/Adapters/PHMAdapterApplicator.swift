@@ -177,6 +177,9 @@ extension PHMAdapterApplicator {
     ) throws(BasaltError) -> [(String, Module)] {
         switch method {
         case .lora(let rank, let scale):
+            if let reason = targets.lazy.compactMap({ MLXInferenceEngine.microscaledLoRARefusal($0.linear, path: $0.fullPath) }).first {
+                throw .invalidRequestStructure(details: "adapter: \(reason)")
+            }
             return targets.map { target in
                 (target.fullPath, LoRALinear.from(linear: target.linear, rank: rank, scale: scale))
             }
