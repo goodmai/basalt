@@ -177,6 +177,8 @@ public enum ExpertStreamingLoader {
         let denseWeights = max(.zero, totalShardBytes - plan.expertBytes - ssdResident)
         let capacity: ByteCount = if let explicit = streaming.cacheBytes {
             explicit
+        } else if ssdResident == .zero {
+            streaming.cache(forExperts: plan.expertBytes)
         } else {
             ExpertArenaPlanner.planForCurrentHost(
                 workload: ExpertArenaWorkload(

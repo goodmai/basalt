@@ -266,9 +266,12 @@ extension MemoryEvaluator {
         var footprint = Footprint(required: loaded + kvBytes, weights: ByteCount(workingSize), kv: kv, kvPrecision: kvPrecision, kvZones: kvZones)
         let selectedStreaming = expertStreaming ?? ExpertStreaming()
         if let stacked = ModelFitAnalyzer.stackedExperts(in: directory) {
-            footprint.streaming = ExpertStreamingFootprint(
-                residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes,
-                host: ExpertArenaHost(resources: resources), streaming: selectedStreaming)
+            footprint.streaming = ssdResident == .zero
+                ? ExpertStreamingFootprint(
+                    residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes, streaming: selectedStreaming)
+                : ExpertStreamingFootprint(
+                    residentWeights: stacked.residentWeights, expertBytes: stacked.expertBytes, kv: kvBytes,
+                    host: ExpertArenaHost(resources: resources), streaming: selectedStreaming)
             footprint.admitsStreaming = expertStreaming != nil || (!disableExpertStreaming && !ExpertStreaming.isDisabledByEnvironment())
         } else {
             footprint.streaming = streaming(
