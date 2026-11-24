@@ -67,6 +67,7 @@ extension MCPServer {
         case .research(let tool): try await research(tool, args)
         case .introspect: try await introspect(args)
         case .telemetryQuery: try await telemetryQuery(args)
+        case .selfEditStart, .selfEditStatus: try await selfEdit(tool, args)
         case .media(let tool): try await media(tool, args)
         }
     }

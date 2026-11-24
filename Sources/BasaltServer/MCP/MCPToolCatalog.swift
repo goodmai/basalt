@@ -215,7 +215,9 @@ extension MCPToolCatalog {
         includeVideoTools: Bool = false
     ) -> MCPToolsList {
         let research = ResearchTool.allCases.map { MCPToolDescriptor(name: $0.rawValue, description: $0.summary, inputSchema: $0.schema) }
-        let candidates = list.tools + [generateVideo] + research + [introspectDescriptor, phasorProbeDescriptor]
+        let candidates = list.tools + [generateVideo] + research + [
+            introspectDescriptor, phasorProbeDescriptor, selfEditStartDescriptor, selfEditStatusDescriptor,
+        ]
         return MCPToolsList(tools: candidates.filter { descriptor in
             if MCPToolName(rawValue: descriptor.name) != nil {
                 return includeImageTools && MCPToolName.isAllowed(descriptor.name, by: filter)

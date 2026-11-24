@@ -70,7 +70,32 @@ public struct SelfEditCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Output directory for the human-gated EditAdapter (saved only on submit).")
     public var output: String?
 
+    @Option(name: .long, help: "Path to JSONL practice dataset (DeepScaleR / MATH / WMT24++ / FLORES+).")
+    public var practice: String?
+
+    @Option(name: .long, help: "Optional benchmark JSONL/text path for n-gram decontamination.")
+    public var decontaminate: String?
+
+    @Option(name: .long, help: "Optional practice split size (remaining items stay private reserved).")
+    public var practiceCount: Int?
+
+    @Option(name: .long, help: "Task mode: 'improve' or 'repair:<tensor>:<row0,row1,...>:<scale>'.")
+    public var task: String = "improve"
+
+    @Option(name: .long, help: "Optional JSONL session transcript path (defaults to ~/.basalt/selfedit/<session>.jsonl).")
+    public var transcript: String?
+
     public init() {}
+
+    public struct PreparedHarness: Sendable {
+        public let editorSpec: SelfEditEditorSpec
+        public let scope: EditTargetScope
+        public let budget: SelfRewriteBudget
+        public let taskMode: SelfRewriteTaskMode
+        public let split: PairedDatasetSplit
+        public let removedDuplicates: Int
+        public let transcriptURL: URL
+    }
 
     public func validateConfiguration() throws -> (editorSpec: SelfEditEditorSpec, scope: EditTargetScope, budget: SelfRewriteBudget) {
         guard experimentalSelfRewrite else {
@@ -100,6 +125,30 @@ public struct SelfEditCommand: AsyncParsableCommand {
         return (spec, parsedScope, budget)
     }
 
+    public func prepareHarness(sessionId: String = "selfedit-\(UUID().uuidString.prefix(8))") throws -> PreparedHarness {
+        let validated = try validateConfiguration()
+        let taskMode = try SelfRewriteTaskMode.parse(task)
+        guard let practice, !practice.isEmpty else {
+            throw ValidationError("--practice <dataset.jsonl> is required to load practice/reserved splits")
+        }
+        let splitInfo = try SelfRewriteDatasetLoader.buildSplit(
+            practiceURL: URL(fileURLWithPath: practice),
+            decontaminateURL: decontaminate.map { URL(fileURLWithPath: $0) },
+            practiceCount: practiceCount
+        )
+        let transcriptURL = transcript.map { URL(fileURLWithPath: $0) }
+            ?? SelfEditSessionRecord.defaultTranscriptURL(sessionId: sessionId)
+        return PreparedHarness(
+            editorSpec: validated.editorSpec,
+            scope: validated.scope,
+            budget: validated.budget,
+            taskMode: taskMode,
+            split: splitInfo.split,
+            removedDuplicates: splitInfo.removedDuplicates,
+            transcriptURL: transcriptURL
+        )
+    }
+
     public mutating func run() async throws {
         if let acceptEdit {
             let dir = URL(fileURLWithPath: acceptEdit)
@@ -107,8 +156,7 @@ public struct SelfEditCommand: AsyncParsableCommand {
             print("Approved edit adapter at \(dir.path) (session=\(program.sessionId), ops=\(program.ops.count))")
             return
         }
-        let validated = try validateConfiguration()
-        print("SelfEdit validated: model=\(model ?? "") editor=\(validated.editorSpec) scope=\(validated.scope.rawValue) budget=\(validated.budget.maxForwardPasses) passes / \(validated.budget.maxToolCalls) tools")
-        throw ValidationError("interactive dataset loading for `basalt selfedit` lands with P3 harness wiring (#676, #770)")
+        let prepared = try prepareHarness()
+        print("SelfEdit prepared: model=\(model ?? "") editor=\(prepared.editorSpec) task=\(prepared.taskMode.label) practice=\(prepared.split.practice.count) reserved=\(prepared.split.reservedCount) removed=\(prepared.removedDuplicates) transcript=\(prepared.transcriptURL.path)")
     }
 }

@@ -17,6 +17,8 @@ public final class MCPServer: Service, Sendable {
         var videoSynthesizer: (any VideoSynthesizer)?
         var videoStoreDirectory: URL?
         var hitlApprovals: HITLApprovalActor?
+        var selfEditSessions = SelfEditSessionStore()
+        var selfEditDirectory: URL = SelfEditSessionRecord.defaultDirectory()
     }
 
     let orchestrator: any ModelOrchestrating
@@ -39,6 +41,8 @@ public final class MCPServer: Service, Sendable {
     var videoSynthesizer: (any VideoSynthesizer)? { options.videoSynthesizer }
     var videoStoreDirectory: URL? { options.videoStoreDirectory }
     var hitlApprovals: HITLApprovalActor? { options.hitlApprovals }
+    var selfEditSessions: SelfEditSessionStore { options.selfEditSessions }
+    var selfEditDirectory: URL { options.selfEditDirectory }
 
     public init(
         orchestrator: any ModelOrchestrating,
@@ -106,6 +110,12 @@ public final class MCPServer: Service, Sendable {
     package func withPipeline(_ stages: PipelineStages) -> MCPServer {
         var next = options
         next.pipeline = stages
+        return MCPServer(self, options: next)
+    }
+
+    package func withSelfEditDirectory(_ directory: URL) -> MCPServer {
+        var next = options
+        next.selfEditDirectory = directory
         return MCPServer(self, options: next)
     }
 

@@ -9,6 +9,8 @@ enum MCPTool: Sendable, Equatable {
     case research(ResearchTool)
     case introspect
     case telemetryQuery
+    case selfEditStart
+    case selfEditStatus
 
     init?(name: String) {
         switch name {
@@ -24,6 +26,8 @@ enum MCPTool: Sendable, Equatable {
         case "harness_optimize": self = .harnessOptimize
         case "introspect": self = .introspect
         case "telemetry_query": self = .telemetryQuery
+        case "selfedit_start": self = .selfEditStart
+        case "selfedit_status": self = .selfEditStatus
         default:
             if let media = MediaTool(mcpName: name) {
                 self = .media(media)

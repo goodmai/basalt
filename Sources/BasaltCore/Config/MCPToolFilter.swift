@@ -32,6 +32,7 @@ public struct MCPToolFilter: Sendable, Equatable {
                 Self.surgery.tools.union([
                     "intervene", "experiment_compare", "train_experts", "train_jepa",
                     "distill", "trace_tokens", "activation_contrast", "phasor_probe", "introspect",
+                    "selfedit_start", "selfedit_status",
                 ])
             case .all:
                 Self.serving.tools

@@ -105,6 +105,25 @@ public enum SelfRewriteSessionDriver {
         )
     }
 
+    public static func applyRepairDamage(
+        _ spec: SelfRewriteRepairSpec,
+        to model: any LanguageModel
+    ) throws -> EditAdapter {
+        let dense = try resolveMatrix(spec.tensor, in: model)
+        eval(dense)
+        let rowCount = dense.dim(0)
+        guard spec.rows.allSatisfy({ $0 >= 0 && $0 < rowCount }) else {
+            throw WeightCopyError.invalidOperation("repair row index out of bounds for '\(spec.tensor)' with \(rowCount) rows")
+        }
+        let idxArray = MLXArray(spec.rows.map(Int32.init))
+        let scaledRows = dense.take(idxArray, axis: 0) * MLXArray(spec.scale)
+        eval(scaledRows)
+        let key = "damage_rows"
+        let adapter = try EditAdapter(program: spec.damageProgram(valuesKey: key), tensors: [key: scaledRows])
+        try adapter.load(into: model)
+        return adapter
+    }
+
     private struct LoopSummary {
         var submittedProgram: EditProgram?
         var savedURL: URL?
