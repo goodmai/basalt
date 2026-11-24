@@ -36,6 +36,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
     case affine(bits: Int, groupSize: Int)
     case mixed(lowBits: Int, highBits: Int, groupSize: Int)
     case mxfp4
+    case nvfp4
     case nf4(groupSize: Int)
     case macaqAffine(bits: Int, groupSize: Int)
     case macaqMXFP4
@@ -53,6 +54,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .affine(let b, let g): "affine:\(b):\(g)"
         case .mixed(let lo, let hi, let g): "mixed:\(lo):\(hi):\(g)"
         case .mxfp4: "mxfp4"
+        case .nvfp4: "nvfp4"
         case .nf4(let g): "nf4:\(g)"
         case .macaqAffine(let b, let g): "macaq:affine:\(b):\(g)"
         case .macaqMXFP4: "macaq:mxfp4"
@@ -72,6 +74,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .affine(let b, _): "\(b)bit"
         case .mixed(let lo, let hi, _): "Mixed-\(lo)-\(hi)bit"
         case .mxfp4: "MXFP4"
+        case .nvfp4: "NVFP4"
         case .nf4(let g): "NF4-g\(g)"
         case .macaqAffine(let b, _): "MACaQ-\(b)bit"
         case .macaqMXFP4: "MACaQ-MXFP4"
@@ -104,6 +107,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .affine(let b, let g): Double(b) + 32.0 / Double(g)
         case .mixed(let lo, let hi, let g): Double(lo + hi) * 0.5 + 32.0 / Double(g)
         case .mxfp4: 4.25
+        case .nvfp4: 4.5
         case .nf4(let g): 4.0 + 16.0 / Double(g)
         case .macaqAffine(let b, let g): Double(b) + 32.0 / Double(g) + 0.02
         case .macaqMXFP4: 4.27
@@ -116,7 +120,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
     public static var standardCatalogSpecs: [String] {
         [
             "affine:2:64", "affine:3:64", "affine:4:64", "affine:6:64", "affine:8:64",
-            "mixed:3:4:64", "mxfp4", "nf4:64",
+            "mixed:3:4:64", "mxfp4", "nvfp4", "nf4:64",
             "macaq:affine:2:64", "macaq:affine:3:64", "macaq:affine:4:64", "macaq:mxfp4", "macaq:moe:2.8",
             "flatquant:3:64", "flatquant:4:64", "lirquant:3:64:128", "lirquant:4:64:128",
             "qtip:2.0", "qtip:2.5", "qtip:3.0", "qtip-budget:2.75", "gsq-rco:3.0",
@@ -174,6 +178,8 @@ extension QuantizationTarget {
             return .denseFP16
         case "mxfp4" where parts.count == 1:
             return .mxfp4
+        case "nvfp4" where parts.count == 1:
+            return .nvfp4
         case "nf4" where parts.count == 2:
             guard let g = Int(parts[1]), [32, 64, 128].contains(g) else { return nil }
             return .nf4(groupSize: g)

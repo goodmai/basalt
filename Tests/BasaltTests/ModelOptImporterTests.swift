@@ -19,7 +19,7 @@ struct ModelOptImporterTests {
     }
 
     static func write(
-        _ family: TinyModel.Family, at directory: URL, algorithm: String, fp8: (String) -> Bool
+        _ family: TinyModel.Family, at directory: URL, algorithm: String, nvfp4Dense: (String) -> Bool = { _ in false }, fp8: (String) -> Bool
     ) throws -> [String: MLXArray] {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = try TinyModel.make(family)
@@ -41,6 +41,13 @@ struct ModelOptImporterTests {
                     dense.append(MLX.dequantized(wq, scales: scales, biases: nil, groupSize: 16, bits: 4, mode: .nvfp4, dtype: .float32) * scale2)
                 }
                 reference[key] = stacked(dense).asType(value.dtype)
+            } else if key.hasSuffix(".weight"), value.ndim == 2, value.dim(1).isMultiple(of: 16), nvfp4Dense(stem) {
+                let scale2 = Float(0.03)
+                let (wq, scales, _) = MLX.quantized(value.asType(.float32) / scale2, groupSize: 16, bits: 4, mode: .nvfp4)
+                source[key] = wq.view(dtype: .uint8)
+                source[stem + ".weight_scale"] = scales
+                source[stem + ".weight_scale_2"] = MLXArray(scale2)
+                reference[key] = (MLX.dequantized(wq, scales: scales, biases: nil, groupSize: 16, bits: 4, mode: .nvfp4, dtype: .float32) * scale2).asType(value.dtype)
             } else if key.hasSuffix(".weight"), value.ndim == 2, fp8(stem) {
                 let scale = abs(value.asType(.float32)).max() / 448
                 let weight8 = toFP8(value.asType(.float32) / scale)
@@ -77,7 +84,8 @@ struct ModelOptImporterTests {
         let root = Self.temporary("\(family)")
         defer { try? FileManager.default.removeItem(at: root) }
         let (source, output) = (root.appending(component: "source"), root.appending(component: "mlx"))
-        let reference = try Self.write(family, at: source, algorithm: algorithm) { algorithm == "MIXED_PRECISION" && $0.hasSuffix("o_proj") }
+        let mixed = algorithm == "MIXED_PRECISION"
+        let reference = try Self.write(family, at: source, algorithm: algorithm, nvfp4Dense: { mixed && $0.hasSuffix("down_proj") }) { mixed && $0.hasSuffix("o_proj") }
         let summary = try ModelOptImporter(source: source).run(output: output, model: try TinyModel.make(family))
         #expect(summary.nvfp4 > 0 && summary.stackedExperts > 0)
         #expect((summary.fp8 > 0) == (algorithm == "MIXED_PRECISION"))

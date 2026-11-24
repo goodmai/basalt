@@ -14,6 +14,7 @@ extension WeightConverter {
     @discardableResult
     package func runWithSINQ(source: URL, output: URL, calibrationText: String? = nil) async throws -> Summary {
         guard recipe == .asinq || recipe == .moeRW else { return try run(source: source, output: output) }
+        guard precision != .nvfp4 else { throw Failure.refused("nvfp4 takes the rtn recipe; \(recipe.rawValue) has no nvfp4 normalizer yet (#677)") }
         try Self.checkOutput(output, source: source)
         let configURL = source.appending(component: "config.json")
         guard let config = ModelCache.config(at: source) else {
@@ -288,6 +289,8 @@ extension WeightConverter {
             return nil
         case .mxfp4:
             return Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 32) ? .mxfp4 : nil
+        case .nvfp4:
+            return nil
         case .nf4(let groupSize):
             return Self.takesNF4(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) ? .nf4(groupSize: groupSize) : nil
         case .affine(let bits, let groupSize):

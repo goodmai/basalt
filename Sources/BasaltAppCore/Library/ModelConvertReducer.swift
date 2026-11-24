@@ -8,6 +8,7 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
     case lirQuant
     case affine
     case mxfp4
+    case nvfp4
     case nf4
     case qtip
     case qtipBudget
@@ -24,6 +25,7 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
         case .lirQuant: "LIRQuant (Givens Subspace)"
         case .affine: "Standard Affine"
         case .mxfp4: "OCP MXFP4"
+        case .nvfp4: "NVIDIA NVFP4"
         case .nf4: "NF4 NormalFloat"
         case .qtip: "QTIP Trellis"
         case .qtipBudget: "QTIP Mixed Budget"
@@ -94,6 +96,8 @@ public struct ConversionDraft: Sendable, Equatable {
             .affine(bits: bits, groupSize: groupSize)
         case .mxfp4:
             .mxfp4
+        case .nvfp4:
+            .nvfp4
         case .nf4:
             .nf4(groupSize: groupSize)
         case .qtip:

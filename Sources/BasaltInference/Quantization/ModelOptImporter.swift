@@ -70,7 +70,7 @@ package struct ModelOptImporter: Sendable {
         [
             stem + ".weight": weight.view(dtype: .uint32),
             stem + ".scales": scale.asType(.uint8),
-            stem + ".global_scale": (scale2.asType(.float32) * globalScaleFactor).reshaped([1]),
+            stem + ".global_scale": (scale2.asType(.float32) * globalScaleFactor).reshaped([]),
         ]
     }
 
