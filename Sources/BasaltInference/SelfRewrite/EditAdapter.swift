@@ -100,6 +100,23 @@ public final class EditAdapter: ModelAdapter, Sendable {
         }
     }
 
+    public static func setApproval(_ status: EditApprovalStatus, at directory: URL) throws -> EditProgram {
+        try withTaskCancellationShield {
+            let existing = try EditAdapter.from(directory: directory)
+            var updated = existing.program
+            updated.approval = status
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(updated)
+            let programURL = directory.appending(component: Self.programFile)
+            try data.write(to: programURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: programURL.path)
+            try AdapterCheckpoint.fullSync(programURL)
+            try AdapterCheckpoint.fullSync(directory)
+            return updated
+        }
+    }
+
     public func load(into model: any LanguageModel) throws {
         let modelKey = UInt(bitPattern: ObjectIdentifier(model))
         let alreadyLoaded = appliedStates.withLock { $0[modelKey] != nil }
