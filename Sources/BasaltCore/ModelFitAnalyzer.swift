@@ -87,8 +87,23 @@ extension ModelFitAnalyzer {
     public struct StackedExpertsSummary: Sendable, Equatable {
         public let totalShardBytes: ByteCount
         public let expertBytes: ByteCount
+        public let ssdResidentBytes: ByteCount
+        public let sharedExpertBytes: ByteCount
 
-        public var residentWeights: ByteCount { max(.zero, totalShardBytes - expertBytes) }
+        public init(
+            totalShardBytes: ByteCount,
+            expertBytes: ByteCount,
+            ssdResidentBytes: ByteCount = .zero,
+            sharedExpertBytes: ByteCount = .zero
+        ) {
+            self.totalShardBytes = totalShardBytes
+            self.expertBytes = expertBytes
+            self.ssdResidentBytes = ssdResidentBytes
+            self.sharedExpertBytes = sharedExpertBytes
+        }
+
+        public var workingSetShardBytes: ByteCount { max(.zero, totalShardBytes - ssdResidentBytes) }
+        public var residentWeights: ByteCount { max(.zero, totalShardBytes - expertBytes - ssdResidentBytes) }
     }
 
     public static func hasStackedExperts(in directory: URL) -> Bool {
@@ -118,22 +133,32 @@ extension ModelFitAnalyzer {
         guard !shards.isEmpty else { return nil }
         var totalShardBytes: Int64 = 0
         var expertBytes: Int64 = 0
+        var ssdResidentBytes: Int64 = 0
+        var sharedExpertBytes: Int64 = 0
         var weightCount = 0
         for url in shards {
-            guard let parsed = inspectStackedShard(at: url) else { return nil }
+            guard let parsed = inspectShardPartition(at: url) else { return nil }
             totalShardBytes += parsed.fileSize
             expertBytes += parsed.expertBytes
+            ssdResidentBytes += parsed.ssdResidentBytes
+            sharedExpertBytes += parsed.sharedExpertBytes
             weightCount += parsed.weightCount
         }
-        return weightCount > 0 ? StackedExpertsSummary(totalShardBytes: ByteCount(totalShardBytes), expertBytes: ByteCount(expertBytes)) : nil
+        return weightCount > 0 ? StackedExpertsSummary(
+            totalShardBytes: ByteCount(totalShardBytes),
+            expertBytes: ByteCount(expertBytes),
+            ssdResidentBytes: ByteCount(ssdResidentBytes),
+            sharedExpertBytes: ByteCount(sharedExpertBytes)
+        ) : nil
     }
 
     public static func classifyDirectory(
         _ directory: URL, workingSetBudget: ByteCount, kvBytes: ByteCount = .zero, streaming: ExpertStreaming = ExpertStreaming()
     ) -> (fitLevel: FitLevel, streaming: ExpertStreamingFootprint?) {
         let shards = safetensorsShards(in: directory)
-        let weights = ByteCount(shards.reduce(Int64(0)) { $0 + resolvedFileSize(of: $1) })
-        guard weights > .zero else { return (.tooTight, nil) }
+        let rawWeights = ByteCount(shards.reduce(Int64(0)) { $0 + resolvedFileSize(of: $1) })
+        let weights = max(.zero, rawWeights - ssdResidentBytes(in: directory))
+        guard rawWeights > .zero else { return (.tooTight, nil) }
         let level = MemoryEvaluator.fitLevel(required: weights + kvBytes, budget: workingSetBudget)
         guard level == .tooTight else { return (level, nil) }
         guard let summary = stackedExperts(in: directory),
@@ -159,33 +184,13 @@ extension ModelFitAnalyzer {
         (try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)[.size] as? Int64) ?? 0
     }
 
-    private static func isStackedExpertKey(_ key: String) -> Bool {
+    static func isStackedExpertKey(_ key: String) -> Bool {
         key.contains(".switch_mlp.") || key.contains(".switch_glu.")
             || key.contains(".experts.gate_proj.") || key.contains(".experts.up_proj.") || key.contains(".experts.down_proj.")
             || key.contains(".experts.gate_up_proj.") || key.contains(".experts.w13.") || key.contains(".experts.w2.")
     }
 
-    private static func inspectStackedShard(at url: URL) -> (fileSize: Int64, expertBytes: Int64, weightCount: Int)? {
-        let size = resolvedFileSize(of: url)
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let prefix = try? handle.read(upToCount: 8),
-              let headerLen = ModelInspector.safetensorsHeaderLength(prefix, fileSize: size),
-              let headerData = try? handle.read(upToCount: headerLen), headerData.count == headerLen,
-              let entries = (try? JSONSerialization.jsonObject(with: headerData)) as? [String: Any] else {
-            return nil
-        }
-        var expertBytes: Int64 = 0
-        var weightCount = 0
-        for (key, value) in entries where key != "__metadata__" && isStackedExpertKey(key) {
-            guard let span = stackedTensorBytes(key: key, value: value, headerLength: headerLen, fileSize: size) else { return nil }
-            expertBytes += span.bytes
-            if span.isWeight { weightCount += 1 }
-        }
-        return (size, expertBytes, weightCount)
-    }
-
-    private static func stackedTensorBytes(
+    static func stackedTensorBytes(
         key: String, value: Any, headerLength: Int, fileSize: Int64
     ) -> (bytes: Int64, isWeight: Bool)? {
         let payloadLimit = fileSize - 8 - Int64(headerLength)

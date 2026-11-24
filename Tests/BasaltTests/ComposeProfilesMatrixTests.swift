@@ -6,13 +6,13 @@ import SwiftUI
 @testable import BasaltAppCore
 @testable import BasaltApp
 
-@Suite("91 hardware-tiered Compose profiles (16/24/32-36/48/64/128/256 GB x 13) and RAM detection (#526, #583)")
+@Suite("117 hardware-tiered Compose profiles (16/24/32-36/48/64/96/128/192/256 GB x 13) and RAM detection (#526, #583, #639)")
 struct ComposeProfilesMatrixTests {
-    @Test("Catalog holds 91 profiles (13 per tier, 4 primary per tier), detects RAM tiers, and resolves 32gb/36gb/236gb aliases")
+    @Test("Catalog holds 117 profiles (13 per tier, 4 primary per tier), detects RAM tiers including 96 GB and 192 GB, and resolves 32gb/36gb/236gb aliases")
     func catalogCountsTiersAndAliases() {
-        #expect(ComposeMemoryTier.allCases.count == 7)
+        #expect(ComposeMemoryTier.allCases.count == 9)
         #expect(ComposeProfileArchetype.allCases.count == 13)
-        #expect(ComposeProfileCatalog.profiles.count == 91)
+        #expect(ComposeProfileCatalog.profiles.count == 117)
 
         for tier in ComposeMemoryTier.allCases {
             let slice = ComposeProfileCatalog.profiles(for: tier)
@@ -26,23 +26,26 @@ struct ComposeProfilesMatrixTests {
         #expect(ComposeMemoryTier.detect(ramGB: 36) == .gb36)
         #expect(ComposeMemoryTier.detect(ramGB: 48) == .gb48)
         #expect(ComposeMemoryTier.detect(ramGB: 64) == .gb64)
+        #expect(ComposeMemoryTier.detect(ramGB: 96) == .gb96)
         #expect(ComposeMemoryTier.detect(ramGB: 128) == .gb128)
+        #expect(ComposeMemoryTier.detect(ramGB: 192) == .gb192)
         #expect(ComposeMemoryTier.detect(ramGB: 236) == .gb256)
         #expect(ComposeMemoryTier.detect(ramGB: 256) == .gb256)
 
         #expect(ComposeProfileCatalog.resolve(id: "32gb-daily-chat")?.id == "32-36gb-daily-chat")
         #expect(ComposeProfileCatalog.resolve(id: "36gb-voice-zonos")?.id == "32-36gb-voice-zonos")
+        #expect(ComposeProfileCatalog.resolve(id: "96gb-coding-agent")?.id == "96gb-coding-agent")
+        #expect(ComposeProfileCatalog.resolve(id: "192gb-coding-agent")?.id == "192gb-coding-agent")
         #expect(ComposeProfileCatalog.resolve(id: "236gb-moe-frontier")?.id == "256gb-moe-frontier")
-        #expect(ComposeProfileCatalog.resolve(id: "192gb-coding-agent")?.id == "256gb-coding-agent")
     }
 
-    @Test("Every one of the 91 hardware-tiered profiles, 5 FLUX.3 presets, 5 Video DiT presets, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
+    @Test("Every one of the 117 hardware-tiered profiles, 5 FLUX.3 presets, 5 Video DiT presets, aliases, and legacy bundled profiles parses with zero ComposeSpec issues")
     func allBundledProfilesParseCleanly() throws {
         let bundledKeys = ComposeFile.bundled.keys.sorted()
         #expect(ComposeProfileCatalog.flux3Combinations.count == 5)
         #expect(ComposeProfileCatalog.videoCombinations.count == 5)
         #expect(ComposeProfileCatalog.v22Specialists.count == 14)
-        #expect(bundledKeys.count == 91 + 4 * 13 + 3 + 5 + 5 + ComposeProfileCatalog.v22Specialists.count)
+        #expect(bundledKeys.count == 117 + 3 * 13 + 3 + 5 + 5 + ComposeProfileCatalog.v22Specialists.count)
         for key in bundledKeys {
             let spec = try ComposeFile.load(key)
             #expect(spec.issues.isEmpty, "Bundled profile \(key) had issues: \(spec.issues)")
@@ -72,7 +75,7 @@ struct ComposeProfilesMatrixTests {
 
         _ = ComposeProfilesReducer.reduce(&state, .filterChanged(.all))
         _ = ComposeProfilesReducer.reduce(&state, .queryChanged("ZONOS3"))
-        #expect(state.filteredProfiles.count == 14)
+        #expect(state.filteredProfiles.count == 18)
 
         let effects = ComposeProfilesReducer.reduce(&state, .activate("24gb-voice-zonos"))
         #expect(effects == [.applyProfile("24gb-voice-zonos")])

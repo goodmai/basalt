@@ -235,7 +235,7 @@ extension ComposeProfileCatalog {
                 modelGB: 24.6, frames: 121, streamsExperts: false,
                 badges: ["Wan 2.2 A14B", "3D-VAE", "STA"]
             )
-        case .gb64, .gb128, .gb256:
+        case .gb64, .gb96, .gb128, .gb192, .gb256:
             TierVideoSelection(
                 model: "goodmai/LTX-2-19B-Distilled-PV-MACaQ-4bit-MXFP4-MLX",
                 modelGB: 26.2, frames: 121, streamsExperts: false,

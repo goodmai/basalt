@@ -6,7 +6,9 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
     case gb36 = "32-36gb"
     case gb48 = "48gb"
     case gb64 = "64gb"
+    case gb96 = "96gb"
     case gb128 = "128gb"
+    case gb192 = "192gb"
     case gb256 = "256gb"
 
     public var id: String { rawValue }
@@ -18,7 +20,9 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
         case .gb36: 36
         case .gb48: 48
         case .gb64: 64
+        case .gb96: 96
         case .gb128: 128
+        case .gb192: 192
         case .gb256: 256
         }
     }
@@ -30,8 +34,10 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
         case .gb36: 32
         case .gb48: 48
         case .gb64: 64
+        case .gb96: 96
         case .gb128: 128
-        case .gb256: 192
+        case .gb192: 192
+        case .gb256: 236
         }
     }
 
@@ -42,7 +48,9 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
         case .gb36: 26.5
         case .gb48: 36.0
         case .gb64: 48.0
+        case .gb96: 72.0
         case .gb128: 96.0
+        case .gb192: 144.0
         case .gb256: 192.0
         }
     }
@@ -54,7 +62,9 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
         case .gb36: "32–36 GB"
         case .gb48: "48 GB"
         case .gb64: "64 GB"
+        case .gb96: "96 GB"
         case .gb128: "128 GB"
+        case .gb192: "192 GB"
         case .gb256: "256 GB"
         }
     }
@@ -62,8 +72,8 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
     public var aliases: [String] {
         switch self {
         case .gb36: ["32gb", "36gb"]
-        case .gb256: ["192gb", "236gb"]
-        case .gb16, .gb24, .gb48, .gb64, .gb128: []
+        case .gb256: ["236gb"]
+        case .gb16, .gb24, .gb48, .gb64, .gb96, .gb128, .gb192: []
         }
     }
 
@@ -78,8 +88,10 @@ public enum ComposeMemoryTier: String, Sendable, Codable, Equatable, CaseIterabl
         case 20 ..< 30: .gb24
         case 30 ..< 42: .gb36
         case 42 ..< 56: .gb48
-        case 56 ..< 96: .gb64
-        case 96 ..< 180: .gb128
+        case 56 ..< 80: .gb64
+        case 80 ..< 112: .gb96
+        case 112 ..< 160: .gb128
+        case 160 ..< 224: .gb192
         default: .gb256
         }
     }
