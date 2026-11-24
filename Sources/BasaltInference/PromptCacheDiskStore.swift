@@ -35,7 +35,7 @@ public struct PromptCacheDiskStore: Sendable {
     static let lockName = ".lock"
     static let modelDescriptionFiles = [
         "config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja", "chat_template.json",
-        "generation_config.json", "special_tokens_map.json",
+        "generation_config.json", "special_tokens_map.json", "edit.json",
     ]
 
     public static var defaultDirectory: URL {

@@ -147,6 +147,13 @@ extension MLXInferenceEngine {
         at directory: URL,
         refused: (String) -> BasaltError
     ) throws(BasaltError) -> (any ModelAdapter)? {
+        if EditAdapter.isEditAdapterDirectory(directory) {
+            do {
+                return try EditAdapter.from(directory: directory)
+            } catch {
+                throw refused("invalid edit adapter directory: \(briefly(error))")
+            }
+        }
         switch probeFineTuneType(directory) {
         case "phm":
             do {
@@ -167,6 +174,9 @@ extension MLXInferenceEngine {
 
     static func attachAnyAdapterDirectory(_ directory: URL, to model: any LanguageModel) throws(BasaltError) -> [String] {
         func refused(_ reason: String) -> BasaltError { .invalidRequestStructure(details: "adapter_apply \(directory.path): \(reason)") }
+        if EditAdapter.isEditAdapterDirectory(directory) {
+            throw refused("edit adapters are served through --adapter / loadAdapters or applied to a WeightCopy, not live adapter_apply")
+        }
         guard let custom = try loadCustomAdapter(at: directory, refused: refused) else {
             return try attachContainer(try loraContainer(at: directory, for: model, refused), to: model, refused)
         }
