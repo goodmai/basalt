@@ -5,7 +5,7 @@ public enum EditTargetScope: String, Sendable, Codable, Equatable {
     case includeMultimodal = "include_multimodal"
 }
 
-public struct Gemma4EditTopology: Sendable, Equatable {
+public struct Gemma4EditTopology: Sendable, Codable, Equatable {
     public let numLayers: Int
     public let kvDonorForLayers: [Int: [Int]]
     public let kEqVLayers: [Int]
