@@ -636,3 +636,21 @@ extension SelfRewritingP0Tests {
         try copy.release(verifying: original)
     }
 }
+
+extension SelfRewritingP0Tests {
+    @Test("rank1Damp normalises u, so a direction scaled by 10 gives the same edit as the unit vector and |alpha| <= 1 stays a real bound")
+    func rank1DampNormalisesDirection() throws {
+        let original = try TinyModel.make(.qwen35)
+        let program = EditProgram(ops: [.rank1Damp(module: Self.oProj, vectorKey: "u", alpha: 0.5)])
+        let unit = Self.unitVector(size: 64, seed: 104)
+        var unitCopy = try WeightCopy.makeSync(from: original)
+        _ = try unitCopy.apply(program, tensors: ["u": unit], verifying: original)
+        let unitLogits = try unitCopy.logits(for: Self.promptTokens).asType(.float32)
+        try unitCopy.release(verifying: original)
+        var scaledCopy = try WeightCopy.makeSync(from: original)
+        _ = try scaledCopy.apply(program, tensors: ["u": unit * Float(10)], verifying: original)
+        let scaledLogits = try scaledCopy.logits(for: Self.promptTokens).asType(.float32)
+        try scaledCopy.release(verifying: original)
+        #expect(abs(unitLogits - scaledLogits).max().item(Float.self) < 1e-4)
+    }
+}

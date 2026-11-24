@@ -159,7 +159,7 @@ public struct WeightCopy: ~Copyable {
     public mutating func undoLast(verifying original: any LanguageModel) throws {
         let copy = try model
         guard let frame = undoStack.popLast() else { return }
-        EditOpExecutor.undo(frame.entries, in: copy, loraScales: &loraScales)
+        try EditOpExecutor.undo(frame.entries, in: copy, loraScales: &loraScales)
         rebuildEditedTracking()
         try originalFingerprint.requireUnchanged(against: original)
     }
@@ -167,7 +167,7 @@ public struct WeightCopy: ~Copyable {
     public mutating func undoAll(verifying original: any LanguageModel) throws {
         let copy = try model
         while let frame = undoStack.popLast() {
-            EditOpExecutor.undo(frame.entries, in: copy, loraScales: &loraScales)
+            try EditOpExecutor.undo(frame.entries, in: copy, loraScales: &loraScales)
         }
         editedShiftTensors.removeAll()
         editedLayerTensors.removeAll()

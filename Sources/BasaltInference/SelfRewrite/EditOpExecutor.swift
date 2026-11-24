@@ -99,29 +99,39 @@ enum EditOpExecutor {
         )
     }
 
-    static func undo(_ entries: [EditUndoEntry], in model: Module, loraScales: inout [String: Float]) {
+    static func undo(_ entries: [EditUndoEntry], in model: Module, loraScales: inout [String: Float]) throws {
         guard !entries.isEmpty else { return }
+        var failure: (any Error)?
         for entry in entries.reversed() {
-            switch entry {
-            case .loraModule(let path):
-                let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
-                if let lora = modules[path] as? LoRALayer {
-                    try? MLXInferenceEngine.replace(path, with: lora.reverted(), in: model)
-                }
-                loraScales.removeValue(forKey: path)
-            case .previousLoRA(let path, let loraA, let loraB, let scale):
-                restorePreviousLoRA(path: path, loraA: loraA, loraB: loraB, scale: scale, in: model, loraScales: &loraScales)
-            case .replacedLayer(let packed):
-                try? packed.restore(in: model)
-                loraScales.removeValue(forKey: packed.path)
-            case .floatTensor(let name, let original):
-                let restored = original.reshaped(original.shape)
-                _ = try? model.update(parameters: ModuleParameters.unflattened([(name, restored)]), verify: .none)
-                eval(restored)
+            do {
+                try undoEntry(entry, in: model, loraScales: &loraScales)
+            } catch {
+                failure = failure ?? error
             }
         }
         MLXInferenceEngine.settle(model)
         eval(model)
+        if let failure { throw failure }
+    }
+
+    private static func undoEntry(_ entry: EditUndoEntry, in model: Module, loraScales: inout [String: Float]) throws {
+        switch entry {
+        case .loraModule(let path):
+            let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
+            if let lora = modules[path] as? LoRALayer {
+                try MLXInferenceEngine.replace(path, with: lora.reverted(), in: model)
+            }
+            loraScales.removeValue(forKey: path)
+        case .previousLoRA(let path, let loraA, let loraB, let scale):
+            try restorePreviousLoRA(path: path, loraA: loraA, loraB: loraB, scale: scale, in: model, loraScales: &loraScales)
+        case .replacedLayer(let packed):
+            try packed.restore(in: model)
+            loraScales.removeValue(forKey: packed.path)
+        case .floatTensor(let name, let original):
+            let restored = original.reshaped(original.shape)
+            _ = try model.update(parameters: ModuleParameters.unflattened([(name, restored)]), verify: .none)
+            eval(restored)
+        }
     }
 
     private static func restorePreviousLoRA(
@@ -131,7 +141,7 @@ enum EditOpExecutor {
         scale: Float,
         in model: Module,
         loraScales: inout [String: Float]
-    ) {
+    ) throws {
         let modules = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })
         let baseLinear: Linear? = if let current = modules[path] as? LoRALayer {
             current.reverted() as? Linear
@@ -145,7 +155,7 @@ enum EditOpExecutor {
             "lora_b": loraB.reshaped(loraB.shape),
         ]))
         eval(restored)
-        try? MLXInferenceEngine.replace(path, with: restored, in: model)
+        try MLXInferenceEngine.replace(path, with: restored, in: model)
         loraScales[path] = scale
     }
 
@@ -213,7 +223,11 @@ extension EditOpExecutor {
         guard flatU.size == outputs else {
             throw EditValidationError.shapeMismatch(target: modulePath, expected: "[\(outputs)]", actual: "\(vector.shape)")
         }
-        let uRow = flatU.reshaped(1, outputs)
+        let norm = sqrt((flatU.asType(.float32) * flatU.asType(.float32)).sum()).item(Float.self)
+        guard norm.isFinite, norm > 0 else {
+            throw EditValidationError.nonFiniteValue(target: modulePath, detail: "rank1Damp u has norm \(norm)")
+        }
+        let uRow = (flatU.asType(.float32) / norm).asType(flatU.dtype).reshaped(1, outputs)
         let baseInputVector = transposeMatVec(uRow: uRow, linear: baseLinear)
         let inputVector: MLXArray
         if let existing = existingLoRA {

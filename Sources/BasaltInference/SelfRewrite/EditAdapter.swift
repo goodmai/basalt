@@ -127,7 +127,11 @@ public final class EditAdapter: ModelAdapter, Sendable {
         let modelKey = UInt(bitPattern: ObjectIdentifier(model))
         guard let state = appliedStates.withLock({ $0.removeValue(forKey: modelKey) }) else { return }
         var scales = state.loraScales
-        EditOpExecutor.undo(state.undoEntries, in: model, loraScales: &scales)
+        do {
+            try EditOpExecutor.undo(state.undoEntries, in: model, loraScales: &scales)
+        } catch {
+            BasaltLogger(module: "EditAdapter").error("Undoing the edit adapter failed, so the model may still carry its edits: \(MLXInferenceEngine.briefly(error))")
+        }
     }
 
     public func lastMetrics(for model: any LanguageModel) -> [EditOpMetrics] {
