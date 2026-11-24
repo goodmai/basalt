@@ -305,6 +305,7 @@ enum SubmissionTestFixture {
         case .tauBench: "results.json"
         case .gaia: "validation.jsonl"
         case .weaveOTel: "otel_eval_export.json"
+        case .mtLeaderboard: "README.md"
         }
     }
 }
@@ -313,7 +314,7 @@ enum SubmissionTestFixture {
 struct SubmissionFormatterAllTargetsTests {
     @Test("Every SubmissionTarget exports valid, non-empty required files, basalt_provenance.json, and a dry-run plan", arguments: SubmissionTarget.allCases)
     func exportsAllTenTargets(target: SubmissionTarget) throws {
-        #expect(SubmissionTarget.allCases.count == 10)
+        #expect(SubmissionTarget.allCases.count == 11)
         let artifact = SubmissionTestFixture.makeArtifact()
         let submitSpec = BenchmarkSubmitSpec(target: target, apiKeyEnv: "BENCH_API_KEY", subset: "verified", split: "validation")
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("submit-\(target.rawValue)-\(UUID().uuidString)")

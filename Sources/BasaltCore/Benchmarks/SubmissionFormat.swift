@@ -11,6 +11,7 @@ public enum SubmissionTarget: String, Sendable, Codable, CaseIterable {
     case tauBench = "tau-bench"
     case gaia = "gaia"
     case weaveOTel = "weave-otel"
+    case mtLeaderboard = "mt-leaderboard"
 }
 
 public struct SubmissionFile: Sendable, Equatable, Codable {
@@ -85,6 +86,7 @@ public enum SubmissionFormatter {
         case .tauBench: buildTauBench(artifact, submit: submit)
         case .gaia: buildGAIA(artifact, submit: submit)
         case .weaveOTel: buildWeaveOTel(artifact, submit: submit)
+        case .mtLeaderboard: buildMTLeaderboard(artifact, submit: submit)
         }
         if let env = submit?.apiKeyEnv, let issue = BenchmarkSecretGuard.apiKeyEnvIssue(env, path: "submit.api_key_env") {
             plan.validationErrors.append(issue.message)
