@@ -11,6 +11,7 @@ enum MoERWPipeline {
         var module: Module
         var numExperts: Int
         var inFeatures: Int
+        var expertScale: MLXArray? = nil
     }
 
     struct CaptureBundle {
@@ -27,13 +28,14 @@ enum MoERWPipeline {
         let config: MACaQConfig
     }
 
+    static let routerSuffixes = [".mlp.gate", ".mlp.router", ".feed_forward.gate", ".feed_forward.router", ".router.proj"]
+
     static func discoverRouters(in root: Module) -> [Int: RouterSite] {
         var out: [Int: RouterSite] = [:]
-        for (path, mod) in root.namedModules() {
-            guard let bIdx = PVTuner.textBlockIndex(path), out[bIdx] == nil,
-                  path.hasSuffix(".mlp.gate") || path.hasSuffix(".mlp.router")
-                      || path.hasSuffix(".feed_forward.gate") || path.hasSuffix(".feed_forward.router")
-            else { continue }
+        let modules = root.namedModules()
+        let byPath = Dictionary(modules, uniquingKeysWith: { first, _ in first })
+        for (path, mod) in modules {
+            guard let bIdx = PVTuner.textBlockIndex(path), out[bIdx] == nil, routerSuffixes.contains(where: path.hasSuffix) else { continue }
             let dims: (out: Int, inp: Int)? = if let nf4 = mod as? NF4Linear {
                 nf4.shape
             } else if let ql = mod as? QuantizedLinear {
@@ -44,8 +46,15 @@ enum MoERWPipeline {
                 nil
             }
             if let dims, dims.out >= 2, dims.inp >= 16 {
-                out[bIdx] = RouterSite(block: bIdx, path: path, module: mod, numExperts: dims.out, inFeatures: dims.inp)
+                let parent = path.hasSuffix(".proj") ? byPath[String(path.dropLast(".proj".count))] : nil
+                let scale = parent.flatMap { Dictionary(uniqueKeysWithValues: $0.parameters().flattened())["per_expert_scale"] }
+                out[bIdx] = RouterSite(
+                    block: bIdx, path: path, module: mod, numExperts: dims.out, inFeatures: dims.inp,
+                    expertScale: scale?.size == dims.out ? scale?.asType(.float32) : nil)
             }
+        }
+        if out.isEmpty, modules.contains(where: { PVTuner.textBlockIndex($0.0) != nil && $0.1 is SwitchLinear }) {
+            BasaltLogger(module: "MoERW").error("moe-rw found switch layers but no router (looked for \(routerSuffixes.joined(separator: ", "))); expert Hessians fall back to unweighted tokens")
         }
         return out
     }
@@ -98,7 +107,7 @@ enum MoERWPipeline {
         let activeBlocks = Set(targets.switches.compactMap { PVTuner.textBlockIndex($0.path) })
         for bIdx in activeBlocks.sorted() {
             guard let site = routers[bIdx] else { continue }
-            let gBox = MoERouterGateBox(numExperts: site.numExperts, inFeatures: site.inFeatures)
+            let gBox = MoERouterGateBox(numExperts: site.numExperts, inFeatures: site.inFeatures, expertScale: site.expertScale)
             gateBoxes[bIdx] = gBox
             try PVTuner.swapModule(site.path, with: MoERouterGateTap(wrapping: site.module, box: gBox), in: root)
             swapped.append((site.path, site.module))
@@ -145,7 +154,7 @@ extension MoERWPipeline {
             for (path, orig) in swapped { try? PVTuner.swapModule(path, with: orig, in: root) }
         }
         for (bIdx, site) in routers.sorted(by: { $0.key < $1.key }) {
-            let gBox = MoERouterGateBox(numExperts: site.numExperts, inFeatures: site.inFeatures)
+            let gBox = MoERouterGateBox(numExperts: site.numExperts, inFeatures: site.inFeatures, expertScale: site.expertScale)
             gateBoxes[bIdx] = gBox
             try PVTuner.swapModule(site.path, with: MoERouterGateTap(wrapping: site.module, box: gBox), in: root)
             swapped.append((site.path, site.module))

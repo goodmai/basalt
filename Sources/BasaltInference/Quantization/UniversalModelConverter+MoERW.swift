@@ -16,15 +16,17 @@ package struct MoERWConversionSummary: Sendable, Equatable {
 final class MoERouterGateBox {
     let numExperts: Int
     let inFeatures: Int
+    let expertScale: MLXArray?
     var lastInput: MLXArray?
     var lastLogits: MLXArray?
     var pooledInputs: [MLXArray] = []
     var pooledLogits: [MLXArray] = []
     var pooledRows = 0
 
-    init(numExperts: Int, inFeatures: Int) {
+    init(numExperts: Int, inFeatures: Int, expertScale: MLXArray? = nil) {
         self.numExperts = max(1, numExperts)
         self.inFeatures = max(1, inFeatures)
+        self.expertScale = expertScale
     }
 
     func record(input: MLXArray, logits: MLXArray) {
@@ -122,14 +124,16 @@ final class MoERWSwitchReservoir {
             return Array(repeating: 1.0, count: idCount)
         }
         let top = MoERouterWeightedHessian.topKGating(logits: z, topK: topK)
-        recordFallbackPool(xFlat: xFlat, probs: xRows == zRows ? top.fullProbs : nil)
+        let scale = gateBox?.expertScale
+        let weights = scale.map { top.weights * $0.take(top.indices, axis: 0) } ?? top.weights
+        recordFallbackPool(xFlat: xFlat, probs: xRows == zRows ? scale.map { top.fullProbs * $0 } ?? top.fullProbs : nil)
         if sortedIndices {
             let order = argSort(top.indices.reshaped(-1))
-            let sortedW = top.weights.reshaped(-1).take(order, axis: 0)
+            let sortedW = weights.reshaped(-1).take(order, axis: 0)
             eval(sortedW)
             return sortedW.asArray(Float.self)
         }
-        return top.weights.reshaped(-1).asArray(Float.self)
+        return weights.reshaped(-1).asArray(Float.self)
     }
 
     private func recordFallbackPool(xFlat: MLXArray, probs: MLXArray?) {
