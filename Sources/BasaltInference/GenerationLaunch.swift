@@ -87,6 +87,7 @@ struct LaunchOptions {
     var mtpPrefix: MTPPrefix?
     var pacer: PrefillPacer?
     var kEqVRow: KEqVRowLayout?
+    var prefillScratch: PrefillAttentionScratch?
 }
 
 struct MTPRequest {
@@ -106,8 +107,8 @@ extension GenerateParameters {
         return reporting
     }
 
-    func capped(for model: any LanguageModel, promptTokens: Int) -> GenerateParameters {
-        guard let cap = (model as? Inkling2Model)?.prefillStepCap(keys: promptTokens) else { return self }
+    func capped(for model: any LanguageModel, promptTokens: Int, scratch: PrefillAttentionScratch? = nil) -> GenerateParameters {
+        guard let cap = (model as? Inkling2Model)?.prefillStepCap(keys: promptTokens) ?? scratch?.stepCap(keys: promptTokens) else { return self }
         var capped = self
         capped.prefill.stepSize = min(prefill.stepSize ?? PrefillParameters.defaultStepSize, cap)
         return capped
