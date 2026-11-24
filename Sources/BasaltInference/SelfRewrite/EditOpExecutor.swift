@@ -85,7 +85,11 @@ enum EditOpExecutor {
             MLXInferenceEngine.settle(model)
             eval(model)
         } catch {
-            undo(undoEntries, in: model, loraScales: &context.loraScales)
+            do {
+                try undo(undoEntries, in: model, loraScales: &context.loraScales)
+            } catch let rollback {
+                BasaltLogger(module: "EditOpExecutor").error("Rolling back a failed edit program also failed, so the model may keep part of it: \(MLXInferenceEngine.briefly(rollback))")
+            }
             context.loraScales = savedScales
             throw error
         }
@@ -227,7 +231,8 @@ extension EditOpExecutor {
         guard norm.isFinite, norm > 0 else {
             throw EditValidationError.nonFiniteValue(target: modulePath, detail: "rank1Damp u has norm \(norm)")
         }
-        let uRow = (flatU.asType(.float32) / norm).asType(flatU.dtype).reshaped(1, outputs)
+        let unitU = (flatU.asType(.float32) / norm).asType(flatU.dtype)
+        let uRow = unitU.reshaped(1, outputs)
         let baseInputVector = transposeMatVec(uRow: uRow, linear: baseLinear)
         let inputVector: MLXArray
         if let existing = existingLoRA {
@@ -241,7 +246,7 @@ extension EditOpExecutor {
         guard inputVector.size == inputs else {
             throw EditValidationError.shapeMismatch(target: modulePath, expected: "[\(inputs)]", actual: "\(inputVector.shape)")
         }
-        let spec = RankOneSpec(modulePath: modulePath, input: inputVector, output: flatU, scale: -alpha, index: index)
+        let spec = RankOneSpec(modulePath: modulePath, input: inputVector, output: unitU, scale: -alpha, index: index)
         return try installRankOne(spec, baseLinear: baseLinear, existingLoRA: existingLoRA, on: model, context: &context)
     }
 
