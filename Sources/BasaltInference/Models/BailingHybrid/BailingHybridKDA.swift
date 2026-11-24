@@ -54,26 +54,49 @@ package enum BailingHybridKDAOps {
     package static func recurrentUpdate(
         _ inputs: BailingHybridKDAInputs,
         state: MLXArray?,
+        mask: MLXArray? = nil,
+        useKernel: Bool = true
+    ) -> (MLXArray, MLXArray) {
+        if useKernel, BailingHybridKDAKernel.canUseKernel(inputs, state: state, mask: mask) {
+            return BailingHybridKDAKernel.run(inputs, state: state, mask: mask)
+        }
+        return recurrentUpdateOps(inputs, state: state, mask: mask)
+    }
+
+    package static func recurrentUpdateOps(
+        _ inputs: BailingHybridKDAInputs,
+        state: MLXArray?,
         mask: MLXArray? = nil
     ) -> (MLXArray, MLXArray) {
         let batch = inputs.q.dim(0)
         let steps = inputs.q.dim(1)
-        let heads = inputs.v.dim(2)
+        let hk = inputs.q.dim(2)
+        let hv = inputs.v.dim(2)
         let headVDim = inputs.v.dim(3)
         let headKDim = inputs.k.dim(3)
-        var current = (state ?? MLXArray.zeros([batch, heads, headVDim, headKDim], dtype: .float32)).asType(.float32)
+        var current = (state ?? MLXArray.zeros([batch, hv, headVDim, headKDim], dtype: .float32)).asType(.float32)
         guard steps > 0 else {
-            return (MLXArray.zeros([batch, 0, heads, headVDim], dtype: .float32), current)
+            return (MLXArray.zeros([batch, 0, hv, headVDim], dtype: inputs.q.dtype), current)
         }
+        let repeatFactor = hv / max(hk, 1)
+        let effective = repeatFactor > 1
+            ? BailingHybridKDAInputs(
+                q: repeated(inputs.q, count: repeatFactor, axis: 2),
+                k: repeated(inputs.k, count: repeatFactor, axis: 2),
+                v: inputs.v,
+                decay: inputs.decay,
+                beta: inputs.beta
+            )
+            : inputs
         var outputs: [MLXArray] = []
         outputs.reserveCapacity(steps)
         for step in 0 ..< steps {
             let stepMask = mask.map { $0[0..., step] }
-            let (y, nextState) = recurrentStep(inputs.slice(at: step), state: current, mask: stepMask)
+            let (y, nextState) = recurrentStep(effective.slice(at: step), state: current, mask: stepMask)
             outputs.append(y)
             current = nextState
         }
-        return (MLX.stacked(outputs, axis: 1), current)
+        return (MLX.stacked(outputs, axis: 1).asType(inputs.q.dtype), current)
     }
 
     private static func recurrentStep(
@@ -216,7 +239,7 @@ package final class BailingHybridLinearAttention: Module {
         let (qConv, kConv, vConv) = convolveQKV(x, cache: cache, mask: ssmMask)
         let q = BailingHybridKDAOps.l2Normalize(qConv.reshaped(batch, steps, numHeads, headDim)) * scale
         let k = BailingHybridKDAOps.l2Normalize(kConv.reshaped(batch, steps, numHeads, headDim))
-        let v = vConv.reshaped(batch, steps, numHeads, headDim)
+        let v = vConv.reshaped(batch, steps, numHeads, headDim).asType(.float32)
 
         let (fRaw, gRaw) = projectGates(x)
         let f = fRaw.reshaped(batch, steps, numHeads, headDim)

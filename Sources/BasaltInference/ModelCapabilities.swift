@@ -81,6 +81,11 @@ struct ModelCapabilities: Equatable, Sendable {
 
     static func refuseUnverifiedKVBits(_ precision: KVPrecision?, modelType: String?, path: String) throws(BasaltError) {
         guard precision != nil, of(modelType: modelType)?.allows(.kvQuantization) != true else { return }
+        if modelType?.lowercased() == BailingHybridModel.modelType {
+            throw .modelConfigurationInvalid(
+                path: path,
+                reason: "model_type 'bailing_hybrid' stores an absorbed MLA latent KV cache (kv_lora_rank + qk_rope_head_dim), so --kv-bits cannot apply; serve it without --kv-bits or with --kv-bits auto")
+        }
         throw .modelConfigurationInvalid(
             path: path,
             reason: "model_type '\(modelType ?? "none")' has no verified quantized KV cache, so --kv-bits cannot apply; serve it without --kv-bits or with --kv-bits auto")

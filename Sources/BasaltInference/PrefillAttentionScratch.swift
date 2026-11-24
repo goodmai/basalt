@@ -19,7 +19,13 @@ struct PrefillAttentionScratch: Sendable, Equatable {
         let text = config?["text_config"] as? [String: Any] ?? config ?? [:]
         guard let heads = text["num_attention_heads"] as? Int, heads > 0 else { return nil }
         let fused = nax ? fusedHeadDims.union([512]) : fusedHeadDims
-        let dims = ["head_dim", "global_head_dim"].compactMap { text[$0] as? Int }
+        var dims = ["head_dim", "global_head_dim"].compactMap { text[$0] as? Int }
+        if let rank = text["kv_lora_rank"] as? Int, let rope = text["qk_rope_head_dim"] as? Int,
+           (text["model_type"] as? String) == BailingHybridModel.modelType || text["layer_group_size"] is Int
+        {
+            if rope > 0 && !(rank + rope == 192 && rank == 128) { return Self(heads: heads) }
+            dims.append(rank + rope)
+        }
         return dims.contains { !fused.contains($0) } ? Self(heads: heads) : nil
     }
 

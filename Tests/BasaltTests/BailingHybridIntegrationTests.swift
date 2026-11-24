@@ -32,6 +32,13 @@ struct BailingHybridIntegrationTests {
             #expect(kdaCache[3]?.dtype == .float32)
         }
 
+        for idx in [2, 5] {
+            let mlaCache = try #require(caches[idx] as? KVCacheSimple)
+            #expect(mlaCache.state.count == 2)
+            #expect(mlaCache.state[0].shape == [1, 1, Self.sequenceTokens.count, 32])
+            #expect(mlaCache.state[1].shape == [1, 1, Self.sequenceTokens.count, 16])
+        }
+
         let scan = AnatomyScan(model: model, caches: try model.newCache(parameters: nil))
         let configJSON = try #require(try JSONSerialization.jsonObject(with: Data(TinyModel.Family.bailingHybrid.config.utf8)) as? [String: Any])
         let anatomy = scan.anatomy(config: configJSON)

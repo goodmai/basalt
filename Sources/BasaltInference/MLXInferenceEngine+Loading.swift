@@ -306,7 +306,11 @@ extension MLXInferenceEngine {
     }
 
     func probeKVZones() async {
-        guard let zones = configuration.kvZones, modelFacts.capabilities.allows(.kvZones), let container = warmingContainer else { return }
+        guard let zones = configuration.kvZones, let container = warmingContainer else { return }
+        guard modelFacts.capabilities.allows(.kvZones) else {
+            logger.warn("--kv-zones is not verified on this model family (e.g. absorbed MLA latent caches), so the KV cache stays stock")
+            return
+        }
         let epoch = modelEpoch
         let precision = configuration.kvPrecision ?? .q8
         let probed = (try? await container.perform { try ZonedKVCache.probe($0.model, precision: precision) })

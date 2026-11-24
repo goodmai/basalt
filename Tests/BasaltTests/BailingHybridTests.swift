@@ -39,7 +39,7 @@ struct BailingHybridTests {
 
         let json = try #require(try JSONSerialization.jsonObject(with: Data(Self.ling3TinyConfigJSON.utf8)) as? [String: Any])
         let geometry = try #require(KVCacheGeometry(config: json))
-        #expect(geometry.bytesPerToken(nil) == 61_440)
+        #expect(geometry.bytesPerToken(nil) == 6_912)
         #expect(geometry.fixedStateBytes == 19_537_920)
     }
 
