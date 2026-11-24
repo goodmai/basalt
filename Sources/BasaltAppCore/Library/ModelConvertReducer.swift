@@ -52,6 +52,7 @@ public struct ConversionDraft: Sendable, Equatable {
     public var pvTune: Bool = true
     public var pvPreset: PVTunePreset = .balanced
     public var pvTeacher: String = ""
+    public var adapterRepoId: String = ""
     public var qatRefine: Bool = false
     public var runPostQuantAudit: Bool = false
     public var outputId: String
@@ -134,6 +135,8 @@ public struct ConversionDraft: Sendable, Equatable {
         req.hadamardBlock = (family == .macaq || family == .macaqMoE) ? hadamardBlock : nil
         req.pvPreset = pvPreset
         req.pvTeacher = pvTeacher.isEmpty ? nil : pvTeacher
+        let trimmedAdapter = adapterRepoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        req.adapter = trimmedAdapter.isEmpty ? nil : trimmedAdapter
         req.qatRefine = qatRefine && target.supportsPVTune
         req.auditSuitePath = runPostQuantAudit ? "default" : nil
         return req
@@ -209,6 +212,15 @@ extension LibraryReducer {
         guard isRepoID(req.outputId) else {
             state.problem = "\(req.outputId) must be an org/name repo id such as local/model-4bit"
             return []
+        }
+        if let rawAdapter = req.adapter {
+            let repo = rawAdapter.hasPrefix(ServedAdapterSource.repositoryPrefix)
+                ? String(rawAdapter.dropFirst(ServedAdapterSource.repositoryPrefix.count))
+                : rawAdapter
+            guard isRepoID(repo) else {
+                state.problem = "\(rawAdapter) must be an org/name adapter repo id"
+                return []
+            }
         }
         guard state.conversions.values.allSatisfy({ !$0.active }) else {
             state.problem = "Another conversion is currently running"

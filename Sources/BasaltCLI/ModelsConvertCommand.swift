@@ -60,7 +60,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Dequantize to dense weights: bf16 or f16")
     var dequantize: String?
 
-    @Option(name: .long, help: "Merge an mlx-lm LoRA adapter directory (adapter_config.json + adapters.safetensors)")
+    @Option(name: .long, help: "Merge a PEFT or mlx-lm LoRA adapter directory or HF repo id (org/repo or hf:org/repo)")
     var adapter: String?
 
     @Option(name: .long, help: "mlx (default) or hf: dense tensors, no .scales/.biases, config.json without quantization")
@@ -304,7 +304,7 @@ extension ConvertSubcommand {
         let recipe = try resolvedSINQRecipe()
         let converter = WeightConverter(
             precision: precision, format: format,
-            adapter: adapter.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) },
+            adapter: try await resolvedAdapterURL(),
             recipe: recipe)
         let outURL = URL(fileURLWithPath: (out as NSString).expandingTildeInPath)
         let existedBefore = FileManager.default.fileExists(atPath: outURL.path)

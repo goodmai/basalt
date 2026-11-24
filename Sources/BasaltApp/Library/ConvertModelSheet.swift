@@ -19,6 +19,7 @@ public struct ConvertModelSheet: View {
                     VStack(alignment: .leading, spacing: 14) {
                         targetSection(draft)
                         planCard(draft)
+                        adapterSection(draft)
                         pvTuneSection(draft)
                         qatAuditSection(draft)
                         outputSection(draft)
@@ -292,6 +293,7 @@ extension ConvertModelSheet {
 
     private func footer(_ draft: ConversionDraft) -> some View {
         let valid = LibraryReducer.isRepoID(draft.outputId.trimmingCharacters(in: .whitespacesAndNewlines))
+            && Self.isValidOptionalAdapter(draft.adapterRepoId)
         return HStack {
             Button("Cancel") { store.send(.closeConvert) }
                 .adaptiveGlassButton()

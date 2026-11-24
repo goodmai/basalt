@@ -107,12 +107,13 @@ enum PEFTLoRAReader {
         return (parameters, keys.sorted())
     }
 
+    static let prefixRewrites: [(from: String, to: String)] = [
+        ("", ""), ("model.language_model.", "language_model.model."), ("model.language_model.", "model."),
+        ("model.language_model.", "language_model."), ("model.", "language_model.model."),
+    ]
+
     static func modulePath(_ peftPath: String, in linears: [String: Linear]) -> String? {
-        let rewrites: [(from: String, to: String)] = [
-            ("", ""), ("model.language_model.", "language_model.model."), ("model.language_model.", "model."),
-            ("model.language_model.", "language_model."), ("model.", "language_model.model."),
-        ]
-        return rewrites.lazy.compactMap { rewrite -> String? in
+        prefixRewrites.lazy.compactMap { rewrite -> String? in
             guard peftPath.hasPrefix(rewrite.from) else { return nil }
             let candidate = rewrite.to + peftPath.dropFirst(rewrite.from.count)
             return linears[candidate] == nil ? nil : candidate
