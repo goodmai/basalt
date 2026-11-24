@@ -288,7 +288,8 @@ struct RoutedAndComposedSpeechTests {
                     )
                 }
                 return try await SpeechSynthesizerLoader.load(identifier: source, directory: URL(fileURLWithPath: path))
-            }
+            },
+            memoryPressure: { false }
         )
         var start = ComposeStart(chat: orchestrator, decider: nil, decisions: nil, cloudGate: CloudGate(limits: [:], storage: nil), startup: PipelineStages(), besideDecode: true)
         start.admission = ComposeAdmission(sizes: ComposeSpec.Sizes(bytes: { _ in 1_000_000 }, onNeuralEngine: { $0.contains("kokoro-ane") })) { (16_000_000_000, .desktop) }

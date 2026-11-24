@@ -367,7 +367,8 @@ struct Zonos3MiniSynthesisAndComposeE2ETests {
                     )
                 }
                 return try await SpeechSynthesizerLoader.load(identifier: source, directory: URL(fileURLWithPath: path))
-            }
+            },
+            memoryPressure: { false }
         )
         var start = ComposeStart(
             chat: orchestrator, decider: nil, decisions: nil,
