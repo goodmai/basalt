@@ -153,11 +153,12 @@ enum EditOpExecutor {
             modules[path] as? Linear
         }
         guard let base = baseLinear else { return }
-        let restored = LoRALinear.from(linear: base, rank: loraA.dim(1), scale: scale)
-        restored.update(parameters: ModuleParameters.unflattened([
-            "lora_a": loraA.reshaped(loraA.shape),
-            "lora_b": loraB.reshaped(loraB.shape),
-        ]))
+        let restored = wrapRankOne(
+            base: base,
+            loraA: loraA.reshaped(loraA.shape),
+            loraB: loraB.reshaped(loraB.shape),
+            scale: scale
+        )
         eval(restored)
         try MLXInferenceEngine.replace(path, with: restored, in: model)
         loraScales[path] = scale
@@ -279,7 +280,7 @@ extension EditOpExecutor {
         context: inout ExecutionContext
     ) throws -> SingleOpOutcome {
         let (outputs, inputs) = baseLinear.shape
-        let dtype = PEFTLoRAReader.computeType(of: baseLinear)
+        let dtype = computeType(of: baseLinear)
         let newA = spec.input.reshaped(inputs, 1).asType(dtype)
         let newB = spec.output.reshaped(1, outputs).asType(dtype)
         let lora: LoRALayer
@@ -291,13 +292,11 @@ extension EditOpExecutor {
             let mergedA = concatenated([existing.loraA.asType(dtype), newA], axis: 1)
             let mergedB = concatenated([(existing.loraB.asType(.float32) * prevScale).asType(dtype), (newB.asType(.float32) * spec.scale).asType(dtype)], axis: 0)
             effectiveScale = 1.0
-            lora = LoRALinear.from(linear: baseLinear, rank: mergedA.dim(1), scale: effectiveScale)
-            lora.update(parameters: ModuleParameters.unflattened(["lora_a": mergedA, "lora_b": mergedB]))
+            lora = wrapRankOne(base: baseLinear, loraA: mergedA, loraB: mergedB, scale: effectiveScale)
         } else {
             undoEntry = .loraModule(path: spec.modulePath)
             effectiveScale = spec.scale
-            lora = LoRALinear.from(linear: baseLinear, rank: 1, scale: effectiveScale)
-            lora.update(parameters: ModuleParameters.unflattened(["lora_a": newA, "lora_b": newB]))
+            lora = wrapRankOne(base: baseLinear, loraA: newA, loraB: newB, scale: effectiveScale)
         }
         eval(lora)
         try MLXInferenceEngine.replace(spec.modulePath, with: lora, in: model)
@@ -312,20 +311,7 @@ extension EditOpExecutor {
     }
 
     private static func transposeMatVec(uRow: MLXArray, linear: Linear) -> MLXArray {
-        if let quantized = linear as? QuantizedLinear {
-            let computeDType = PEFTLoRAReader.computeType(of: quantized)
-            return quantizedMM(
-                uRow.asType(computeDType),
-                quantized.weight,
-                scales: quantized.scales,
-                biases: quantized.biases,
-                transpose: false,
-                groupSize: quantized.groupSize,
-                bits: quantized.bits,
-                mode: quantized.mode
-            ).squeezed(axis: 0)
-        }
-        return matmul(uRow.asType(.float32), linear.weight.asType(.float32)).squeezed(axis: 0).asType(linear.weight.dtype)
+        exactTransposeMatVec(uRow: uRow, linear: linear)
     }
 
     private static func resolveLinearOrLoRA(
@@ -335,15 +321,15 @@ extension EditOpExecutor {
         guard let module = model.namedModules().first(where: { $0.0 == path })?.1 else {
             throw WeightCopyError.invalidOperation("module '\(path)' not found")
         }
-        if let lora = module as? LoRALayer, let base = lora.reverted() as? Linear, MLXInferenceEngine.restorable(base) {
+        if let lora = module as? LoRALayer, let base = lora.reverted() as? Linear, supportsRankOne(base) {
             let params = Dictionary(lora.parameters().flattened(), uniquingKeysWith: { first, _ in first })
             guard let loraA = params["lora_a"], let loraB = params["lora_b"] else {
                 throw WeightCopyError.invalidOperation("module '\(path)' carries a non-LoRA adapter")
             }
             return (base, (loraA, loraB))
         }
-        guard let linear = module as? Linear, MLXInferenceEngine.restorable(linear) else {
-            throw WeightCopyError.invalidOperation("module '\(path)' is not a plain Linear or QuantizedLinear")
+        guard let linear = module as? Linear, supportsRankOne(linear) else {
+            throw WeightCopyError.invalidOperation("module '\(path)' is not a supported linear layer")
         }
         return (linear, nil)
     }

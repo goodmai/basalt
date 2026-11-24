@@ -27,7 +27,7 @@ extension EditOpExecutor {
             throw WeightCopyError.invalidOperation("shift cannot modify quantized parameter '\(spec.tensorName)'")
         }
         let updated = try buildShiftedArray(existing: existing, spec: spec)
-        if let linear = ownerModule as? Linear, MLXInferenceEngine.restorable(linear) {
+        if let linear = ownerModule as? Linear, supportsRankOne(linear) {
             let backup = PackedLayer(path: ownerPath, layer: linear)
             let replacement = try replacedLinear(linear, leafKey: leafKey, updated: updated, tensorName: spec.tensorName)
             try MLXInferenceEngine.replace(ownerPath, with: replacement, in: model)
@@ -77,14 +77,30 @@ extension EditOpExecutor {
     }
 
     private static func replacedLinear(_ linear: Linear, leafKey: String, updated: MLXArray, tensorName: String) throws -> Linear {
+        if let mac = linear as? MACaQQuantizedLinear {
+            guard leafKey == "bias" else {
+                throw WeightCopyError.invalidOperation("shift cannot modify quantized parameter '\(tensorName)'")
+            }
+            let packed = MACaQPackedWeights(weight: mac.weight, scales: mac.scales, biases: mac.biases)
+            return makeMACaQ(from: mac, packed: packed, bias: updated)
+        }
+        if let nf4 = linear as? NF4Linear {
+            guard leafKey == "bias" else {
+                throw WeightCopyError.invalidOperation("shift cannot modify quantized parameter '\(tensorName)'")
+            }
+            let next = try NF4Linear(weight: nf4.weight, bias: updated, scales: nf4.scales, groupSize: nf4.groupSize)
+            next.train(nf4.training)
+            return next
+        }
         if let quantized = linear as? QuantizedLinear {
             guard leafKey == "bias" else {
                 throw WeightCopyError.invalidOperation("shift cannot modify quantized parameter '\(tensorName)'")
             }
-            let next = QuantizedLinear(
+            let base = QuantizedLinear(
                 weight: quantized.weight, bias: updated, scales: quantized.scales, biases: quantized.biases,
                 groupSize: quantized.groupSize, bits: quantized.bits, mode: quantized.mode, globalScale: quantized.globalScale
             )
+            let next: QuantizedLinear = quantized is SmallMQuantizedLinear ? SmallMQuantizedLinear(replacing: base) : base
             next.train(quantized.training)
             next.freeze()
             return next
@@ -169,7 +185,7 @@ extension EditOpExecutor {
         guard let module = model.namedModules().first(where: { $0.0 == path })?.1 else {
             throw WeightCopyError.invalidOperation("module '\(path)' not found")
         }
-        if let lora = module as? LoRALayer, let base = lora.reverted() as? Linear {
+        if let lora = module as? LoRALayer, let base = lora.reverted() as? Linear, supportsRankOne(base) {
             let params = Dictionary(lora.parameters().flattened(), uniquingKeysWith: { first, _ in first })
             let scale = context.loraScales[path] ?? 1.0
             let dense: MLXArray
@@ -187,35 +203,14 @@ extension EditOpExecutor {
             context.loraScales.removeValue(forKey: path)
             return (path, base, dense, backup)
         }
-        guard let linear = module as? Linear,
-              type(of: linear) == Linear.self || type(of: linear) == QuantizedLinear.self || type(of: linear) == NF4Linear.self
-        else {
-            throw WeightCopyError.invalidOperation("'\(tensorName)' is not a supported Linear, QuantizedLinear, or NF4Linear layer")
+        guard let linear = module as? Linear, supportsRankOne(linear) else {
+            throw WeightCopyError.invalidOperation("'\(tensorName)' is not a supported linear layer")
         }
         return (path, linear, TensorPacker.dense(linear).asType(.float32), [.replacedLayer(PackedLayer(path: path, layer: linear))])
     }
 
     private static func repackEditedLayer(_ req: RepackRequest, on model: Module) throws -> SingleOpOutcome {
-        let repacked: Linear
-        if let nf4 = req.layer as? NF4Linear {
-            let target = req.editedFloat32.asType(nf4.scales.dtype.isFloatingPoint ? nf4.scales.dtype : .float32)
-            repacked = NF4Linear(dense: target, bias: nf4.bias, groupSize: nf4.groupSize)
-        } else if let quantized = req.layer as? QuantizedLinear,
-                  ObjectIdentifier(type(of: quantized)) == ObjectIdentifier(QuantizedLinear.self) {
-            let computeDType = PEFTLoRAReader.computeType(of: quantized)
-            let target = req.editedFloat32.asType(computeDType)
-            let next = QuantizedLinear(
-                weight: target, bias: quantized.bias, groupSize: quantized.groupSize,
-                bits: quantized.bits, mode: quantized.mode, globalScale: quantized.globalScale
-            )
-            next.train(quantized.training)
-            next.freeze()
-            repacked = next
-        } else {
-            let next = Linear(weight: req.editedFloat32.asType(req.layer.weight.dtype), bias: req.layer.bias)
-            next.train(req.layer.training)
-            repacked = next
-        }
+        let repacked = repackLinear(req.layer, editedFloat32: req.editedFloat32)
         let error = TensorPacker.measure(req.editedFloat32, repacked)
         try MLXInferenceEngine.replace(req.modulePath, with: repacked, in: model)
         return SingleOpOutcome(

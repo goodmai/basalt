@@ -18,6 +18,7 @@ struct PackedLayer: Sendable {
     enum Kind: Sendable {
         case dense
         case quantized(QuantizationMode)
+        case smallM
         case nf4
         case macaq(MACaQMeta)
     }
@@ -64,7 +65,7 @@ struct PackedLayer: Sendable {
             globalScale = quantized.globalScale.map { materialize($0) }
             groupSize = quantized.groupSize
             bits = quantized.bits
-            kind = .quantized(quantized.mode)
+            kind = layer is SmallMQuantizedLinear ? .smallM : .quantized(quantized.mode)
         } else {
             scales = nil
             biases = nil
@@ -105,6 +106,12 @@ struct PackedLayer: Sendable {
             restored.useSmallMKernel = meta.useSmallMKernel
             restored.useQ3Kernel = meta.useQ3Kernel
             return restored
+        case .smallM:
+            guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
+            let quantized = QuantizedLinear(
+                weight: packed, bias: live(bias), scales: scales, biases: live(biases), groupSize: groupSize, bits: bits, mode: .affine,
+                globalScale: live(globalScale))
+            return SmallMQuantizedLinear(replacing: quantized)
         case .quantized(let mode):
             guard let scales = live(self.scales) else { return Linear(weight: packed, bias: live(bias)) }
             return QuantizedLinear(
@@ -170,6 +177,7 @@ enum TensorPacker {
         let module = name.hasSuffix(".weight") ? model.namedModules().first(where: { $0.0 == path })?.1 : nil
         guard let layer = module as? Linear,
               type(of: layer) == Linear.self || type(of: layer) == QuantizedLinear.self
+                  || type(of: layer) == SmallMQuantizedLinear.self
                   || type(of: layer) == NF4Linear.self || type(of: layer) == MACaQQuantizedLinear.self
         else {
             let owner = module.map { " (its module is a \(type(of: $0)))" } ?? ""
@@ -232,6 +240,7 @@ enum TensorPacker {
     static func describe(_ layer: Linear) -> String {
         if let nf4 = layer as? NF4Linear { return "4-bit nf4 g\(nf4.groupSize)" }
         if let mac = layer as? MACaQQuantizedLinear { return "\(mac.bits)-bit macaq-\(mac.mode.rawValue) g\(mac.groupSize) h\(mac.hadamardBlock)" }
+        if let smallM = layer as? SmallMQuantizedLinear { return "\(smallM.bits)-bit smallm-\(smallM.mode.rawValue) g\(smallM.groupSize)" }
         return (layer as? QuantizedLinear).map { "\($0.bits)-bit \($0.mode.rawValue) g\($0.groupSize)" } ?? "\(layer.weight.dtype)"
     }
 
