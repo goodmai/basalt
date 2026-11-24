@@ -112,9 +112,7 @@ package struct ModelDeepCheck: Codable, Sendable {
     ) -> [String] {
         let weights = model.sanitize(weights: tensors.mapValues { MLXArray.zeros($0.shape, dtype: dtype($0.dtype)) }, metadata: metadata)
         if let quantization {
-            quantize(model: model) { path, _ in
-                weights["\(path).scales"] == nil ? nil : quantization.quantization(layer: path)?.asTuple
-            }
+            quantizeLikeLoader(model, weights: weights, quantization: quantization)
         }
         let expected = Dictionary(model.parameters().flattened().map { ($0.0, $0.1.shape) }) { first, _ in first }
         do {
@@ -133,6 +131,24 @@ package struct ModelDeepCheck: Codable, Sendable {
             }
             return problems
         }
+    }
+
+    static func quantizeLikeLoader(_ model: LanguageModel, weights: [String: MLXArray], quantization: BaseConfiguration.PerLayerQuantization) {
+        var updates: [(String, Module)] = []
+        for (path, module) in model.leafModules().flattened() where !(module is Quantized) {
+            guard weights["\(path).scales"] != nil, let (groupSize, bits, mode) = quantization.quantization(layer: path)?.asTuple else { continue }
+            let globalScale = weights["\(path).global_scale"]
+            let global = globalScale != nil
+            if let switchLayer = module as? SwitchLinear {
+                let placeholder = globalScale.map { MLXArray.ones($0.shape, dtype: .float32) }
+                updates.append((path, QuantizedSwitchLinear(switchLayer, groupSize: groupSize, bits: bits, mode: mode, globalScale: placeholder)))
+            } else if let linear = module as? Linear, global {
+                updates.append((path, QuantizedLinear(weight: linear.weight, bias: linear.bias, groupSize: groupSize, bits: bits, mode: mode, globalScale: MLXArray(Float(1)))))
+            } else if let quantized = quantizeSingle(layer: module, groupSize: groupSize, bits: bits, mode: mode) {
+                updates.append((path, quantized))
+            }
+        }
+        model.update(modules: ModuleChildren.unflattened(updates))
     }
 
     static func dtype(_ safetensors: String) -> DType {

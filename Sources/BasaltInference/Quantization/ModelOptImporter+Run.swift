@@ -138,9 +138,11 @@ extension ModelOptImporter {
 
     static func copySidecars(from source: URL, to output: URL) throws {
         let skip: Set<String> = ["config.json", "hf_quant_config.json", "model.safetensors.index.json"]
-        for file in try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
-        where file.pathExtension != "safetensors" && !skip.contains(file.lastPathComponent) {
-            let target = output.appending(component: file.lastPathComponent)
+        for entry in try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: nil)
+        where entry.pathExtension != "safetensors" && !skip.contains(entry.lastPathComponent) {
+            let file = entry.resolvingSymlinksInPath()
+            guard (try file.resourceValues(forKeys: [.isRegularFileKey])).isRegularFile == true else { continue }
+            let target = output.appending(component: entry.lastPathComponent)
             if !FileManager.default.fileExists(atPath: target.path) {
                 try FileManager.default.copyItem(at: file, to: target)
             }
