@@ -29,7 +29,7 @@ final class Inkling2TextModel: Module {
         forward(tokens, cache: cache).hidden
     }
 
-    func forward(_ tokens: MLXArray, cache: [KVCache]?, capturing: Set<Int> = []) -> (hidden: MLXArray, captured: [MLXArray]) {
+    func forward(_ tokens: MLXArray, cache: [KVCache]?, capturing: Set<Int> = [], probe: (any ForwardProbe)? = nil) -> (hidden: MLXArray, captured: [MLXArray]) {
         let embedded = embedNorm(embedTokens(tokens))
         var captured = [MLXArray]()
         var visit = 0
@@ -40,7 +40,8 @@ final class Inkling2TextModel: Module {
                 let attentionCache = cache?[2 * visit]
                 let convCache = cache?[2 * visit + 1] as? ArraysCache
                 if capturing.contains(visit) { captured.append(h.asType(embedded.dtype)) }
-                (h, b) = layers[index](h, blocks: b, cache: attentionCache, conv: convCache, messages: messages)
+                (h, b) = layers[index](h, blocks: b, cache: attentionCache, conv: convCache, messages: messages, probe: probe)
+                if let probe { h = probe.residual(layer: index, h) }
                 visit += 1
             }
             return (h, b)
@@ -77,7 +78,7 @@ final class Inkling2Inner: Module {
     }
 }
 
-public final class Inkling2Model: Module, LLMModel, LoRAModel {
+public final class Inkling2Model: Module, LLMModel, LoRAModel, BasaltProbableModel {
     public static let modelTypes = ["inkling2_loop", "inkling2"]
 
     public let vocabularySize: Int
@@ -102,6 +103,10 @@ public final class Inkling2Model: Module, LLMModel, LoRAModel {
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
         logits(model.languageModel(inputs, cache: cache))
+    }
+
+    package func forwardWithProbe(_ inputs: MLXArray, cache: [KVCache]?, probe: (any ForwardProbe)?) -> MLXArray {
+        logits(model.languageModel.forward(inputs, cache: cache, probe: probe).hidden)
     }
 
     public func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {

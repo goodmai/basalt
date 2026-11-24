@@ -28,37 +28,6 @@ enum MoERWPipeline {
         let config: MACaQConfig
     }
 
-    static let routerSuffixes = [".mlp.gate", ".mlp.router", ".feed_forward.gate", ".feed_forward.router", ".router.proj"]
-
-    static func discoverRouters(in root: Module) -> [Int: RouterSite] {
-        var out: [Int: RouterSite] = [:]
-        let modules = root.namedModules()
-        let byPath = Dictionary(modules, uniquingKeysWith: { first, _ in first })
-        for (path, mod) in modules {
-            guard let bIdx = PVTuner.textBlockIndex(path), out[bIdx] == nil, routerSuffixes.contains(where: path.hasSuffix) else { continue }
-            let dims: (out: Int, inp: Int)? = if let nf4 = mod as? NF4Linear {
-                nf4.shape
-            } else if let ql = mod as? QuantizedLinear {
-                (ql.weight.dim(0), (ql.weight.dim(1) * 32) / max(1, ql.bits))
-            } else if let lin = mod as? Linear {
-                lin.shape
-            } else {
-                nil
-            }
-            if let dims, dims.out >= 2, dims.inp >= 16 {
-                let parent = path.hasSuffix(".proj") ? byPath[String(path.dropLast(".proj".count))] : nil
-                let scale = parent.flatMap { Dictionary(uniqueKeysWithValues: $0.parameters().flattened())["per_expert_scale"] }
-                out[bIdx] = RouterSite(
-                    block: bIdx, path: path, module: mod, numExperts: dims.out, inFeatures: dims.inp,
-                    expertScale: scale?.size == dims.out ? scale?.asType(.float32) : nil)
-            }
-        }
-        if out.isEmpty, modules.contains(where: { PVTuner.textBlockIndex($0.0) != nil && $0.1 is SwitchLinear }) {
-            BasaltLogger(module: "MoERW").error("moe-rw found switch layers but no router (looked for \(routerSuffixes.joined(separator: ", "))); expert Hessians fall back to unweighted tokens")
-        }
-        return out
-    }
-
     static func collectCandidateTargets(
         _ root: Module, blocks: Set<Int>
     ) -> (linears: [MACaQRefiner.LinearEntry], switches: [MACaQRefiner.SwitchEntry]) {
@@ -106,7 +75,11 @@ enum MoERWPipeline {
         }
         let activeBlocks = Set(targets.switches.compactMap { PVTuner.textBlockIndex($0.path) })
         for bIdx in activeBlocks.sorted() {
-            guard let site = routers[bIdx] else { continue }
+            guard let site = routers[bIdx] else {
+                let experts = targets.switches.first { PVTuner.textBlockIndex($0.path) == bIdx }?.numExperts ?? 1
+                gateBoxes[bIdx] = MoERouterGateBox(numExperts: experts, inFeatures: 1)
+                continue
+            }
             let gBox = MoERouterGateBox(numExperts: site.numExperts, inFeatures: site.inFeatures, expertScale: site.expertScale)
             gateBoxes[bIdx] = gBox
             try PVTuner.swapModule(site.path, with: MoERouterGateTap(wrapping: site.module, box: gBox), in: root)
@@ -127,9 +100,12 @@ enum MoERWPipeline {
             try PVTuner.swapModule(item.path, with: MoERWSwitchTap(wrapping: item.module, reservoir: res), in: root)
             swapped.append((item.path, item.module))
         }
+        let probe = MoERWRouterProbe(boxes: gateBoxes)
         for tokens in batches where !tokens.isEmpty {
-            let out = model(LMInput.Text(tokens: MLXArray(tokens)[.newAxis]), cache: nil, state: nil)
-            eval(out.logits)
+            eval(MoERWRouterProbe.forward(model, tokens: tokens, probe: probe))
+        }
+        if switchBoxes.values.contains(where: { $0.unweightedCalls > 0 }) {
+            BasaltLogger(module: "MoERW").error("moe-rw saw no router gates for some switch layers (no routerTopK probe and no router at \(routerSuffixes.joined(separator: ", "))); their expert Hessians use unweighted tokens")
         }
         var resolved: [String: MLXArray] = [:]
         for (k, box) in linearBoxes { if let h = box.meanHessian() { resolved[k] = h } }

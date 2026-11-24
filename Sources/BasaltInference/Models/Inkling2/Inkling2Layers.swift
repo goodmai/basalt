@@ -68,8 +68,9 @@ final class Inkling2SparseMoE: Module {
         _experts.wrappedValue = Inkling2Experts(config)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, probe: (any ForwardProbe)? = nil, layer: Int = 0) -> MLXArray {
         let (indices, weights) = router(x)
+        probe?.routerTopK(layer: layer, indices: indices, gates: weights)
         return compiledCombine(experts(x, indices: indices), weights, x)
     }
 }

@@ -3,7 +3,7 @@ import MLXNN
 import Testing
 @testable import BasaltInference
 
-@Suite("moe-rw router discovery and gate weights (#748)")
+@Suite("moe-rw router discovery and gate weights (#748, #757)")
 struct MoERWRouterDiscoveryTests {
     @Test("Gemma 4 router (#748): moe-rw finds .router.proj, and each routed token's gate is the top-k softmax times per_expert_scale, so the expert Hessian differs from the unweighted one")
     func gemma4RouterWeightsTheExpertHessian() throws {
@@ -41,5 +41,34 @@ struct MoERWRouterDiscoveryTests {
             checked += 1
         }
         #expect(checked >= 2)
+    }
+
+    @Test("Sigmoid routers (#757): with no Linear router to tap, moe-rw takes each routed token's gate from the model's routerTopK, so Nemotron-H's group top-k with scale and Inkling 2's normalised route_scale reach the expert Hessian",
+          arguments: [(TinyModel.Family.sigmoidMoe, 1), (.inkling2Loop, 0)])
+    func sigmoidRouterGatesComeFromTheModel(family: TinyModel.Family, block: Int) throws {
+        let model = try TinyModel.make(family)
+        let root = model as Module
+        #expect(MoERWPipeline.discoverRouters(in: root)[block] == nil)
+        let switches = MoERWPipeline.collectCandidateTargets(root, blocks: [block]).switches
+        let input = try #require(switches.first { !$0.path.hasSuffix("down_proj") && !$0.path.hasSuffix("fc2") })
+        let tokens = (0 ..< 48).map { Int32(($0 * 37 + 11) % 200) }
+
+        let reference = MoERouterGateBox(numExperts: input.numExperts, inFeatures: 1)
+        eval(MoERWRouterProbe.forward(model, tokens: tokens, probe: MoERWRouterProbe(boxes: [block: reference])))
+        let routed = try #require(reference.lastRouted)
+        let (ids, gates) = (routed.indices.asArray(Int32.self), routed.gates.asArray(Float.self))
+        #expect(gates.contains { abs($0 - 1) > 1e-3 })
+
+        let bundle = try MoERWPipeline.captureMoEGroup(
+            model: model, root: root, targets: .init(linears: [], switches: [input]),
+            routers: [:], batches: [tokens], maxSwitchRows: 4096)
+        let reservoir = try #require(bundle.switches[input.path])
+        #expect(reservoir.unweightedCalls == 0)
+        for expert in 0 ..< input.numExperts {
+            let expected = zip(ids, gates).filter { Int($0.0) == expert }.map(\.1).sorted()
+            let captured = reservoir.routedC[expert].sorted()
+            #expect(captured.count == expected.count, "expert \(expert)")
+            #expect(zip(captured, expected).allSatisfy { abs($0 - $1) < 1e-5 }, "expert \(expert)")
+        }
     }
 }
