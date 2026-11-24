@@ -75,4 +75,21 @@ struct ModelOptConverterWiringTests {
         let worst = reference.map { key, exact in decoded[key].map { abs($0.asType(.float32) - exact.asType(.float32)).max().item(Float.self) } ?? .infinity }.max() ?? 0
         #expect(worst < 1e-3, "worst element difference \(worst)")
     }
+
+    @Test("convert --to nvfp4 from a ModelOpt source takes the lossless importer path: the output arrays are bit-identical to ModelOptImporter's, with no dense staging")
+    func modelOptToNVFP4IsLossless() async throws {
+        let root = ModelOptImporterTests.temporary("lossless")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(component: "modelopt")
+        _ = try ModelOptImporterTests.write(.gemma4Moe, at: source, algorithm: "NVFP4") { _ in false }
+        let direct = root.appending(component: "direct")
+        _ = try ModelOptImporter(source: source).run(output: direct, model: try TinyModel.make(.gemma4Moe))
+        let converted = root.appending(component: "converted")
+        let request = ModelConversionRequest(source: source.path, outputId: "local/nvfp4", target: .nvfp4, stream: false)
+        let result = try await UniversalModelConverter.convertToDirectory(request: request, sourceURL: source, outputURL: converted) { _ in }
+        #expect(result.shards >= 1)
+        let a = try ModelOptImporter.loadShards(in: direct), b = try ModelOptImporter.loadShards(in: converted)
+        #expect(Set(a.keys) == Set(b.keys))
+        #expect(a.keys.allSatisfy { arrayEqual(a[$0]!, b[$0]!).item(Bool.self) })
+    }
 }
