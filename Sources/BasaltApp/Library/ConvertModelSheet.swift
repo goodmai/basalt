@@ -123,7 +123,7 @@ extension ConvertModelSheet {
                 ForEach([32, 64, 128], id: \.self) { g in Text("\(g)").tag(g) }
             }
             recipePicker(draft)
-        case .mxfp4:
+        case .mxfp4, .nvfp4:
             recipePicker(draft)
         case .qtip:
             Picker("Trellis Rate", selection: binding(draft, \.qtipRate, refreshOutput: true)) {

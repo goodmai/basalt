@@ -54,6 +54,9 @@ package enum UniversalSourceReader {
         if (json["model_type"] as? String) == PrismHadamard.modelType || json["prism_hadamard"] != nil {
             return DetectedSourceCheckpoint(format: "prism-hadamard", effectiveBPW: 4.5, totalBytes: bytes, requiresCanonicalDecode: true)
         }
+        if let algorithm = try? ModelOptImporter.readQuantConfig(directory).0 {
+            return DetectedSourceCheckpoint(format: "modelopt:\(algorithm.lowercased())", effectiveBPW: 4.5, totalBytes: bytes, requiresCanonicalDecode: true)
+        }
         if let quant = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any]) {
             return detectStandardQuant(quant, at: directory, bytes: bytes)
         }
@@ -170,7 +173,10 @@ extension UniversalSourceReader {
                 details: "Direct GGUF conversion requires config.json and tokenizer sidecars; import first with `basalt models convert <model.gguf> --template <hf-repo-or-dir> --out <dir>`."
             )
         }
-        if detected.format.hasPrefix("affine:") || detected.format == "mxfp4" || detected.format.hasPrefix("dense:") {
+        if detected.format.hasPrefix("modelopt:") {
+            return try await exportModelOptDense(from: source, to: output, dtype: dtype, onStep: onStep)
+        }
+        if detected.format.hasPrefix("affine:") || detected.format == "mxfp4" || detected.format.hasPrefix("nvfp4") || detected.format.hasPrefix("dense:") {
             let summary = try WeightConverter(precision: .dense(dtype)).run(source: source, output: output)
             onStep?("canonical decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
             return summary
@@ -489,5 +495,20 @@ extension UniversalSourceReader {
         if let b = gguf.bias { out["\(prefix)bias"] = b.asType(dtype) }
         eval(Array(out.values))
         return out
+    }
+}
+
+extension UniversalSourceReader {
+    static func exportModelOptDense(
+        from source: URL, to output: URL, dtype: DType, onStep: (@Sendable (String) -> Void)?
+    ) async throws -> WeightConverter.Summary {
+        let staging = output.deletingLastPathComponent().appending(component: ".\(output.lastPathComponent)-modelopt-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let importer = try ModelOptImporter(source: source)
+        let imported = try importer.run(output: staging, model: try await ModelOptImporter.skeleton(source: source))
+        onStep?("ModelOpt \(importer.algorithm) import: \(imported.nvfp4) nvfp4, \(imported.fp8) fp8, \(imported.plain) plain tensors, \(imported.stackedExperts) expert groups")
+        let summary = try WeightConverter(precision: .dense(dtype)).run(source: staging, output: output)
+        onStep?("canonical decode wrote \(summary.outputTensors) tensor(s) in \(summary.shards) shard(s)")
+        return summary
     }
 }

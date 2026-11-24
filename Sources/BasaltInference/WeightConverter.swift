@@ -12,6 +12,7 @@ package struct WeightConverter: Sendable {
         case mixed(MixedBits)
         case nf4(groupSize: Int)
         case mxfp4
+        case nvfp4
         case dense(DType?)
     }
 
@@ -85,6 +86,8 @@ package struct WeightConverter: Sendable {
         switch parts.first.map(String.init) {
         case "mxfp4" where parts.count == 1:
             return .mxfp4
+        case "nvfp4" where parts.count == 1:
+            return .nvfp4
         case "nf4" where parts.count == 2 && numbers.count == 1 && [32, 64, 128].contains(numbers[0]):
             return .nf4(groupSize: numbers[0])
         case "affine" where parts.count == 3 && numbers.count == 2 && bitsValid:
@@ -94,7 +97,7 @@ package struct WeightConverter: Sendable {
             return .mixed(MixedBits(low: numbers[0], high: numbers[1], groupSize: numbers[2], budgetBytes: Int(budgetGB * 1e9)))
         default:
             throw .options(
-                "--quantize takes affine:<bits>:<group>, mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128), nf4:<group> (group 32, 64 or 128) or mxfp4, got '\(spec)'")
+                "--quantize takes affine:<bits>:<group>, mixed:<low>:<high>:<group> (bits 2-6 or 8, low below high, group 32, 64 or 128), nf4:<group> (group 32, 64 or 128), mxfp4 or nvfp4, got '\(spec)'")
         }
     }
 
@@ -164,11 +167,12 @@ extension WeightConverter {
         let nf4: Int? = if case .nf4(let groupSize) = precision,
             Self.takesNF4(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) { groupSize } else { nil }
         let useMXFP4 = precision == .mxfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 32)
+        let useNVFP4 = precision == .nvfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 16)
         let target = targetQuantization(key, tensor, packed: packed, sourceQuantized: sourceQuantized)
-        if nf4 == nil, !useMXFP4, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
+        if nf4 == nil, !useMXFP4, !useNVFP4, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
             return packed.arrays(base, weight: tensor)
         }
-        if nf4 == nil, !useMXFP4, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
+        if nf4 == nil, !useMXFP4, !useNVFP4, pair == nil, packed == nil, target == nil { return [key: cast(tensor)] }
         var weight = Self.dense(tensor, packed)
         if let pair, let lora { weight = try LoRAUpdate.merged(weight, pair, scale: lora.scale, layer: base) }
         if let nf4 {
@@ -178,6 +182,10 @@ extension WeightConverter {
         if useMXFP4 {
             let (wq, scales, _) = MLX.quantized(weight, groupSize: 32, bits: 4, mode: .mxfp4)
             return [base + ".weight": wq, base + ".scales": scales]
+        }
+        if useNVFP4 {
+            let (wq, scales, global) = Self.quantizedNVFP4(weight)
+            return [base + ".weight": wq, base + ".scales": scales, base + ".global_scale": global]
         }
         guard let target else { return [key: cast(weight)] }
         let (wq, scales, biases) = MLX.quantized(weight, groupSize: target.groupSize, bits: target.bits, mode: target.mode)
@@ -190,7 +198,7 @@ extension WeightConverter {
         switch precision {
         case .dense:
             return nil
-        case .source, .nf4, .mxfp4:
+        case .source, .nf4, .mxfp4, .nvfp4:
             return packed?.quantization
         case .affine(let bits, let groupSize):
             guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) else { return nil }
@@ -306,6 +314,10 @@ extension WeightConverter {
             config["quantization_config"] = merged
         case .mxfp4:
             let block = Self.mergingDisabled(disabledLayers, into: ["bits": 4, "group_size": 32, "mode": "mxfp4"])
+            config["quantization"] = block
+            config["quantization_config"] = block
+        case .nvfp4:
+            let block = Self.mergingDisabled(disabledLayers, into: ["bits": 4, "group_size": 16, "mode": "nvfp4"])
             config["quantization"] = block
             config["quantization_config"] = block
         }
@@ -481,5 +493,17 @@ struct ShardWriter {
 
     private func part(_ index: Int) -> URL {
         directory.appending(component: "part-\(index).safetensors")
+    }
+}
+
+extension WeightConverter {
+    static func quantizedNVFP4(_ weight: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
+        guard weight.ndim == 3 else {
+            let global = maximum(abs(weight.asType(.float32)).max(), MLXArray(Float(1e-12)))
+            let (wq, scales, _) = MLX.quantized(weight, groupSize: 16, bits: 4, mode: .nvfp4, globalScale: global)
+            return (wq, scales, global)
+        }
+        let experts = (0 ..< weight.dim(0)).map { quantizedNVFP4(weight[$0]) }
+        return (stacked(experts.map(\.0)), stacked(experts.map(\.1)), stacked(experts.map(\.2)))
     }
 }

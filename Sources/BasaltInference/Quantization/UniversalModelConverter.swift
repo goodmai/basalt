@@ -263,7 +263,7 @@ extension UniversalModelConverter {
         switch request.target {
         case .denseBF16, .denseFP16:
             return (1, 0)
-        case .affine, .mixed, .mxfp4, .nf4:
+        case .affine, .mixed, .mxfp4, .nvfp4, .nf4:
             return try await encodeSINQTarget(request: request, workingSource: workingSource, outputURL: outputURL)
         case .macaqAffine, .macaqMXFP4, .macaqMoEBudget, .flatQuant, .lirQuant, .qtip, .qtipBudget, .gsqRCO:
             return try await encodeCalibratedTarget(
@@ -298,6 +298,8 @@ extension UniversalModelConverter {
             prec = try WeightConverter.precision(quantize: "mixed:\(lo):\(hi):\(g)", dequantize: nil, format: .mlx, budgetGB: gb)
         case .mxfp4:
             prec = .mxfp4
+        case .nvfp4:
+            prec = .nvfp4
         case .nf4(let g):
             prec = .nf4(groupSize: g)
         default:

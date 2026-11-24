@@ -147,3 +147,15 @@ extension ModelOptImporter {
         }
     }
 }
+
+extension ModelOptImporter {
+    package static func skeleton(source: URL) async throws -> any LanguageModel {
+        await MLXInferenceEngine.registerAliases()
+        let configuration = try Data(contentsOf: source.appending(component: "config.json"))
+        let base = try JSONDecoder.json5().decode(BaseConfiguration.self, from: configuration)
+        for family in ExpertStreamingLoader.families where await family.types.contains(base.modelType) {
+            return try await family.types.createModel(configuration: configuration, modelType: base.modelType)
+        }
+        throw Refused(description: "no model factory knows model_type \(base.modelType)")
+    }
+}

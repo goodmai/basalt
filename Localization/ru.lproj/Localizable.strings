@@ -251,6 +251,7 @@
 "MACaQ MoE (Router-Weighted)" = "MACaQ MoE (взвешенный роутером)";
 "Standard Affine" = "Стандартный Affine";
 "OCP MXFP4" = "OCP MXFP4";
+"NVIDIA NVFP4" = "NVIDIA NVFP4";
 "NF4 NormalFloat" = "NF4 NormalFloat";
 "QTIP Trellis" = "Решётка QTIP";
 "QTIP Mixed Budget" = "Смешанный бюджет QTIP";
