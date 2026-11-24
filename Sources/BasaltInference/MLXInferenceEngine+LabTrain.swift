@@ -212,10 +212,6 @@ extension MLXInferenceEngine {
         for index in indices where blocks.indices.contains(index) {
             let update: [(String, Module)] = blocks[index].namedModules().compactMap { key, module -> (String, Module)? in
                 guard keys.contains(key), let linear = module as? Linear, restorable(linear) else { return nil }
-                if fineTuneType == .lora, let reason = microscaledLoRARefusal(linear, path: key) {
-                    BasaltLogger(module: "MLXInferenceEngine").warn("LoRA training skips \(reason)")
-                    return nil
-                }
                 let replacement: Module = switch fineTuneType {
                 case .lora: LoRALinear.from(linear: linear, rank: parameters.rank, scale: parameters.scale, dropout: parameters.dropout)
                 case .dora: DoRALinear.from(linear: linear, rank: parameters.rank, scale: parameters.scale, dropout: parameters.dropout)
