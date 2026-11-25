@@ -54,7 +54,7 @@ struct MTPBlockParityTests {
         return replies
     }
 
-    @Test("At T = 0.7 with seed 7, plain and MTP decoding each reproduce their own text and MTP accepts drafts; how far MTP follows the plain text is printed, since multi-token verification reduces in another order and can flip a sampled token (#290)",
+    @Test("At T = 0.7 with seed 7, plain and MTP decoding each reproduce their own text and MTP accepts drafts; how far MTP follows the plain text is printed, since multi-token verification reduces in another order and can flip a sampled token (#290; #646 S1 measured flat K=16 per-slot drift with 95% CI spanning 0 across Gemma 4 26B-A4B/12B, Qwen3.8-27B-3bit and Inkling-2-Mini-oQ4e-mtp)",
           .enabled(if: modelPath != nil, "set BASALT_E2E=1 and BASALT_E2E_MTP_MODEL_PATH"))
     func seededSamplingMatchesPlainDecoding() async throws {
         let workloads = ["code", "prose", "reasoning"]
