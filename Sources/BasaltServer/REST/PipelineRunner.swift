@@ -137,13 +137,13 @@ struct PipelineRunner: Sendable {
         _ item: PipelineCore.Perceiving, with perceiver: PipelineCore.Perceiver, gated: Bool, pages selection: String?
     ) async throws(BasaltError) -> (Perceived, Duration) {
         guard let held = stages.onDemand[perceiver] else { return (try await perceive(item, with: perceiver, gated: gated, pages: selection), .zero) }
-        let load = try await held.acquire()
+        let (load, epoch) = try await held.acquireGrant()
         do throws(BasaltError) {
             let perceived = try await perceive(item, with: perceiver, gated: gated, pages: selection)
-            await held.release()
+            await held.release(epoch: epoch)
             return (perceived, load)
         } catch {
-            await held.release()
+            await held.release(epoch: epoch)
             throw error
         }
     }

@@ -150,6 +150,21 @@ struct OnDemandModelTests {
         await model.release()
     }
 
+    @Test("A release from before an explicit unload is ignored, so it cannot drop the hold of a user that acquired after the reload")
+    func staleReleaseKeepsNewHold() async throws {
+        let (engine, clock) = (MockInferenceEngine(), SteppingClock())
+        let model = try await Self.model(engine, clock)
+        let stale = try await model.acquireGrant()
+        await model.unload()
+        let fresh = try await model.acquireGrant()
+        #expect(fresh.epoch != stale.epoch)
+        await model.release(epoch: stale.epoch)
+        clock.advance(by: .seconds(600))
+        let (phase, loaded) = (await model.phase, await engine.isLoaded)
+        #expect(phase == .loaded && loaded)
+        await model.release(epoch: fresh.epoch)
+    }
+
     @Test("A use before the idle time cancels the pending unload")
     func useCancelsExpiry() async throws {
         let (engine, clock) = (MockInferenceEngine(), SteppingClock())

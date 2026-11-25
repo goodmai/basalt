@@ -39,13 +39,13 @@ public struct OnDemandAnswer: AnswerTarget {
     public init(_ held: OnDemandModel) { self.held = held }
 
     public func answer(_ request: GenerationRequest) async throws(BasaltError) -> AnswerReply {
-        _ = try await held.acquire()
+        let epoch = try await held.acquireGrant().epoch
         do throws(BasaltError) {
             let reply = try await LocalAnswer(held.model).answer(request)
-            await held.release()
+            await held.release(epoch: epoch)
             return reply
         } catch {
-            await held.release()
+            await held.release(epoch: epoch)
             throw error
         }
     }
