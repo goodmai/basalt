@@ -305,7 +305,7 @@ extension PromptCacheTree {
         return before - byteCount
     }
 
-    mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache) {
+    mutating func store(_ namespace: String, tokens: [Int], cache: PromptCache, drainSource: Bool = false) {
         guard byteBudget > 0, !tokens.isEmpty, cache.tokenCount >= tokens.count,
               cache.isSharable || cache.isSnapshot(of: tokens.count)
         else { return }
@@ -321,14 +321,70 @@ extension PromptCacheTree {
             return
         }
         guard admitsLeaf(after: path) else { return }
+        let range = matched ..< tokens.count
+        let estimatedBytes = Self.slicedBytes(cache.layers, range: range) + (snapshot?.bytes ?? 0)
+        if snapshot != nil, estimatedBytes > byteBudget { return }
+        prepareRoom(for: estimatedBytes, preserving: path)
+        if snapshot != nil, path.isEmpty, byteCount + estimatedBytes > byteBudget { return }
+        let recordedBytes = cache.byteCount.rawValue
         roots[namespace] = root
         let leaf = PromptCacheNode(
             tokens: Array(tokens[matched...]),
-            layers: Self.slice(cache.layers.map { $0.isSnapshotOnly ? [] : $0.state }, matched..<tokens.count),
+            layers: Self.extractLayers(from: cache, range: range, drainSource: drainSource),
             lastUse: 0)
         leaf.snapshot = snapshot
         insert(leaf, under: root, along: path)
-        tieredKV.recordStore(namespace: namespace, tokens: tokens, bytes: cache.byteCount.rawValue, layerCount: cache.layers.count)
+        tieredKV.recordStore(namespace: namespace, tokens: tokens, bytes: recordedBytes, layerCount: cache.layers.count)
+    }
+
+    private mutating func prepareRoom(for incoming: ByteCount, preserving path: [Step]) {
+        guard byteCount + incoming > byteBudget else { return }
+        for step in path { step.node.pins += 1 }
+        defer { for step in path { step.node.pins -= 1 } }
+        _ = makeRoom(incoming)
+    }
+
+    private static func slicedBytes(_ layers: [any KVCache], range: Range<Int>) -> ByteCount {
+        var total: Int64 = 0
+        for layer in layers where !layer.isSnapshotOnly {
+            for part in layer.state {
+                let length = part.dim(2)
+                guard length > 0 else { continue }
+                let taken = max(0, min(range.upperBound, length) - max(0, range.lowerBound))
+                total += Int64(part.nbytes / length) * Int64(taken)
+            }
+        }
+        return ByteCount(total)
+    }
+
+    private static func releaseLayer(_ layer: any KVCache) {
+        if type(of: layer) == KVCacheSimple.self, let simple = layer as? KVCacheSimple {
+            simple.state = [MLXArray.zeros([1, 1, 0, 1]), MLXArray.zeros([1, 1, 0, 1])]
+        } else if let row = layer as? KEqVRowKVCache {
+            row.state = []
+        }
+    }
+
+    private static func extractLayers(from cache: PromptCache, range: Range<Int>, drainSource: Bool) -> [[MLXArray]] {
+        cache.layers.map { layer in
+            guard !layer.isSnapshotOnly else { return [] }
+            return autoreleasepool {
+                var parts = layer.state
+                if drainSource { releaseLayer(layer) }
+                var sliced: [MLXArray] = []
+                sliced.reserveCapacity(parts.count)
+                for index in parts.indices {
+                    let copy = contiguous(parts[index][.ellipsis, range, 0...])
+                    eval(copy)
+                    if drainSource {
+                        parts[index] = MLXArray(Int32(0))
+                        Stream.defaultStream.synchronize()
+                    }
+                    sliced.append(copy)
+                }
+                return sliced
+            }
+        }
     }
 
     private mutating func keepSnapshot(_ snapshot: RecurrentSnapshot?, at last: Step) {
