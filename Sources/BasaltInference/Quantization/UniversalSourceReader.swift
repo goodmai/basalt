@@ -219,14 +219,19 @@ extension UniversalSourceReader {
         var summary = WeightConverter.Summary()
         summary.bytesBefore = Int(directoryWeightBytes(source))
         var companions = ShardCompanions(shards: shardNames.map { source.appending(component: $0) })
+        let affine = NF4Passthrough.affineLayers(in: ModelCache.config(at: source))
         for name in shardNames {
             let shard = source.appending(component: name)
             let arrays = try loadArrays(url: shard)
-            for key in arrays.keys.sorted() where !key.hasSuffix(".scales") {
+            for key in arrays.keys.sorted() where !key.hasSuffix(".scales") && !key.hasSuffix(".biases") {
                 guard let tensor = arrays[key] else { continue }
                 let outTensor: MLXArray
-                if key.hasSuffix(".weight"),
-                   let scales = try companions.tensor(String(key.dropLast(".weight".count)) + ".scales", in: arrays, shard: shard) {
+                let base = key.hasSuffix(".weight") ? String(key.dropLast(".weight".count)) : key
+                if key.hasSuffix(".weight"), let scales = try companions.tensor(base + ".scales", in: arrays, shard: shard),
+                   let biases = try companions.tensor(base + ".biases", in: arrays, shard: shard) {
+                    outTensor = try NF4Passthrough.dequantized(tensor, scales: scales, biases: biases, base: base, layers: affine, dtype: dtype)
+                    summary.tensors += 3
+                } else if key.hasSuffix(".weight"), let scales = try companions.tensor(base + ".scales", in: arrays, shard: shard) {
                     outTensor = NF4Metal.dequantized(tensor, scales: scales, groupSize: groupSize, dtype: dtype)
                     summary.tensors += 2
                 } else {
