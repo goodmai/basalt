@@ -160,14 +160,23 @@ extension ModelFitAnalyzer {
         let weights = max(.zero, rawWeights - ssdResidentBytes(in: directory))
         guard rawWeights > .zero else { return (.tooTight, nil) }
         let level = MemoryEvaluator.fitLevel(required: weights + kvBytes, budget: workingSetBudget)
-        guard level == .tooTight else { return (level, nil) }
+        guard level == .tooTight || residentContext(directory, weights: weights, budget: workingSetBudget) < residentContextFloor else {
+            return (level, nil)
+        }
         guard let summary = stackedExperts(in: directory),
               let footprint = ExpertStreamingFootprint(
                   residentWeights: summary.residentWeights, expertBytes: summary.expertBytes, kv: kvBytes, streaming: streaming),
               footprint.required <= workingSetBudget else {
-            return (.tooTight, nil)
+            return (level, nil)
         }
         return (.moeTieredStreaming, footprint)
+    }
+
+    public static let residentContextFloor = 8_192
+
+    static func residentContext(_ directory: URL, weights: ByteCount, budget: ByteCount) -> Int {
+        guard let geometry = KVCacheGeometry.load(modelDirectory: directory) else { return .max }
+        return MemoryEvaluator.contextBudget(budget: budget, weights: weights, kv: geometry, kvPrecision: nil, kvZones: nil)
     }
 
     public static func autoExpertStreaming(
