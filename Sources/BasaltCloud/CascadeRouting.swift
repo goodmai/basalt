@@ -229,8 +229,17 @@ extension ModelRouter {
                 let cloudStream = try await routeCloudChainStream(
                     modelId: cascade.cloudModel, request: cloudRequest, context: context, localFallback: localPath
                 )
+                var yieldedMetadata = false
                 for try await chunk in cloudStream {
-                    continuation.yield(chunk)
+                    if case .metadata(let cloudMeta) = chunk {
+                        yieldedMetadata = true
+                        continuation.yield(.metadata(acc.mergedResponse(cloud: cloudMeta)))
+                    } else {
+                        continuation.yield(chunk)
+                    }
+                }
+                if !yieldedMetadata {
+                    continuation.yield(.metadata(acc.mergedResponse()))
                 }
                 continuation.finish()
                 return

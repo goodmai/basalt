@@ -221,6 +221,10 @@ struct CostRoutingState: Sendable {
 
     var trackedSessionCount: Int { sessions.count }
 
+    func sessionTier(for sessionId: String) -> StickyRoutingPolicy.Tier? {
+        sessions[sessionId]?.tier
+    }
+
     func warmPrefixTokens(sessionId: String?) -> Int {
         sessionId.flatMap { sessions[$0]?.promptTokens } ?? 0
     }

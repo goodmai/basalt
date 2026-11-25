@@ -76,6 +76,8 @@ public actor CloudGate {
     private var core: CloudGateCore
     private let storage: URL?
     private let now: @Sendable () -> Date
+    private var reservations: [UUID: (model: String, amount: Double)] = [:]
+    private var peakCallCost: [String: Double] = [:]
 
     public init(limits: [String: Double], storage: URL?, now: @escaping @Sendable () -> Date = { Date() }) {
         let today = CloudGateCore.day(of: now())
@@ -86,14 +88,52 @@ public actor CloudGate {
         (self.core, self.storage, self.now) = (core, storage, now)
     }
 
-    public func refusal(_ model: String) -> CloudGateCore.Refusal? {
+    private func reservedAmount(for key: String) -> Double {
+        if key == CloudGateCore.total {
+            return reservations.values.reduce(0) { $0 + $1.amount }
+        }
+        return reservations.values.reduce(0) { $0 + ($1.model == key ? $1.amount : 0) }
+    }
+
+    public func refusal(_ model: String, estimatedCost: Double = 0) -> CloudGateCore.Refusal? {
         core.roll(to: CloudGateCore.day(of: now()))
-        return core.refusal(model, now: now())
+        if let base = core.refusal(model, now: now()) { return base }
+        let add = estimatedCost.isFinite && estimatedCost > 0 ? estimatedCost : 0
+        for key in [model, CloudGateCore.total] {
+            if let limit = core.limits[key] {
+                let committed = core.spent[key, default: 0] + reservedAmount(for: key)
+                if committed >= limit || (add > 0 && committed + add > limit + 1e-12) {
+                    return .budget(spent: committed, limit: limit)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func activeLimit(for model: String) -> Double? {
+        [core.limits[model], core.limits[CloudGateCore.total]].compactMap { $0 }.min()
+    }
+
+    public func reserve(_ model: String, estimatedCost: Double = 0) -> (token: UUID?, refusal: CloudGateCore.Refusal?) {
+        let estimate = estimatedCost.isFinite && estimatedCost > 0 ? estimatedCost : 0
+        let floor = estimate > 0 ? estimate : (peakCallCost[model] ?? activeLimit(for: model) ?? 0)
+        let checkAdd = (estimate > 0 || !reservations.isEmpty) ? floor : 0
+        if let refused = refusal(model, estimatedCost: checkAdd) { return (nil, refused) }
+        let token = UUID()
+        reservations[token] = (model, floor)
+        return (token, nil)
+    }
+
+    public func release(_ token: UUID) {
+        reservations.removeValue(forKey: token)
     }
 
     public func record(_ model: String, cost: Double) {
         core.roll(to: CloudGateCore.day(of: now()))
         core.record(model, cost: cost)
+        if cost.isFinite, cost > 0 {
+            peakCallCost[model] = max(peakCallCost[model, default: 0], cost)
+        }
         guard let storage, let data = try? JSONEncoder().encode(core) else { return }
         try? FileManager.default.createDirectory(at: storage.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: storage, options: .atomic)
@@ -110,6 +150,10 @@ public actor CloudGate {
     public func spent(_ model: String) -> Double {
         core.roll(to: CloudGateCore.day(of: now()))
         return core.spent[model, default: 0]
+    }
+
+    static func estimatedCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
+        ModelCatalog().estimateCost(model: model, promptTokens: promptTokens, completionTokens: completionTokens)
     }
 }
 
@@ -131,7 +175,16 @@ public struct GuardedDecisionEngine: DecisionEngine {
     }
 
     public func decide(_ request: SystemOneRequest) async throws(BasaltError) -> SystemOneResponse {
-        if let refusal = await gate.refusal(modelID) { throw .modelInferenceError(details: "cloud decisions: \(refusal.reason)") }
+        let promptTokens = max(1, request.state.utf8.count / 4 + request.questions.count * 32)
+        let completionTokens = max(16, request.questions.count * 24)
+        let estimated = CloudGate.estimatedCost(model: modelID, promptTokens: promptTokens, completionTokens: completionTokens)
+        let claim = await gate.reserve(modelID, estimatedCost: estimated)
+        if let refusal = claim.refusal { throw .modelInferenceError(details: "cloud decisions: \(refusal.reason)") }
+        defer {
+            if let token = claim.token {
+                await withTaskCancellationShield { await gate.release(token) }
+            }
+        }
         do {
             let response = try await inner.decide(request)
             await gate.record(modelID, cost: response.usage.cost ?? 0)
@@ -156,8 +209,19 @@ public struct CloudAnswer: AnswerTarget {
     public func unavailable() async -> String? { await gate.refusal(model)?.reason }
 
     public func answer(_ request: GenerationRequest) async throws(BasaltError) -> AnswerReply {
-        if let refusal = await gate.refusal(model) {
+        let estimated = CloudGate.estimatedCost(
+            model: model,
+            promptTokens: ModelRouter.estimatedPromptTokens(request),
+            completionTokens: request.maxTokens ?? 1_024
+        )
+        let claim = await gate.reserve(model, estimatedCost: estimated)
+        if let refusal = claim.refusal {
             throw .modelInferenceError(details: "cloud answer: \(refusal.reason)")
+        }
+        defer {
+            if let token = claim.token {
+                await withTaskCancellationShield { await gate.release(token) }
+            }
         }
         let turns = request.messages ?? [ChatMessageInput(role: .user, text: request.prompt)]
         var chat = OpenRouterClient.ChatRequest(
