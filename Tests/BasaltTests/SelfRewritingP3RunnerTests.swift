@@ -1,5 +1,6 @@
 import Foundation
 import MLX
+import MLXLLM
 import MLXLMCommon
 import Testing
 @testable import BasaltCLI
@@ -226,5 +227,72 @@ extension SelfRewritingP3RunnerTests {
         await #expect(throws: BasaltError.self) {
             _ = try await unloaded.runSelfRewrite(config: localReq.config, split: Self.makeSplit(), grader: MathAnswerGrader())
         }
+    }
+
+    @Test("EditEditorTurn.parseJSON strips thinking tags and decoy braces; prompt formatter lists action schema and practice IDs only")
+    func parseJSONStripsThinkingAndPromptListsSchema() throws {
+        let withThink = """
+            <think>Let me consider {"draft": 1} before choosing an action.</think>
+            ```json
+            {"rationale":"inspect first","action":{"describeModel":{}},"costUSD":0}
+            ```
+            """
+        let parsed = try EditEditorTurn.parseJSON(from: withThink)
+        #expect(parsed.action == .describeModel && parsed.rationale == "inspect first")
+
+        let withGemmaThought = "<|thought|>thinking {unclosed<|thought|> {\"rationale\":\"done\",\"action\":{\"withdraw\":{\"rationale\":\"ok\"}}}"
+        let parsed2 = try EditEditorTurn.parseJSON(from: withGemmaThought)
+        #expect(parsed2.action == .withdraw(rationale: "ok"))
+
+        let withUnclosedThink = "<think>still thinking {\"rationale\":\"no\",\"action\":{\"describeModel\":{}}}"
+        #expect(throws: SelfRewriteSessionError.self) { _ = try EditEditorTurn.parseJSON(from: withUnclosedThink) }
+
+        let prompt = SelfRewritePromptFormatter.formatSinglePrompt(
+            entries: [EditSessionTranscriptEntry(turnIndex: 0, role: "tool", content: String(repeating: "x", count: 6000))],
+            budget: try SelfRewriteBudget(),
+            practiceIds: ["m01", "m02"]
+        )
+        #expect(prompt.contains("describeModel") && prompt.contains("pairedPractice") && prompt.contains("applyEdit"))
+        #expect(prompt.contains("m01, m02") && prompt.contains("truncated 6000 chars"))
+        #expect(SelfRewritePromptFormatter.compactObservation("short") == "short")
+    }
+
+    @Test("SelfRewriteSessionDriver recovers from malformed JSON and rejected tool actions via tool observations, and stops after 3 consecutive failures")
+    func sessionDriverErrorRecovery() async throws {
+        actor FlakyEditor: EditSessionEditor {
+            let editorLabel = "flaky"
+            var step = 0
+            func nextTurn(transcript: [EditSessionTranscriptEntry], remainingBudget: SelfRewriteBudget) async throws -> EditEditorTurn {
+                defer { step += 1 }
+                switch step {
+                case 0: throw SelfRewriteSessionError.invalidEditorTurn("bad json")
+                case 1: return EditEditorTurn(rationale: "bad tensor", action: .inspectTensor(name: "missing.weight"))
+                case 2: return EditEditorTurn(rationale: "ok", action: .describeModel)
+                case 3: return EditEditorTurn(rationale: "missing handle", action: .applyEdit(EditProgram(ops: [.rank1Damp(module: SelfRewritingP3RunnerTests.textOProj, vectorKey: "unregistered", alpha: 0.2)])))
+                case 4: return EditEditorTurn(rationale: "submit early", action: .submit(rationale: "too soon"))
+                default: return EditEditorTurn(rationale: "recover", action: .withdraw(rationale: "recovered after errors"))
+                }
+            }
+        }
+        let model = try TinyModel.make(.gemma4)
+        let config = SelfRewriteSessionConfig(sessionId: "sess-recover", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 12))
+        let result = try await SelfRewriteSessionDriver.run(
+            config: config,
+            split: Self.makeSplit(),
+            evalSpec: Self.makeSpec(),
+            editor: FlakyEditor(),
+            original: model
+        )
+        #expect(result.phase == .withdrawn(rationale: "recovered after errors") && result.turnCount == 5)
+    }
+
+    @Test("WeightCopy.makeSync clones wrapped MLXLLM.Qwen35Model preserving model_type and sharing weights without copying (#676)")
+    func weightCopyClonesWrappedQwen35Model() throws {
+        let wrappedJSON = "{\"model_type\":\"qwen3_5\",\"text_config\":\(TinyModel.Family.qwen35.config)}"
+        let cfg = try JSONDecoder().decode(MLXLLM::Qwen35Configuration.self, from: Data(wrappedJSON.utf8))
+        let original = MLXLLM::Qwen35Model(cfg)
+        let copy = try WeightCopy.makeSync(from: original)
+        #expect(copy.accounting.totalExtraBytes == 0)
+        try copy.release(verifying: original)
     }
 }

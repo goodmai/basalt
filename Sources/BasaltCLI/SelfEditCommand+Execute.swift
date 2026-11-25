@@ -107,7 +107,10 @@ extension SelfEditCommand {
         let modelPath = try resolveModelPath()
         let request = try buildLiveRequest(sessionId: sessionId, prepared: prepared, modelPath: modelPath)
         return try await GPULock.withLock(timeout: .seconds(300)) {
-            let engine = MLXInferenceEngine()
+            var engineConfig = EngineConfiguration.standard
+            engineConfig.gpuCacheLimit = 0
+            engineConfig.promptCacheBytes = 0
+            let engine = MLXInferenceEngine(engineConfig)
             let orchestrator = ModelOrchestratorActor(engine: engine)
             defer { await withTaskCancellationShield { await orchestrator.shutdown() } }
             try await orchestrator.loadModel(path: modelPath)

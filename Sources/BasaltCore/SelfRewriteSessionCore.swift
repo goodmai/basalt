@@ -55,6 +55,22 @@ public enum EditSessionAction: Sendable, Codable, Equatable {
     case pairedReserved(seeds: [UInt64]?)
     case submit(rationale: String)
     case withdraw(rationale: String)
+
+    public var summaryLabel: String {
+        switch self {
+        case .describeModel: "describeModel"
+        case .inspectTensor(let name): "inspectTensor(\(name))"
+        case .measureRoundTrip(let tensor): "measureRoundTrip(\(tensor))"
+        case .summarizeMoERouter(_, let layers): "summarizeMoERouter(layers:\(layers?.count ?? 0))"
+        case .registerSVD(let key, let tensor, _): "registerSVD(\(key)<-\(tensor))"
+        case .applyEdit(let program): "applyEdit(\(program.ops.count) ops)"
+        case .undoLastEdit: "undoLastEdit"
+        case .pairedPractice(let ids, _): "pairedPractice(\(ids.count))"
+        case .pairedReserved: "pairedReserved"
+        case .submit: "submit"
+        case .withdraw: "withdraw"
+        }
+    }
 }
 
 public struct EditEditorTurn: Sendable, Codable, Equatable {
@@ -81,21 +97,73 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
         self.costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD) ?? 0
     }
 
-    public static func parseJSON(from content: String) throws(SelfRewriteSessionError) -> EditEditorTurn {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jsonString: String
-        if let start = trimmed.firstIndex(of: "{"), let end = trimmed.lastIndex(of: "}"), start <= end {
-            jsonString = String(trimmed[start ... end])
-        } else {
-            jsonString = trimmed
+    public static func stripThinkingBlocks(_ text: String) -> String {
+        var result = text
+        for (open, close) in [("<think>", "</think>"), ("<|thought|>", "<|thought|>"), ("<thought>", "</thought>")] {
+            while let start = result.range(of: open) {
+                if let end = result.range(of: close, range: start.upperBound ..< result.endIndex) {
+                    result.removeSubrange(start.lowerBound ..< end.upperBound)
+                } else {
+                    result.removeSubrange(start.lowerBound ..< result.endIndex)
+                }
+            }
         }
-        guard let data = jsonString.data(using: .utf8) else {
+        return result
+    }
+
+    public static func extractBalancedJSONObjects(from text: String) -> [String] {
+        var objects: [String] = []
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var startIndex: String.Index?
+        for idx in text.indices {
+            let ch = text[idx]
+            if escaped {
+                escaped = false
+                continue
+            }
+            if inString {
+                if ch == "\\" { escaped = true } else if ch == "\"" { inString = false }
+                continue
+            }
+            if ch == "\"" {
+                inString = true
+            } else if ch == "{" {
+                if depth == 0 { startIndex = idx }
+                depth += 1
+            } else if ch == "}" && depth > 0 {
+                depth -= 1
+                if depth == 0, let start = startIndex {
+                    objects.append(String(text[start ... idx]))
+                    startIndex = nil
+                }
+            }
+        }
+        return objects
+    }
+
+    public static func parseJSON(from content: String) throws(SelfRewriteSessionError) -> EditEditorTurn {
+        let cleaned = stripThinkingBlocks(content).trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidates = extractBalancedJSONObjects(from: cleaned)
+        let decoder = JSONDecoder()
+        var lastError: (any Error)?
+        for candidate in candidates.reversed() {
+            if let data = candidate.data(using: .utf8) {
+                do {
+                    return try decoder.decode(EditEditorTurn.self, from: data)
+                } catch {
+                    lastError = error
+                }
+            }
+        }
+        guard let fallbackData = cleaned.data(using: .utf8) else {
             throw .invalidEditorTurn("response is not valid UTF-8 JSON")
         }
         do {
-            return try JSONDecoder().decode(EditEditorTurn.self, from: data)
+            return try decoder.decode(EditEditorTurn.self, from: fallbackData)
         } catch {
-            throw .invalidEditorTurn("could not decode EditEditorTurn JSON: \(error)")
+            throw .invalidEditorTurn("could not decode EditEditorTurn JSON: \(lastError ?? error)")
         }
     }
 }
@@ -104,22 +172,50 @@ public enum SelfRewritePromptFormatter {
     public static func systemPrompt(budget: SelfRewriteBudget) -> String {
         """
         You are a weight-surgery editor operating strictly through symbolic handles and aggregate stats on a copy-on-write WeightCopy.
-        Respond with a single JSON object matching EditEditorTurn: {"rationale":"...","action":{...},"costUSD":0}.
+        Respond with ONLY one JSON object matching EditEditorTurn: {"rationale":"brief reason","action":<Action>,"costUSD":0}.
+        Valid <Action> shapes:
+        - {"describeModel":{}}
+        - {"inspectTensor":{"name":"<tensor>"}}
+        - {"measureRoundTrip":{"tensor":"<tensor>"}}
+        - {"summarizeMoERouter":{"text":"<probe>","layers":[0]}}
+        - {"registerSVD":{"key":"<k>","tensor":"<tensor>","iterations":6}}
+        - {"applyEdit":{"_0":{"format_version":1,"session_id":"s","base_model_fingerprint":"","approval":"pending","ops":[{"op":"clip","tensor":"<t>","factor":1.5}]}}}
+        - {"undoLastEdit":{}}
+        - {"pairedPractice":{"problemIds":["id1"],"seeds":[42]}}
+        - {"pairedReserved":{"seeds":[42]}}
+        - {"submit":{"rationale":"why"}}
+        - {"withdraw":{"rationale":"why"}}
+        Supported EditOp kinds: clip(tensor,factor), rank1_damp(module,vector_key,alpha) [uses 1 registered SVD key on module path without '.weight'], rank1(module,output_key,input_key,scale) [needs 2 registered keys], shift(tensor,start,count,value_key), rows(tensor,row_indices,values_key).
+        Rules: call describeModel at most once; never repeat an already completed action; use exact '.weight' tensor names for inspectTensor/measureRoundTrip/registerSVD/clip and module path (no '.weight') with a registered SVD key for rank1_damp; run pairedPractice before submitting or withdrawing.
         Remaining budget: forwardPasses=\(budget.remainingForwardPasses), toolCalls=\(budget.remainingToolCalls), reservedTests=\(budget.remainingReservedTests).
         """
     }
 
+    public static let maxObservationChars = 2400
+
+    public static func compactObservation(_ text: String, limit: Int = maxObservationChars) -> String {
+        guard text.count > limit, limit > 500 else { return text }
+        let head = text.prefix(limit - 450)
+        let tail = text.suffix(350)
+        return "\(head) ... [truncated \(text.count) chars] ... \(tail)"
+    }
+
     public static func formatSinglePrompt(
         entries: [EditSessionTranscriptEntry],
-        budget: SelfRewriteBudget
+        budget: SelfRewriteBudget,
+        practiceIds: [String] = []
     ) -> String {
         var parts = [systemPrompt(budget: budget)]
+        if !practiceIds.isEmpty {
+            parts.append("Available practice problemIds: \(practiceIds.joined(separator: ", "))")
+        }
         if entries.isEmpty {
-            parts.append("user: Begin session. Inspect model topology or tensor stats first.")
+            parts.append("user: Begin session. Inspect model topology or tensor stats first, then test edits on practice problems before submitting or withdrawing.")
         } else {
             for entry in entries {
                 let role = entry.role == "editor" ? "assistant" : "user"
-                parts.append("\(role): \(entry.content)")
+                let body = entry.role == "tool" ? compactObservation(entry.content) : entry.content
+                parts.append("\(role): \(body)")
             }
         }
         parts.append("assistant:")
@@ -187,7 +283,8 @@ public struct SelfRewriteSessionCore: Sendable, Equatable {
             throw error
         }
         epoch &+= 1
-        transcript.append(EditSessionTranscriptEntry(turnIndex: transcript.count, role: "editor", content: turn.rationale))
+        let summary = turn.rationale.isEmpty ? turn.action.summaryLabel : "[\(turn.action.summaryLabel)] \(turn.rationale)"
+        transcript.append(EditSessionTranscriptEntry(turnIndex: transcript.count, role: "editor", content: summary))
         return epoch
     }
 
