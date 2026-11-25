@@ -99,11 +99,17 @@ public struct ExternalHarnessAdapter: BenchmarkAdapter {
     }
 
     public func run(context: BenchmarkTaskContext) async throws -> BenchmarkAdapterOutput {
-        if let dataset = context.task.dataset,
-           FileManager.default.fileExists(atPath: dataset),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: dataset)),
-           let imported = try? JSONDecoder().decode([BenchmarkSampleRecord].self, from: data),
-           !imported.isEmpty {
+        if let dataset = context.task.dataset, !dataset.isEmpty {
+            let data: Data
+            do {
+                data = try Data(contentsOf: URL(fileURLWithPath: dataset))
+            } catch {
+                throw BenchmarkError.invalidResponse("failed to read dataset '\(dataset)': \(error.localizedDescription)")
+            }
+            guard let imported = try? JSONDecoder().decode([BenchmarkSampleRecord].self, from: data),
+                  !imported.isEmpty else {
+                throw BenchmarkError.invalidResponse("dataset '\(dataset)' is empty or malformed JSON")
+            }
             let accuracy = Double(imported.filter(\.passed).count) / Double(imported.count)
             let p50 = BenchmarkStats.percentile(imported.map(\.latencyMs), 0.5)
             return BenchmarkAdapterOutput(samples: imported, metrics: ["accuracy": accuracy, "p50_ms": p50])

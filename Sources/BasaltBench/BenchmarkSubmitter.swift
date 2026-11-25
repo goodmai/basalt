@@ -122,7 +122,7 @@ public struct BenchmarkComparisonReport: Sendable, Equatable, Codable {
 public enum BenchmarkComparator {
     static let lowerIsBetter: Set<String> = [
         "ttft_ms", "p50_ms", "p95_ms", "peak_gb", "ppl", "ece",
-        "cost_usd", "cost_per_1k_usd", "abstain_rate",
+        "cost_usd", "cost_per_1k_usd", "abstain_rate", "metricx24",
     ]
 
     private static func metricDelta(
