@@ -112,6 +112,21 @@ public struct ConversionDraft: Sendable, Equatable {
         }
     }
 
+    public var supportedBits: [Int] {
+        switch family {
+        case .macaq: [2, 3, 4]
+        case .flatQuant, .lirQuant: [2, 3, 4, 8]
+        case .affine: [2, 3, 4, 5, 6, 8]
+        case .macaqMoE, .mxfp4, .nvfp4, .nf4, .qtip, .qtipBudget, .gsqRCO, .dense: [bits]
+        }
+    }
+
+    public func clampingBits() -> ConversionDraft {
+        var next = self
+        if !supportedBits.contains(bits) { next.bits = supportedBits.contains(4) ? 4 : supportedBits.last ?? bits }
+        return next
+    }
+
     public mutating func refreshSuggestedOutputId() {
         let rawBase = sourceId.split(separator: "/").last.map(String.init) ?? "model"
         let stripped = rawBase
@@ -187,8 +202,9 @@ extension LibraryReducer {
             state.convertDraft = draft
             let target = draft.resolvedTarget
             return [.planConversion(source: draft.sourceId, target: target, budgetGB: nil, pvTune: draft.pvTune && target.supportsPVTune)]
-        case .updateConvertDraft(let next):
+        case .updateConvertDraft(let proposed):
             let prev = state.convertDraft
+            let next = proposed.clampingBits()
             state.convertDraft = next
             guard prev?.resolvedTarget != next.resolvedTarget || prev?.pvTune != next.pvTune else { return [] }
             let target = next.resolvedTarget
