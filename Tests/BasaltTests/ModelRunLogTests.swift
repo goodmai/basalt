@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Darwin
+import BasaltBench
 
 @Suite("The GPU lock real-model runs share (#137)", .serialized)
 struct ModelRunLogTests {

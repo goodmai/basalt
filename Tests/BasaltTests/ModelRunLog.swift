@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import Synchronization
+import BasaltBench
 @testable import BasaltCore
 
 public struct GPULockGuard: ~Copyable, Sendable {
@@ -27,17 +28,6 @@ public struct GPULockGuard: ~Copyable, Sendable {
     }
 }
 
-enum GPULockClaim: Equatable {
-    case taken
-    case busy(owner: String?)
-}
-
-struct GPULockError: Error, CustomStringConvertible {
-    let path: String
-    let code: Int32
-
-    var description: String { "\(path): \(String(cString: strerror(code)))" }
-}
 
 final class ModelRunLog: Sendable {
     static let gpuLock = ProcessInfo.processInfo.environment["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
@@ -131,36 +121,13 @@ final class ModelRunLog: Sendable {
 
     static func claim(
         _ path: String, pid: Int32, reclaiming: Bool = true,
-        writeOwner: (String, Int32) throws -> Void = { try String($1).write(toFile: $0, atomically: true, encoding: .utf8) }
+        writeOwner: (String, Int32) throws -> Void = GPULock.writeOwnerFile
     ) throws -> GPULockClaim {
-        guard mkdir(path, 0o755) == 0 else {
-            let code = errno
-            guard code == EEXIST else { throw GPULockError(path: path, code: code) }
-            let owner = (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if reclaiming, let owner, let holder = Int32(owner), kill(holder, 0) != 0, errno == ESRCH {
-                unlink(path + "/owner")
-                rmdir(path)
-                return try claim(path, pid: pid, reclaiming: false, writeOwner: writeOwner)
-            }
-            return .busy(owner: owner)
-        }
-        do {
-            try writeOwner(path + "/owner", pid)
-        } catch {
-            rmdir(path)
-            throw error
-        }
-        return .taken
+        try GPULock.claim(path, pid: pid, reclaiming: reclaiming, writeOwner: writeOwner)
     }
 
     static func release(_ path: String, pid: Int32) -> Bool {
-        let owner = (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard owner == String(pid) else { return false }
-        unlink(path + "/owner")
-        rmdir(path)
-        return true
+        GPULock.release(path, pid: pid)
     }
 
     static func output(_ tool: String, _ arguments: [String]) -> String {
