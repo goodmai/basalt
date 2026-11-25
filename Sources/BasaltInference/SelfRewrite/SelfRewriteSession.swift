@@ -12,6 +12,7 @@ public struct SelfRewriteSessionConfig: Sendable {
     public let outputDirectory: URL?
     public let topology: Gemma4EditTopology?
     public var transcriptURL: URL?
+    public var maxEditorTokens: Int = 512
 
     public init(
         sessionId: String = "selfedit-\(UUID().uuidString.prefix(8))",
@@ -28,11 +29,18 @@ public struct SelfRewriteSessionConfig: Sendable {
         self.outputDirectory = outputDirectory
         self.topology = topology
         self.transcriptURL = nil
+        self.maxEditorTokens = 512
     }
 
     public func withTranscriptURL(_ url: URL) -> SelfRewriteSessionConfig {
         var copy = self
         copy.transcriptURL = url
+        return copy
+    }
+
+    public func withMaxEditorTokens(_ tokens: Int) -> SelfRewriteSessionConfig {
+        var copy = self
+        copy.maxEditorTokens = max(16, tokens)
         return copy
     }
 }
@@ -67,7 +75,7 @@ public enum SelfRewriteSessionDriver {
         config: SelfRewriteSessionConfig,
         split: PairedDatasetSplit,
         evalSpec: PairedEvaluationSpec,
-        editor: any EditSessionEditor,
+        editor: (any EditSessionEditor)? = nil,
         original: any LanguageModel
     ) async throws -> SelfRewriteSessionResult {
         var copy = try WeightCopy.makeSync(from: original)
@@ -133,7 +141,7 @@ public enum SelfRewriteSessionDriver {
     private static func runLoop(
         state: inout SessionRunState,
         copy: inout WeightCopy,
-        editor: any EditSessionEditor
+        editor: (any EditSessionEditor)?
     ) async throws -> LoopSummary {
         var summary = LoopSummary()
         while !state.core.phase.isTerminal {
@@ -142,7 +150,12 @@ public enum SelfRewriteSessionDriver {
                 state.core.markExhausted(reason: "session forward-pass or tool-call budget exhausted")
                 break
             }
-            let turn = try await editor.nextTurn(transcript: state.core.transcript, remainingBudget: state.core.budget)
+            let turn: EditEditorTurn
+            if let editor {
+                turn = try await editor.nextTurn(transcript: state.core.transcript, remainingBudget: state.core.budget)
+            } else {
+                turn = try generateLocalTurn(state: state, turnIndex: summary.turnCount)
+            }
             summary.turnCount += 1
             let epoch: UInt64
             do {

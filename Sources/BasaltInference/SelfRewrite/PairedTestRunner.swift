@@ -115,14 +115,16 @@ public enum PairedTestRunner {
         return samples
     }
 
-    private static func generate(
+    static func generate(
         promptIds: [Int],
         model: any LanguageModel,
         seed: UInt64,
-        spec: PairedEvaluationSpec
+        spec: PairedEvaluationSpec,
+        maxTokensOverride: Int? = nil
     ) throws -> String {
+        let tokenLimit = max(1, maxTokensOverride ?? spec.config.maxTokens)
         let parameters = GenerateParameters(
-            maxTokens: spec.config.maxTokens,
+            maxTokens: tokenLimit,
             temperature: spec.config.temperature,
             seed: seed
         )
@@ -130,7 +132,7 @@ public enum PairedTestRunner {
         let generated = try withRandomState(MLXRandom.RandomState(seed: seed)) {
             var iterator = try TokenIterator(input: input, model: model, parameters: parameters)
             var out: [Int] = []
-            out.reserveCapacity(spec.config.maxTokens)
+            out.reserveCapacity(tokenLimit)
             while let token = iterator.next() {
                 if spec.config.stopTokenIds.contains(token) { break }
                 out.append(token)

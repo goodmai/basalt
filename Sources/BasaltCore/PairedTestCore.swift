@@ -250,6 +250,10 @@ public struct PairedDatasetSplit: Sendable {
 
     public var reservedCount: Int { reserved.count }
 
+    public func reservedFenceStrings() -> Set<String> {
+        Set(reserved.map(\.prompt))
+    }
+
     public init(practice: [PairedProblem], reserved: [PairedProblem]) {
         self.practice = practice
         self.reserved = reserved
