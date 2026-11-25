@@ -113,6 +113,7 @@ extension UniversalModelConverter {
         cacheRoot: URL = ModelCache.root,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionResult {
+        if let unwired = request.unwiredOptions.first { throw BasaltError.invalidRequestStructure(details: "convert: \(unwired) is not wired to the converter yet (#616)") }
         let detected = try UniversalSourceReader.detect(at: sourceURL)
         let validatedPeers = try validateClusterPeers(request.clusterPeers)
         if !validatedPeers.isEmpty {

@@ -110,6 +110,10 @@ public struct ComposeSpec: Sendable, Equatable {
     public var voice: VoiceDuplexSpec?
     public var music: MusicComposeSpec?
     public var video: VideoComposeSpec?
+
+    public var unservedMediaModels: Set<String> {
+        Set([music?.model, video?.model].compactMap { $0 }.filter { !$0.isEmpty })
+    }
     public var train: ComposeTrainSpec?
     public var cluster: ComposeClusterSpec?
     public var semanticCache: SemanticCacheConfig?

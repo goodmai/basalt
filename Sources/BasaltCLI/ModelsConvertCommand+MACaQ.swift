@@ -90,7 +90,7 @@ extension ConvertSubcommand {
                 calibrationText: calibrationText, config: config
             ) { print("  [macaq] \($0)") }
             createdOutput = true
-            let pvSummary = experimentalPvTune
+            let pvSummary = usesPVTune
                 ? try await PVTuner.tuneConvertedDirectory(
                     output: outURL, teacher: teacherURL, calibrationText: calibrationText
                 ) { print("  [pv-tune] \($0)") }
@@ -109,7 +109,7 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if createdOutput, experimentalPvTune,
+            if createdOutput, usesPVTune,
                Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
                 try? FileManager.default.removeItem(at: outURL)
             }

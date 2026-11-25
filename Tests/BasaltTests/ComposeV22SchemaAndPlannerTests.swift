@@ -91,6 +91,8 @@ struct ComposeV22SchemaAndPlannerTests {
         #expect(spec.imagine?.upscale?.targetResolution == 2048)
         #expect(spec.music?.durationSeconds == 30)
         #expect(spec.video?.frames == 121)
+        #expect(spec.unservedMediaModels == Set([spec.music?.model, spec.video?.model].compactMap { $0 }))
+        #expect(spec.unservedMediaModels.count == 2)
         #expect(spec.train?.method == "cadpo")
         #expect(spec.cluster?.compression == "qjl1")
     }

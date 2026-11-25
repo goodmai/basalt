@@ -72,13 +72,11 @@ struct AdaLoRAAndShortcutAuditTests {
         #expect(throws: BasaltError.self) { _ = try TwoStageSFTDPOPolicy(dpoLearningRateRatio: 0).resolvedStages(weightBits: 4) }
         #expect(throws: BasaltError.self) { _ = try TwoStageSFTDPOPolicy(dpoBeta: -0.1).resolvedStages(weightBits: 4) }
 
-        let cmd = try TrainSubcommand.parse([
-            "org/model", "--dataset", "local.jsonl", "--dpo-pairs", "pairs.jsonl",
-            "--quantized-base-bits", "4", "--adalora-target-rank", "8", "--learning-rate", "0.0004",
-        ])
-        #expect(cmd.dpoPairs == "pairs.jsonl")
+        let cmd = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl", "--quantized-base-bits", "4", "--learning-rate", "0.0004"])
         #expect(cmd.quantizedBaseBits == 4)
-        #expect(cmd.adaLoRATargetRank == 8)
+        for unwired in [["--dpo-pairs", "pairs.jsonl"], ["--adalora-target-rank", "8"]] {
+            #expect(throws: (any Error).self, "\(unwired)") { _ = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl"] + unwired) }
+        }
 
         var req = CorpusTrainRequest(corpus: CorpusSourceSpec(source: "local.jsonl"))
         req.learningRate = 4e-4
