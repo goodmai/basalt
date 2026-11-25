@@ -15,6 +15,11 @@ struct GGUFTransferRealModelTests {
     static let chunks = Int(env["BASALT_E2E_GGUF_CHUNKS"] ?? "") ?? 8
 
     static func load(_ url: URL) async throws -> ModelContainer {
+        await MLXInferenceEngine.registerAliases()
+        if env["BASALT_E2E_GGUF_STREAM"] == "1",
+           let streamed = try await ExpertStreamingLoader.loadContainer(from: url, streaming: ExpertStreaming(), tokenizerLoader: DefaultTokenizerLoader()) {
+            return streamed
+        }
         if let native = try await GGUFNativeLoader.loadContainer(from: url, tokenizerLoader: DefaultTokenizerLoader()) { return native }
         return try await loadModelContainer(from: url, using: DefaultTokenizerLoader())
     }
