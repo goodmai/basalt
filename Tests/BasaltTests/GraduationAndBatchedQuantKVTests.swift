@@ -50,7 +50,8 @@ struct GraduationFlagAndCacheTests {
         #expect(classified.streaming == footprint)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: tightBudget, environment: [:]) == ExpertStreaming())
 
-        let roomyBudget = summary.totalShardBytes * 2
+        let geometry = try #require(KVCacheGeometry.load(modelDirectory: moeDir))
+        let roomyBudget = summary.totalShardBytes * 2 + geometry.bytes(tokens: TokenCount(ModelFitAnalyzer.residentContextFloor)) * 2
         #expect(ModelFitAnalyzer.classifyDirectory(moeDir, workingSetBudget: roomyBudget).fitLevel.fitsResident)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: roomyBudget, environment: [:]) == nil)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: denseDir, workingSetBudget: tightBudget, environment: [:]) == nil)
@@ -81,6 +82,28 @@ struct GraduationFlagAndCacheTests {
         let denseTight = await MemoryEvaluator().evaluate(directory: denseDir, resources: resources, contextLength: 0)
         #expect(denseTight.fitLevel == .tooTight)
         #expect(!denseTight.fitsInMemory)
+    }
+
+    @Test("A MoE whose weights fit but leave resident KV room for fewer than residentContextFloor tokens streams its experts instead; one token more of room keeps it resident")
+    func shortResidentContextStreams() throws {
+        let moeDir = Self.fixtures.appendingPathComponent("qwen3_moe")
+        let denseDir = Self.fixtures.appendingPathComponent("qwen3")
+        let geometry = try #require(KVCacheGeometry.load(modelDirectory: moeDir))
+        let weights = try #require(ModelFitAnalyzer.stackedExperts(in: moeDir)).totalShardBytes
+        let floorRoom = geometry.bytes(tokens: TokenCount(ModelFitAnalyzer.residentContextFloor)) * 2
+        let short = weights + floorRoom / 2
+        let roomy = weights + floorRoom + geometry.bytes(tokens: TokenCount(64)) * 2
+        #expect(ModelFitAnalyzer.residentContext(moeDir, weights: weights, budget: short) < ModelFitAnalyzer.residentContextFloor)
+        #expect(MemoryEvaluator.fitLevel(required: weights, budget: short) != .tooTight)
+        #expect(ModelFitAnalyzer.classifyDirectory(moeDir, workingSetBudget: short).fitLevel == .moeTieredStreaming)
+        #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: short, environment: [:]) == ExpertStreaming())
+        #expect(ModelFitAnalyzer.classifyDirectory(moeDir, workingSetBudget: roomy).fitLevel.fitsResident)
+        #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: roomy, environment: [:]) == nil)
+        let denseWeights = ByteCount(ModelFitAnalyzer.safetensorsShards(in: denseDir).reduce(Int64(0)) {
+            $0 + ((try? FileManager.default.attributesOfItem(atPath: $1.path)[.size] as? Int64) ?? 0)
+        })
+        let denseShort = ModelFitAnalyzer.classifyDirectory(denseDir, workingSetBudget: denseWeights + ByteCount(1_024)).fitLevel
+        #expect(denseShort != .moeTieredStreaming && denseShort != .tooTight)
     }
 
     @Test("Graduated --speech-analyzer, --ane-vision-tower, --expert-streaming, and --no-expert-streaming flags preserve --experimental-* aliases")
