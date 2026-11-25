@@ -143,18 +143,20 @@ struct ModelCatalog: Sendable {
     }
 
     func estimateCost(model: String, promptTokens: Int, completionTokens: Int) -> Double {
+        let prompt = Double(max(0, promptTokens))
+        let completion = Double(max(0, completionTokens))
         let mappedId = Self.cloudModels(for: model).first ?? model
         if let price = pricingByModel[mappedId] {
-            let inputCost = Double(promptTokens) / 1_000_000.0 * price.input
-            let outputCost = Double(completionTokens) / 1_000_000.0 * price.output
+            let inputCost = prompt / 1_000_000.0 * price.input
+            let outputCost = completion / 1_000_000.0 * price.output
             return inputCost + outputCost
         }
         if let cost = models[mappedId]?.costPer1MTokens {
-            return (Double(promptTokens + completionTokens) / 1_000_000.0) * cost
+            return ((prompt + completion) / 1_000_000.0) * cost
         }
         guard let price = Self.fallbackPricing[mappedId] else { return 0.0 }
-        let inputCost = Double(promptTokens) / 1_000_000.0 * price.input
-        let outputCost = Double(completionTokens) / 1_000_000.0 * price.output
+        let inputCost = prompt / 1_000_000.0 * price.input
+        let outputCost = completion / 1_000_000.0 * price.output
         return inputCost + outputCost
     }
 

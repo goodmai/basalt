@@ -114,10 +114,17 @@ package struct RESTServer: Sendable {
         try await group.run()
     }
 
+    private var hasAuth: Bool {
+        !(config.apiKey ?? "").isEmpty || !config.virtualKeys.isEmpty
+    }
+
     private func logStartup() {
         log("Listening on http://\(config.host):\(config.restPort)")
-        if let key = config.apiKey, !key.isEmpty {
+        if hasAuth {
             log("API key protection: ENABLED (bearer token required)")
+            if (config.apiKey ?? "").isEmpty, !config.virtualKeys.isEmpty {
+                log("Admin routes require --api-key (virtual keys alone cannot access control endpoints)")
+            }
         } else {
             log("API key protection: DISABLED (loopback open access)")
         }
@@ -149,7 +156,7 @@ package struct RESTServer: Sendable {
     private func addMiddleware(to router: Router<BasicRequestContext>) {
         router.add(middleware: LogRequestsMiddleware(.info))
         router.add(middleware: RequestGuardMiddleware(bindHost: config.host, bindPort: config.restPort, allowedOrigins: config.allowedOrigins))
-        let hasAuth = !(config.apiKey ?? "").isEmpty || !config.virtualKeys.isEmpty
+        let hasAuth = self.hasAuth
         if hasAuth {
             router.add(middleware: APIKeyAuthenticator(apiKey: config.apiKey ?? "", virtualKeys: config.virtualKeys))
         }

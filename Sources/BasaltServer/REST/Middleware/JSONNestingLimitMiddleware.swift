@@ -17,16 +17,17 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         context: Context,
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
+        let normalized = APIKeyAuthenticator<Context>.normalizedPath(request.uri.path)
         guard request.method == .post || request.method == .put,
-              request.uri.path != TranscriptionsController.path,
+              normalized != TranscriptionsController.path,
               !RequestGuardMiddleware.has(.multipartForm, request) else {
             return try await next(request, context)
         }
         var request = request
         let buffer: ByteBuffer
         do {
-            buffer = try await request.collectBody(upTo: Self.bodyLimit(for: request.uri.path))
-        } catch let error as HTTPError where error.status == .contentTooLarge {
+            buffer = try await request.collectBody(upTo: Self.bodyLimit(for: normalized))
+        } catch let error as any HTTPResponseError where error.status == .contentTooLarge {
             return ProviderErrorResponse.response(status: .contentTooLarge, message: "Request body too large.", path: request.uri.path)
         }
         let bytes = buffer.readableBytesSpan
@@ -41,10 +42,23 @@ public struct JSONNestingLimitMiddleware<Context: RequestContext>: RouterMiddlew
         ["/v1/chat/completions", "/api/v1/chat/completions", "/v1/responses", "/v1/messages", "/v1/ocr"]
     }
 
+    private static var smallControlPaths: Set<String> {
+        ["/v1/models/download", "/v1/models/publish"]
+    }
+
+    private static var oneMBPaths: Set<String> {
+        ["/api/v1/generate", "/api/v1/generate/stream", "/v1/models/load"]
+    }
+
     static func bodyLimit(for path: String) -> Int {
-        if path.hasPrefix("/v1/images/") { return ImagesController.bodyLimit }
-        if path.hasPrefix("/v1/pipeline") || path == "/v1/systemone" { return PipelineController.bodyLimit }
-        if mediaBodyPaths.contains(path) { return Self.bodyLimit }
+        let normalized = APIKeyAuthenticator<Context>.normalizedPath(path)
+        if normalized.hasPrefix("/v1/images/") { return ImagesController.bodyLimit }
+        if normalized.hasPrefix("/v1/pipeline") || normalized == "/v1/systemone" { return PipelineController.bodyLimit }
+        if mediaBodyPaths.contains(normalized) { return Self.bodyLimit }
+        if smallControlPaths.contains(normalized) || normalized.hasPrefix("/v1/mcp/approvals") { return ModelsHubController.bodyLimit }
+        if normalized == "/v1/models/convert" || normalized == "/api/v1/models/convert" { return ModelsConvertController.bodyLimit }
+        if normalized == "/v1/compose/apply" || normalized == "/v1/compose/diff" { return ComposeController.bodyLimit }
+        if oneMBPaths.contains(normalized) { return 1024 * 1024 }
         return 4 * 1024 * 1024
     }
 

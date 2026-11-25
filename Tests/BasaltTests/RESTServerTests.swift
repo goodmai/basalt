@@ -418,7 +418,7 @@ struct RESTServerTests {
         try await failing.app.test(.router) { client in
             try await client.execute(uri: "/api/v1/generate/stream", method: .post, headers: [.contentType: "application/json"], body: ByteBuffer(string: #"{"prompt": "hi"}"#)) { res in
                 let raw = String(buffer: res.body)
-                #expect(raw.hasPrefix("event: error\n"))
+                #expect(res.status == .serviceUnavailable)
                 #expect(!raw.contains("[DONE]"))
             }
         }
