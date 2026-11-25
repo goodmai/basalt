@@ -134,6 +134,7 @@ extension ServeCommand {
 
     func resolvedPath(_ modelId: String, quant: String?) async throws -> String {
         guard modelId.contains("/") else { return modelId }
+        if quant == nil, let pack = try await importedModelOpt(modelId) { return pack.path }
 
         let snapshot = ModelCache.cacheDir(for: modelId)
 
@@ -151,9 +152,21 @@ extension ServeCommand {
                                               onFile: DownloadProgressReporter(useStderr: true).callAsFunction)
             fputs("\n", stderr)
             fflush(stderr)
+            if quant == nil, let pack = try await importedModelOpt(modelId) { return pack.path }
             return dest.path
+        } catch let exit as ExitCode {
+            throw exit
         } catch {
             log("\(red("Download failed:")) \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
+    }
+
+    func importedModelOpt(_ modelId: String) async throws -> URL? {
+        do {
+            return try await ModelOptAutoImport.ensureImported(repoId: modelId) { fputs("[serve] ModelOpt import: \($0)\n", stderr) }
+        } catch {
+            log("\(red("[error]")) ModelOpt import of \(modelId) failed: \(error.localizedDescription)")
             throw ExitCode.failure
         }
     }

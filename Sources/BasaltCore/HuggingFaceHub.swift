@@ -89,7 +89,7 @@ public struct ModelCache: Sendable {
     /// Supports both:
     ///  - Standard HF hub layout: refs/main → snapshots/{hash}
     ///  - Gem downloader layout: snapshots/main (direct)
-    public static func cacheDir(for repoId: String) -> URL {
+    public static func cacheDir(for repoId: String, root: URL = ModelCache.root) -> URL {
         let sanitized = repoId.replacingOccurrences(of: "/", with: "--")
         let modelRoot = root.appendingPathComponent("models--\(sanitized)")
 
@@ -186,18 +186,18 @@ public struct ModelCache: Sendable {
     ///
     /// An explicit `quant` is never silently substituted: reporting numbers for
     /// 8-bit when 4-bit was requested would be worse than reporting nothing.
-    public static func resolve(repoId: String, quant: String? = nil) -> URL? {
+    public static func resolve(repoId: String, quant: String? = nil, root: URL = ModelCache.root) -> URL? {
         if repoId.hasPrefix("/") || repoId.hasPrefix(".") {
             return URL(fileURLWithPath: repoId)
         }
         guard repoId.contains("/") else { return nil }
 
-        let snapshot = cacheDir(for: repoId)
+        let snapshot = cacheDir(for: repoId, root: root)
         if let quant {
             let target = snapshot.appendingPathComponent(quant)
             return hasUsableConfig(at: target) ? target : nil
         }
-        if hasUsableConfig(at: snapshot) { return snapshot }
+        if hasUsableConfig(at: snapshot) { return importedPack(for: repoId, source: snapshot, root: root) ?? snapshot }
 
         for folder in quantFolders {
             let target = snapshot.appendingPathComponent(folder)

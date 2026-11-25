@@ -133,6 +133,14 @@ struct DownloadSubcommand: AsyncParsableCommand {
 
         print("\n")
         printSuccess("Saved to \(dest.path)")
+        do {
+            if let pack = try await ModelOptAutoImport.ensureImported(repoId: repoId, onProgress: { print("  [import] \($0)") }) {
+                printSuccess("ModelOpt checkpoint imported losslessly to MLX nvfp4: \(pack.path)")
+            }
+        } catch {
+            printError("ModelOpt import failed: \(error.localizedDescription)")
+            throw ExitCode.failure
+        }
         printRunHint(repoId: repoId)
     }
 
