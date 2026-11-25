@@ -68,6 +68,18 @@ struct FaultInjectionTests {
         try await Self.expectRecovered(engine, orchestrator)
     }
 
+    @Test("A non-streaming generate whose task is cancelled throws cancelled, not a hardware failure for the metadata the cancelled relay never sent")
+    func cancelledGenerateIsCancelled() async throws {
+        let engine = try await TinyModel.engine()
+        let work = Task { () async throws -> GenerationResponse in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await engine.generate(request: Self.request())
+        }
+        let failure = await #expect(throws: BasaltError.self) { try await work.value }
+        #expect(failure.map(OrchestratorPolicy.logStatus) == "cancelled", "\(String(describing: failure))")
+        #expect(await engine.checkInvariants(idle: true) == [])
+    }
+
     @Test("Without a planned fault nothing fires: the same load fails on its unknown model type")
     func noFaultByDefault() async throws {
         let engine = try await TinyModel.engine()

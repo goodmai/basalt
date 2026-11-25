@@ -31,6 +31,7 @@ extension MLXInferenceEngine {
         }
 
         guard let finalResponse else {
+            if Task.isCancelled { throw .cancelled }
             throw .inferenceHardwareFailure(reason: "Stream finished without metadata")
         }
         guard finalResponse.finishReason != .error else { throw .nonFiniteLogits }
