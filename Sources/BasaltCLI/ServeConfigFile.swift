@@ -144,7 +144,8 @@ enum ServeConfigFile {
                 if !cli.contains(where: { $0 == flag || $0.hasPrefix("\(flag)=") }) { tokens += items.map { "\(flag)=\(Self.expanded($0))" } }
             case .flag(let on, let off):
                 guard let value = node.bool else { return mismatch(path, node, "true or false") }
-                if let token = value ? on : off { tokens.append(token) }
+                let givenOnCLI = [on, off].compactMap { $0 }.contains { flag in cli.contains(flag) }
+                if !givenOnCLI, let token = value ? on : off { tokens.append(token) }
             }
         }
 

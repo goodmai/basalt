@@ -345,6 +345,7 @@
 "LTX-2 A/V" = "LTX-2 A/V";
 "AAC+HEVC" = "AAC+HEVC";
 "QAT Fake-Quant Refinement (Domain STE)" = "QAT Fake-Quant Refinement (Domain STE)";
+"Not wired to the converter yet (#616)" = "Not wired to the converter yet (#616)";
 "Post-Quantization Quality & Fairness Audit" = "Post-Quantization Quality & Fairness Audit";
 "Merge LoRA Adapter (Optional)" = "Merge LoRA Adapter (Optional)";
 "org/adapter-repo" = "org/adapter-repo";

@@ -49,4 +49,30 @@ struct LowSeverityDefectTests {
             #expect(block.tier == kv.block(for: block.prefixHash)?.tier, "\(block.prefixHash)")
         }
     }
+
+    @Test("Malformed JSON that happens to contain <arg_key> is not read as an XML tool call with a garbage name")
+    func xmlToolNameMustBeAnIdentifier() {
+        #expect(ToolCallRepairer.extractXMLArgKeyToolCall(from: #"{"path": "a <arg_key>k</arg_key><arg_value>v</arg_value>"#) == nil)
+        #expect(ToolCallRepairer.extractXMLArgKeyToolCall(from: "write_file<arg_key>path</arg_key><arg_value>a.txt</arg_value>")?.name == "write_file")
+    }
+
+    @Test("A config with absurd dimensions or loop passes gives no KV geometry instead of trapping on overflow or a giant allocation")
+    func absurdGeometryIsRejected() {
+        let base: [String: Any] = ["num_hidden_layers": 4, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 64]
+        #expect(KVCacheGeometry(config: base) != nil)
+        for (key, value) in [("num_hidden_layers", Int.max), ("head_dim", Int.max), ("num_attention_heads", 1 << 40)] {
+            #expect(KVCacheGeometry(config: base.merging([key: value]) { $1 }) == nil, "\(key)")
+        }
+    }
+
+    @Test("The log file is appended with O_APPEND, and an unwritable path is skipped instead of raising an Objective-C exception")
+    func logAppendIsSafe() throws {
+        let directory = try Self.directory("log")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appending(component: "app.log").path
+        BasaltLogger.append("one\n", to: path)
+        BasaltLogger.append("two\n", to: path)
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "one\ntwo\n")
+        BasaltLogger.append("lost\n", to: directory.appending(component: "missing/app.log").path)
+    }
 }

@@ -170,13 +170,15 @@ public struct KVCacheGeometry: Sendable, Equatable {
         isFromConfig = false
     }
 
+    static let maxDimension = 1 << 16
+
     public init?(config root: [String: Any]) {
         let c = root["text_config"] as? [String: Any] ?? root
-        guard let layers = c["num_hidden_layers"] as? Int, layers > 0,
-              let heads = c["num_attention_heads"] as? Int, heads > 0 else { return nil }
+        guard let layers = c["num_hidden_layers"] as? Int, (1 ... Self.maxDimension).contains(layers),
+              let heads = c["num_attention_heads"] as? Int, (1 ... Self.maxDimension).contains(heads) else { return nil }
         let kvHeads = c["num_key_value_heads"] as? Int ?? heads
         guard let headDim = c["head_dim"] as? Int ?? (c["hidden_size"] as? Int).map({ $0 / heads }),
-              headDim > 0, kvHeads > 0 else { return nil }
+              (1 ... Self.maxDimension).contains(headDim), (1 ... Self.maxDimension).contains(kvHeads) else { return nil }
 
         let shared = min(layers, max(0, c["num_kv_shared_layers"] as? Int ?? 0))
         let kinds = Self.visits(Array(Self.layerKinds(c, layers: layers).prefix(layers - shared)), c)

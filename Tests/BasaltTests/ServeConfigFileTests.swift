@@ -97,6 +97,13 @@ struct ServeConfigFileTests {
         #expect(try Self.serve("defaults:\n  serve: { port: null }\n").port == nil)
     }
 
+    @Test("An on/off flag given on the command line overrides the file's boolean instead of colliding with it")
+    func cliFlagBeatsFileBoolean() throws {
+        let yaml = "defaults:\n  serve:\n    expert_streaming: { enabled: true }\n"
+        let command = try Self.serve(yaml, ["--no-expert-streaming"])
+        #expect(command.expertStreaming.disabled && !command.expertStreaming.enabled)
+    }
+
     @Test("Unknown keys and wrong types are all reported at once, each with its key path, line and column")
     func strictValidation() {
         let yaml = "version: 1\ndefaults:\n  serve:\n    max_concurrent: two\n    prompt_cahce: { mb: 1 }\n    kv: { zones: maybe }\n  profiles: {}\nextends: []\n"
