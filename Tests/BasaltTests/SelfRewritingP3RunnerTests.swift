@@ -286,7 +286,7 @@ extension SelfRewritingP3RunnerTests {
         #expect(result.phase == .withdrawn(rationale: "recovered after errors") && result.turnCount == 5)
     }
 
-    @Test("WeightCopy.makeSync clones wrapped MLXLLM.Qwen35Model preserving model_type and sharing weights without copying (#676)")
+    @Test("WeightCopy.makeSync clones wrapped MLXLLM.Qwen35Model and Qwen35MoEModel preserving model_type and sharing weights (#676)")
     func weightCopyClonesWrappedQwen35Model() throws {
         let wrappedJSON = "{\"model_type\":\"qwen3_5\",\"text_config\":\(TinyModel.Family.qwen35.config)}"
         let cfg = try JSONDecoder().decode(MLXLLM::Qwen35Configuration.self, from: Data(wrappedJSON.utf8))
@@ -294,5 +294,167 @@ extension SelfRewritingP3RunnerTests {
         let copy = try WeightCopy.makeSync(from: original)
         #expect(copy.accounting.totalExtraBytes == 0)
         try copy.release(verifying: original)
+
+        let moeJSON = "{\"model_type\":\"qwen3_5_moe\",\"text_config\":\(TinyModel.Family.qwen35Moe.config)}"
+        let moeCfg = try JSONDecoder().decode(MLXLLM::Qwen35Configuration.self, from: Data(moeJSON.utf8))
+        let moeOriginal = MLXLLM::Qwen35MoEModel(moeCfg)
+        let moeCopy = try WeightCopy.makeSync(from: moeOriginal)
+        #expect(moeCopy.accounting.totalExtraBytes == 0)
+        try moeCopy.release(verifying: moeOriginal)
+    }
+}
+
+extension SelfRewritingP3RunnerTests {
+    @Test("EditEditorTurn.parseJSON handles odd quotes in prose before the JSON payload (A-C2)")
+    func parseJSONHandlesOddProseQuote() throws {
+        let oddQuote = "Don't use \"odd quotes before {\"rationale\":\"ok\",\"action\":{\"describeModel\":{}}}"
+        #expect(try EditEditorTurn.parseJSON(from: oddQuote).action == .describeModel)
+    }
+
+    @Test("EditValidationError.invalidSlice formats without Int overflow on Int.max start (A-C3)")
+    func invalidSliceDescriptionAvoidsOverflow() {
+        let overflowDesc = EditValidationError.invalidSlice(tensor: "w", start: Int.max, count: 1, limit: 16).description
+        #expect(overflowDesc.contains("start=\(Int.max)") && overflowDesc.contains("count=1"))
+    }
+
+    @Test("MathAnswerGrader preserves UTF-16 alignment when text contains Turkish dotted I (#797)")
+    func mathAnswerGraderHandlesTurkishDottedI() {
+        #expect(MathAnswerGrader().extractAnswer(from: "İİİ Answer: 42") == "42")
+    }
+
+    @Test("SelfRewriteSessionDriver classifies WeightCopyError recoverability exhaustively (#797)")
+    func isRecoverableActionErrorClassifiesWeightCopyErrors() {
+        #expect(!SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.originalFingerprintMismatch([])))
+        #expect(!SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.copyReleased))
+        #expect(!SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.unsupportedModel("x")))
+        #expect(!SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.budgetExceeded(required: 10, budget: 5)))
+        #expect(SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.invalidOperation("bad")))
+        #expect(SelfRewriteSessionDriver.isRecoverableActionError(WeightCopyError.sharedHandleMutationBlocked(tensor: "w")))
+    }
+
+    @Test("CloudPrivacyFence blocks nested numeric arrays and case-variant paths while allowing a 150-layer EditModelSummary (A-C7)")
+    func privacyFenceNestedArraysAndLargeDescribeModel() throws {
+        let nestedBypass = "[[0], " + (1 ... 80).map(String.init).joined(separator: ", ") + "]"
+        let twoRows = "[" + "[" + (1 ... 40).map(String.init).joined(separator: ", ") + "], [" + (41 ... 80).map(String.init).joined(separator: ", ") + "]]"
+        for bad in [nestedBypass, twoRows, "path /users/alice/m", "file WEIGHTS.SAFETENSORS"] {
+            let entry = [EditSessionTranscriptEntry(turnIndex: 0, role: "tool", content: bad)]
+            #expect(throws: SelfRewriteSessionError.self) {
+                _ = try CloudPrivacyFence.sanitizeAndValidate(entry)
+            }
+        }
+
+        let layers = (0 ..< 150).map { idx in
+            EditEditableLayerSummary(path: "language_model.model.layers.\(idx).self_attn.o_proj", shape: [2048, 512], format: "quantized4", blastRadiusWarning: nil)
+        }
+        let summary = EditModelSummary(modelType: "gemma4", topology: nil, editableLayers: layers, totalParameterCount: 26_000_000_000)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let summaryJSON = String(decoding: try encoder.encode(summary), as: UTF8.self)
+        let summaryEntry = [EditSessionTranscriptEntry(turnIndex: 0, role: "tool", content: summaryJSON)]
+        let sanitized = try CloudPrivacyFence.sanitizeAndValidate(summaryEntry)
+        #expect(sanitized.count == 1 && sanitized[0].content.contains("layers.149"))
+    }
+}
+
+extension SelfRewritingP3RunnerTests {
+    @Test("Three consecutive invalid JSON turns abort and emit valid JSON error observations escaping quotes (#797)")
+    func threeInvalidJSONTurnsAbortWithValidJSONObservation() async throws {
+        actor ThreeFailJSONEditor: EditSessionEditor {
+            let editorLabel = "bad-json"
+            var calls = 0
+            var seenTranscript: [EditSessionTranscriptEntry] = []
+            func nextTurn(transcript: [EditSessionTranscriptEntry], remainingBudget: SelfRewriteBudget) async throws -> EditEditorTurn {
+                seenTranscript = transcript
+                calls += 1
+                guard calls <= 5 else { return EditEditorTurn(rationale: "stop", action: .withdraw(rationale: "cap regressed")) }
+                throw SelfRewriteSessionError.invalidEditorTurn("has \"quoted\" text")
+            }
+        }
+        let model = try TinyModel.make(.gemma4)
+        let config = SelfRewriteSessionConfig(sessionId: "sess-cap-json", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 12))
+        let editor = ThreeFailJSONEditor()
+        await #expect(throws: SelfRewriteSessionError.self) {
+            _ = try await SelfRewriteSessionDriver.run(
+                config: config, split: Self.makeSplit(), evalSpec: Self.makeSpec(), editor: editor, original: model
+            )
+        }
+        #expect(await editor.calls == 3)
+        let transcript = await editor.seenTranscript
+        let errors = transcript.filter { $0.role == "tool" && $0.content.contains("quoted") }
+        #expect(errors.count == 2)
+        for obs in errors {
+            let parsed = try JSONSerialization.jsonObject(with: Data(obs.content.utf8)) as? [String: String]
+            #expect(parsed?["error"]?.contains("has \"quoted\" text") == true)
+        }
+    }
+
+    @Test("Three consecutive rejected tool actions abort and emit valid JSON error observations escaping quotes (#797)")
+    func threeRejectedActionsAbortWithValidJSONObservation() async throws {
+        actor ThreeFailActionEditor: EditSessionEditor {
+            let editorLabel = "bad-action"
+            var calls = 0
+            var seenTranscript: [EditSessionTranscriptEntry] = []
+            func nextTurn(transcript: [EditSessionTranscriptEntry], remainingBudget: SelfRewriteBudget) async throws -> EditEditorTurn {
+                seenTranscript = transcript
+                calls += 1
+                guard calls <= 5 else { return EditEditorTurn(rationale: "stop", action: .withdraw(rationale: "cap regressed")) }
+                return EditEditorTurn(rationale: "bad", action: .inspectTensor(name: "missing\"quote.weight"))
+            }
+        }
+        let model = try TinyModel.make(.gemma4)
+        let config = SelfRewriteSessionConfig(sessionId: "sess-cap-action", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 12))
+        let editor = ThreeFailActionEditor()
+        await #expect(throws: BasaltError.self) {
+            _ = try await SelfRewriteSessionDriver.run(
+                config: config, split: Self.makeSplit(), evalSpec: Self.makeSpec(), editor: editor, original: model
+            )
+        }
+        #expect(await editor.calls == 3)
+        let transcript = await editor.seenTranscript
+        let errors = transcript.filter { $0.role == "tool" && $0.content.contains("action rejected") }
+        #expect(errors.count == 2)
+        for obs in errors {
+            let parsed = try JSONSerialization.jsonObject(with: Data(obs.content.utf8)) as? [String: String]
+            #expect(parsed?["error"]?.contains("quote.weight") == true && parsed?["error"]?.contains("\"") == true)
+        }
+    }
+
+    @Test("Submitting a merged program exceeding 64 ops does not falsely mark session .submitted and returns a recoverable JSON error observation (#797)")
+    func submitOver64MergedOpsStaysRunning() async throws {
+        let op = EditOp.clip(tensor: Self.textOProj + ".weight", factor: 1.0)
+        let fortyOps = EditProgram(ops: Array(repeating: op, count: 40))
+        actor OverLimitSubmitEditor: EditSessionEditor {
+            let editorLabel = "overlimit"
+            let batch: EditProgram
+            var step = 0
+            var seenTranscript: [EditSessionTranscriptEntry] = []
+            init(batch: EditProgram) { self.batch = batch }
+            func nextTurn(transcript: [EditSessionTranscriptEntry], remainingBudget: SelfRewriteBudget) async throws -> EditEditorTurn {
+                seenTranscript = transcript
+                defer { step += 1 }
+                switch step {
+                case 0, 1: return EditEditorTurn(rationale: "apply 40", action: .applyEdit(batch))
+                case 2: return EditEditorTurn(rationale: "submit 80", action: .submit(rationale: "too many"))
+                default: return EditEditorTurn(rationale: "give up", action: .withdraw(rationale: "validated before submit"))
+                }
+            }
+        }
+        let model = try TinyModel.make(.gemma4)
+        let config = SelfRewriteSessionConfig(sessionId: "sess-overlimit", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 12))
+        let editor = OverLimitSubmitEditor(batch: fortyOps)
+        let result = try await SelfRewriteSessionDriver.run(
+            config: config,
+            split: Self.makeSplit(),
+            evalSpec: Self.makeSpec(),
+            editor: editor,
+            original: model
+        )
+        #expect(result.phase == .withdrawn(rationale: "validated before submit"))
+        #expect(result.submittedProgram == nil && result.savedAdapterURL == nil)
+        let transcript = await editor.seenTranscript
+        let toolErrors = transcript.filter { $0.role == "tool" && $0.content.contains("action rejected") }
+        #expect(toolErrors.count == 1)
+        let parsed = try JSONSerialization.jsonObject(with: Data(toolErrors[0].content.utf8)) as? [String: String]
+        #expect(parsed?["error"] != nil)
     }
 }

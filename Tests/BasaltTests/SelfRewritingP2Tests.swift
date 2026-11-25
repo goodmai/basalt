@@ -192,6 +192,12 @@ extension SelfRewritingP2Tests {
         await #expect(throws: SelfRewriteBudgetError.self) {
             _ = try await editor.nextTurn(transcript: [], remainingBudget: budget)
         }
+        #expect(abs(await editor.spentUSD() - 0.30) < 1e-6)
+        #expect(abs(await gate.spent("gemini-2.5-pro") - 0.30) < 1e-6)
+        await #expect(throws: SelfRewriteBudgetError.self) {
+            _ = try await editor.nextTurn(transcript: [], remainingBudget: budget)
+        }
+        #expect(StubURLProtocol.requests(for: host).count == 2)
     }
 
     @Test("Scripted editor drives SelfRewriteSessionDriver through full toolset and submit on tiny Gemma 4 MoE")

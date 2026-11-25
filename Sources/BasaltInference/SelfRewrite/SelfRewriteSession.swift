@@ -151,11 +151,21 @@ public enum SelfRewriteSessionDriver {
         return try generateLocalTurn(state: state, turnIndex: turnCount)
     }
 
-    private static func isRecoverableActionError(_ error: any Error) -> Bool {
-        if error is WeightCopyError || error is EditValidationError || error is TensorRegistryError { return true }
+    static func isRecoverableActionError(_ error: any Error) -> Bool {
+        if let weightError = error as? WeightCopyError {
+            switch weightError {
+            case .invalidOperation, .sharedHandleMutationBlocked: return true
+            case .originalFingerprintMismatch, .copyReleased, .unsupportedModel, .budgetExceeded: return false
+            }
+        }
+        if error is EditValidationError || error is TensorRegistryError { return true }
         if let sessionError = error as? SelfRewriteSessionError, sessionError == .noCandidateEdit { return true }
         if case .invalidRequestStructure = error as? BasaltError { return true }
         return false
+    }
+
+    private static func errorObservation(_ message: String) -> String {
+        (try? encodeJSON(["error": message])) ?? "{\"error\":\"action rejected\"}"
     }
 
     private static func runLoop(
@@ -177,7 +187,7 @@ public enum SelfRewriteSessionDriver {
             } catch let error as SelfRewriteSessionError {
                 consecutiveErrors += 1
                 guard case .invalidEditorTurn(let detail) = error, consecutiveErrors < maxConsecutiveErrors else { throw error }
-                state.core.appendObservation("{\"error\":\"invalid JSON turn: \(detail). Reply ONLY with one valid EditEditorTurn JSON object.\"}")
+                state.core.appendObservation(errorObservation("invalid JSON turn: \(detail). Reply ONLY with one valid EditEditorTurn JSON object."))
                 continue
             }
             summary.turnCount += 1
@@ -199,9 +209,11 @@ public enum SelfRewriteSessionDriver {
                 break
             } catch {
                 consecutiveErrors += 1
-                guard isRecoverableActionError(error), consecutiveErrors < maxConsecutiveErrors else { throw error }
+                guard !state.core.phase.isTerminal, isRecoverableActionError(error), consecutiveErrors < maxConsecutiveErrors else {
+                    throw error
+                }
                 let extra = error is TensorRegistryError ? " (registered keys: \(state.registry.keys))" : ""
-                state.core.appendObservation("{\"error\":\"action rejected: \(error)\(extra)\"}")
+                state.core.appendObservation(errorObservation("action rejected: \(error)\(extra)"))
             }
         }
         return summary
@@ -309,11 +321,17 @@ extension SelfRewriteSessionDriver {
             state.core.appendObservation(try encodeJSON(summary))
             return ActionOutcome()
         case .submit(let rationale):
+            guard epoch == state.core.epoch, case .running = state.core.phase else {
+                return ActionOutcome()
+            }
+            guard let candidate = state.core.mergedCandidateProgram() else {
+                throw SelfRewriteSessionError.noCandidateEdit
+            }
+            let operands = try state.registry.resolveOperands(for: candidate)
+            let adapter = try EditAdapter(program: candidate, tensors: operands)
             guard let merged = try state.core.completeSubmit(rationale: rationale, expectedEpoch: epoch) else {
                 return ActionOutcome()
             }
-            let operands = try state.registry.resolveOperands(for: merged)
-            let adapter = try EditAdapter(program: merged, tensors: operands)
             if let dir = state.config.outputDirectory {
                 try adapter.save(to: dir)
             }

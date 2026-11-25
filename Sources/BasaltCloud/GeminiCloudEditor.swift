@@ -74,18 +74,26 @@ public actor GeminiCloudEditor: EditSessionEditor {
         }
         let cleanEntries = try CloudPrivacyFence.sanitizeAndValidate(transcript, privateStrings: privateStrings)
         let messages = Self.buildMessages(entries: cleanEntries, budget: remainingBudget)
-        let body = try JSONEncoder().encode(OpenRouterClient.ChatRequest(
+        var chatRequest = OpenRouterClient.ChatRequest(
             model: config.model,
             messages: messages,
             temperature: 0.2,
             maxTokens: config.maxTokensPerTurn,
             stream: false
-        ))
+        )
+        if config.baseURL.host?.lowercased().contains("openrouter") == true {
+            chatRequest.usage = .init(include: true)
+        }
+        let body = try JSONEncoder().encode(chatRequest)
         let response = try await performChat(body: body)
         let cost = Self.resolvedCostUSD(response.usage)
-        try recordSpend(cost: cost)
+        let remainingBefore = max(0, config.maxSessionUSD - sessionSpentUSD)
+        sessionSpentUSD += cost
         if let cloudGate, cost > 0 {
             await cloudGate.record(config.model, cost: cost)
+        }
+        if sessionSpentUSD > config.maxSessionUSD + 1e-12 {
+            throw SelfRewriteBudgetError.cloudCostBudgetExceeded(requested: cost, remaining: remainingBefore)
         }
         guard let content = response.choices.first?.message.content else {
             throw SelfRewriteSessionError.invalidEditorTurn("cloud model returned empty message content")
@@ -108,16 +116,6 @@ public actor GeminiCloudEditor: EditSessionEditor {
             }
             throw error
         }
-    }
-
-    private func recordSpend(cost: Double) throws {
-        if sessionSpentUSD + cost > config.maxSessionUSD + 1e-12 {
-            throw SelfRewriteBudgetError.cloudCostBudgetExceeded(
-                requested: cost,
-                remaining: max(0, config.maxSessionUSD - sessionSpentUSD)
-            )
-        }
-        sessionSpentUSD += cost
     }
 
     public func spentUSD() -> Double { sessionSpentUSD }
