@@ -412,7 +412,8 @@ extension RCOSolverCore {
             let key = GroupKey(role: layers[idx].role, columns: layers[idx].columns)
             groups[key, default: []].append(idx)
         }
-        let sortedGroups = groups.values.map { members in
+        let ordered = groups.sorted { ($0.key.role.rawValue, $0.key.columns ?? -1) < ($1.key.role.rawValue, $1.key.columns ?? -1) }
+        let sortedGroups = ordered.map(\.value).map { members in
             members.sorted {
                 if layers[$0].sensitivity != layers[$1].sensitivity {
                     return layers[$0].sensitivity > layers[$1].sensitivity
