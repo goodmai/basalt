@@ -135,6 +135,20 @@ struct ModelOptImporterTests {
         #expect(a.keys.allSatisfy { arrayEqual(a[$0]!, b[$0]!).item(Bool.self) })
     }
 
+    @Test("A uint8 FP8 weight whose weight_scale is per-channel, not one scalar, is refused instead of written as raw bytes")
+    func perChannelFP8IsRefused() throws {
+        let root = Self.temporary("fp8-channel")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let quant: [String: Any] = ["quantization": ["quant_algo": "MIXED_PRECISION", "group_size": 16]]
+        try JSONSerialization.data(withJSONObject: quant).write(to: root.appending(component: "hf_quant_config.json"))
+        let importer = try ModelOptImporter(source: root)
+        let stem = "model.layers.0.self_attn.q_proj"
+        let arrays = [stem + ".weight": MLXArray.zeros([4, 8], dtype: .uint8), stem + ".weight_scale": MLXArray.ones([4, 1])]
+        var summary = ModelOptImporter.Summary()
+        #expect(throws: ModelOptImporter.Refused.self) { _ = try importer.convert(stem: stem, arrays: arrays, summary: &summary) }
+    }
+
     @Test("Unknown quant_algo and non-ModelOpt directories are refused by name; exclude_modules globs match prefixes")
     func refusalsAndGlobs() throws {
         let root = Self.temporary("refuse")

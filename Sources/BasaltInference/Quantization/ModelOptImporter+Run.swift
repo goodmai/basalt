@@ -52,6 +52,9 @@ extension ModelOptImporter {
         if kind != .plain, excluded(stem) {
             throw Refused(description: "\(stem) matches exclude_modules but carries quantization scales")
         }
+        if kind == .plain, weight.dtype == .uint8 {
+            throw Refused(description: "\(stem) is uint8 without a single scalar weight_scale (per-channel or block FP8 is not imported)")
+        }
         switch kind {
         case .nvfp4:
             summary.nvfp4 += 1

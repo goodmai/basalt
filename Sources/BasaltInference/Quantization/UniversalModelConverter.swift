@@ -235,7 +235,7 @@ extension UniversalModelConverter {
         onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: "Quantizing to \(activeRequest.target.specString)"))
         let encoded = try await encodeTarget(
             request: activeRequest, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
-        let effectiveTeacher = (request.adapter != nil && teacherURL == sourceURL) ? workingSource : teacherURL
+        let effectiveTeacher = refinementTeacher(teacherURL, source: sourceURL, working: workingSource)
         let pvOut = try await applyPostRefinements(
             request: activeRequest, outputURL: outputURL, teacherURL: effectiveTeacher, onProgress: onProgress)
         let finalBytes = UniversalSourceReader.directoryWeightBytes(outputURL)
@@ -456,5 +456,11 @@ extension UniversalModelConverter {
         default:
             return (1, 0)
         }
+    }
+}
+
+extension UniversalModelConverter {
+    package static func refinementTeacher(_ teacher: URL, source: URL, working: URL) -> URL {
+        teacher == source ? working : teacher
     }
 }

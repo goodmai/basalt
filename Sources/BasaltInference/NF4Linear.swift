@@ -205,6 +205,8 @@ extension NF4NativeLoader {
                 updates.append((path, try replacementLinear(linear, weight: w, scales: s, biases: b, bias: bias)))
             } else if let sw = module as? SwitchLinear, !(module is QuantizedSwitchLinear), !(module is NF4SwitchLinear) {
                 updates.append((path, try replacementSwitch(sw, weight: w, scales: s, biases: b, bias: bias)))
+            } else if let embedding = module as? Embedding, !(module is QuantizedEmbedding), let b {
+                updates.append((path, affineEmbedding(embedding, weight: w, scales: s, biases: b)))
             }
         }
         if !updates.isEmpty {
@@ -224,6 +226,13 @@ extension NF4NativeLoader {
                 groupSize: groupSize, bits: bits, mode: .affine)
         }
         return try NF4Linear(weight: weight, bias: bias, scales: scales)
+    }
+
+    private static func affineEmbedding(_ embedding: Embedding, weight: MLXArray, scales: MLXArray, biases: MLXArray) -> Module {
+        let dims = embedding.weight.dim(-1)
+        return QuantizedEmbedding(
+            weight: weight, scales: scales, biases: biases,
+            groupSize: dims / max(1, scales.dim(-1)), bits: (weight.dim(-1) * 32) / max(1, dims), mode: .affine)
     }
 
     private static func replacementSwitch(
