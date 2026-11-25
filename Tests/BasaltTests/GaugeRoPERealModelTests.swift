@@ -209,12 +209,14 @@ struct GaugeRoPERealModelTests {
         return RopeConfig(base: theta.floatValue, partialFactor: factor ?? 1, proportional: kind == "proportional")
     }
 
-    static func layerKV(_ cache: GaugeRoPECaptureCache, layer: Int, rope: RopeConfig) throws -> GaugeRoPELayerKV {
-        guard let keys = cache.keys, let values = cache.values, !cache.queries.isEmpty else {
+    static func layerKV(_ cache: GaugeRoPECaptureCache, layer: Int, rope: RopeConfig, needsQueries: Bool = true) throws -> GaugeRoPELayerKV {
+        guard let keys = cache.keys, let values = cache.values, !(needsQueries && cache.queries.isEmpty) else {
             throw StepFailure(description: "layer \(layer) captured no attention call: the model attends outside the cache after update(keys:values:), as Gemma 4 does, so its queries need a forward probe")
         }
         var k = keys[0].transposed(1, 0, 2).asType(.float32)
-        var q = concatenated(cache.queries, axis: 2)[0].asType(.float32)
+        var q = cache.queries.isEmpty
+            ? MLXArray.zeros([k.dim(1), 0, k.dim(2)], dtype: .float32)
+            : concatenated(cache.queries, axis: 2)[0].asType(.float32)
         let headDim = k.dim(2)
         if let order = rope.order(headDim: headDim) {
             (k, q) = (take(k, order, axis: -1), take(q, order, axis: -1))
@@ -226,7 +228,7 @@ struct GaugeRoPERealModelTests {
             values: values[0].transposed(1, 0, 2).asType(.float32), scale: cache.scale, rotaryDims: rotary, ropeBase: base)
     }
 
-    static func capture(_ tokens: [Int], context: ModelContext, rope: RopeConfig) throws -> [GaugeRoPELayerKV] {
+    static func capture(_ tokens: [Int], context: ModelContext, rope: RopeConfig, needsQueries: Bool = true) throws -> [GaugeRoPELayerKV] {
         let caches = try context.model.newCache(parameters: nil).map { cache -> any KVCache in
             type(of: cache) == KVCacheSimple.self ? GaugeRoPECaptureCache() : cache
         }
@@ -238,7 +240,7 @@ struct GaugeRoPERealModelTests {
             start = end
         }
         return try caches.enumerated().compactMap { index, cache in
-            try (cache as? GaugeRoPECaptureCache).map { try Self.layerKV($0, layer: index, rope: rope) }
+            try (cache as? GaugeRoPECaptureCache).map { try Self.layerKV($0, layer: index, rope: rope, needsQueries: needsQueries) }
         }
     }
 

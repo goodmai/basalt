@@ -165,7 +165,7 @@ public final class BailingHybridModel: Module, LLMModel, KVCacheDimensionProvide
 
 enum BailingHybridCheckpoint {
     private static let projections = ["gate_proj", "up_proj", "down_proj"]
-    private static let quantParts = ["weight", "scales", "biases"]
+    private static let quantParts = ["weight", "scales", "biases", "bias"]
 
     static func sanitize(_ weights: [String: MLXArray], config: BailingHybridConfiguration) -> [String: MLXArray] {
         var out = weights.filter { key, _ in !shouldDrop(key, config: config) }

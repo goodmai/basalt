@@ -213,9 +213,7 @@ extension ModelOrchestratorActor {
             .filter { $0.hasPrefix("models--") }
             .sorted()
             .compactMap { dir -> CachedModelInfo? in
-                let repoId = dir
-                    .replacingOccurrences(of: "models--", with: "")
-                    .replacingOccurrences(of: "--", with: "/")
+                let repoId = ModelCache.canonicalRepoId(from: dir)
                 return CachedModelInfo(
                     id: repoId,
                     sizeBytes: Self.resolvedDirectorySize(at: root.appendingPathComponent(dir)),

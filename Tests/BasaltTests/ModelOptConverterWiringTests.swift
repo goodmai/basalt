@@ -95,6 +95,14 @@ struct ModelOptConverterWiringTests {
         #expect(a.keys.allSatisfy { arrayEqual(a[$0]!, b[$0]!).item(Bool.self) })
     }
 
+    @Test("Post-quantization refinement reads its teacher from the staged dense decode when the teacher is the quantized source itself, and keeps an explicit teacher")
+    func refinementTeacherIsTheStagedDecode() {
+        let (source, staged, other) = (URL(filePath: "/m/nvfp4"), URL(filePath: "/tmp/canon"), URL(filePath: "/m/bf16"))
+        #expect(UniversalModelConverter.refinementTeacher(source, source: source, working: staged) == staged)
+        #expect(UniversalModelConverter.refinementTeacher(other, source: source, working: staged) == other)
+        #expect(UniversalModelConverter.refinementTeacher(source, source: source, working: source) == source)
+    }
+
     @Test("The deep check sees an nvfp4 checkpoint with global scales as loadable, with no unexpected global_scale keys")
     func deepCheckAcceptsGlobalScales() async throws {
         let root = ModelOptImporterTests.temporary("deepcheck")

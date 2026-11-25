@@ -85,7 +85,7 @@ struct GraduationFlagAndCacheTests {
     }
 
     @Test("A MoE whose weights fit but leave resident KV room for fewer than residentContextFloor tokens streams its experts instead; one token more of room keeps it resident")
-    func shortResidentContextStreams() throws {
+    func shortResidentContextStreams() async throws {
         let moeDir = Self.fixtures.appendingPathComponent("qwen3_moe")
         let denseDir = Self.fixtures.appendingPathComponent("qwen3")
         let geometry = try #require(KVCacheGeometry.load(modelDirectory: moeDir))
@@ -99,6 +99,12 @@ struct GraduationFlagAndCacheTests {
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: short, environment: [:]) == ExpertStreaming())
         #expect(ModelFitAnalyzer.classifyDirectory(moeDir, workingSetBudget: roomy).fitLevel.fitsResident)
         #expect(ModelFitAnalyzer.autoExpertStreaming(directory: moeDir, workingSetBudget: roomy, environment: [:]) == nil)
+        let resources = SystemProfiler.SystemResources(
+            totalRAM: 1 << 40, availableRAM: 1 << 40, cpuCores: 8, gpuName: "test", gpuMemory: short.rawValue,
+            diskSpace: 1 << 40, osVersion: "", chipModel: "")
+        let resident = await MemoryEvaluator(disableExpertStreaming: true).evaluate(directory: moeDir, resources: resources)
+        #expect(resident.fitLevel.fitsResident)
+        #expect(await MemoryEvaluator(expertStreaming: ExpertStreaming()).evaluate(directory: moeDir, resources: resources).fitLevel == .moeTieredStreaming)
         let denseWeights = ByteCount(ModelFitAnalyzer.safetensorsShards(in: denseDir).reduce(Int64(0)) {
             $0 + ((try? FileManager.default.attributesOfItem(atPath: $1.path)[.size] as? Int64) ?? 0)
         })

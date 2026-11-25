@@ -159,6 +159,7 @@ struct ServeCommand: AsyncParsableCommand {
     mutating func run() async throws {
         let spec = try prepareCompose()
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
+        experimental.applyKernelEnvironment()
         await applyPipelinePreset()
         if dryRun { return await assessMemory() }
 

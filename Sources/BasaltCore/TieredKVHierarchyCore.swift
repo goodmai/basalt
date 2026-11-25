@@ -257,6 +257,7 @@ public struct TieredKVHierarchyCore: Sendable, Equatable {
             matched.append(block)
         }
         rebalanceOffloading()
+        matched = matched.map { blocks[$0.prefixHash] ?? $0 }
         return TieredKVLookupResult(
             matchedTokens: matched.reduce(0) { $0 + $1.tokenCount },
             deepestTierUsed: deepest,

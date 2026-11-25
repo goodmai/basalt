@@ -79,6 +79,36 @@ struct WeightConverterNF4Tests {
         #expect(!FileManager.default.fileExists(atPath: scratch.url("out").path))
     }
 
+    @Test("An affine source whose embedding is quantized too (as mlx-community packs ship) converts to nf4 and loads, with the embedding kept as an affine QuantizedEmbedding")
+    func nf4KeepsQuantizedEmbeddingLoadable() throws {
+        let scratch = try WeightConverterTests.Scratch()
+        let tiny = scratch.url("tiny")
+        try FileManager.default.createDirectory(at: tiny, withIntermediateDirectories: true)
+        let model = try TinyModel.make(.qwen35)
+        try save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: tiny.appending(component: "model.safetensors"))
+        try Data(TinyModel.Family.qwen35.config.utf8).write(to: tiny.appending(component: "config.json"))
+        try WeightConverter(precision: .affine(bits: 4, groupSize: 32)).run(source: tiny, output: scratch.url("q4"))
+        var q4 = try WeightConverterTests.weights(scratch.url("q4"))
+        let embedKey = try #require(q4.keys.first { $0.hasSuffix("embed_tokens.weight") })
+        let base = String(embedKey.dropLast(".weight".count))
+        let (codes, scales, biases) = MLX.quantized(try #require(q4[embedKey]), groupSize: 32, bits: 4, mode: .affine)
+        (q4[embedKey], q4[base + ".scales"], q4[base + ".biases"]) = (codes, scales, biases)
+        for name in try FileManager.default.contentsOfDirectory(atPath: scratch.url("q4").path) where name.hasSuffix(".safetensors") {
+            try FileManager.default.removeItem(at: scratch.url("q4").appending(component: name))
+        }
+        try save(arrays: q4, url: scratch.url("q4").appending(component: "model.safetensors"))
+        let index: [String: Any] = ["metadata": [:] as [String: Any], "weight_map": q4.keys.reduce(into: [String: String]()) { $0[$1] = "model.safetensors" }]
+        try JSONSerialization.data(withJSONObject: index).write(to: scratch.url("q4").appending(component: "model.safetensors.index.json"))
+        try WeightConverter(precision: .nf4(groupSize: 32)).run(source: scratch.url("q4"), output: scratch.url("nf4"))
+        let loaded = try TinyModel.make(.qwen35)
+        try NF4NativeLoader.loadWeights(modelDirectory: scratch.url("nf4"), model: loaded)
+        let embedding = try #require(loaded.namedModules().first { $0.0 == base }?.1 as? QuantizedEmbedding)
+        #expect(embedding.bits == 4 && embedding.groupSize == 32 && embedding.mode == .affine)
+        let input = MLXArray(TinyModel.tokens("embedding").map(Int32.init)).reshaped(1, -1)
+        let logits = loaded(input, cache: nil).asType(.float32)
+        #expect(!isNaN(logits).any().item(Bool.self) && abs(logits).max().item(Float.self).isFinite)
+    }
+
     static func decoded(_ weights: [String: MLXArray]) -> [(String, MLXArray)] {
         weights.compactMap { key, scales -> (String, MLXArray)? in
             let base = String(key.dropLast(".scales".count))

@@ -487,23 +487,22 @@ struct DFlashSpeculativeTests {
         #expect(fullAccept.cacheTrimCount == 0)
     }
 
-    @Test("ServeCommand parses --experimental-dllm and --experimental-dflash off by default and rejects enabling both simultaneously")
+    @Test("ServeCommand keeps --experimental-dllm and --experimental-dflash off by default and refuses them until the engine reads them, instead of silently decoding on the standard path")
     func experimentalFlagsParseAndValidate() throws {
         let defaults = try ServeCommand.parse([])
         #expect(!defaults.experimental.dllm && !defaults.experimental.dflash)
-        #expect(defaults.experimental.blockDiffusionConfig == nil)
-        #expect(defaults.experimental.dflashConfig == nil)
-
-        let dllmOnly = try ServeCommand.parse(["--experimental-dllm"])
-        #expect(dllmOnly.experimental.dllm && !dllmOnly.experimental.dflash)
-        #expect(dllmOnly.experimental.blockDiffusionConfig != nil)
-
-        let dflashOnly = try ServeCommand.parse(["--experimental-dflash"])
-        #expect(!dflashOnly.experimental.dllm && dflashOnly.experimental.dflash)
-        #expect(dflashOnly.experimental.dflashConfig != nil)
-
-        #expect(throws: (any Error).self) {
-            _ = try ServeCommand.parse(["--experimental-dllm", "--experimental-dflash"])
+        for flags in [["--experimental-dllm"], ["--experimental-dflash"], ["--experimental-dllm", "--experimental-dflash"]] {
+            #expect(throws: (any Error).self, "\(flags)") { _ = try ServeCommand.parse(flags) }
         }
+    }
+
+    @Test("--experimental-macaq-activations reaches the kernel through BASALT_MACAQ_ACTIVATIONS; the default sets nothing")
+    func macaqActivationsReachTheKernel() throws {
+        var set: [String: String] = [:]
+        try ServeCommand.parse(["--experimental-macaq-activations", "w4a8"]).experimental.applyKernelEnvironment { set[$0] = $1 }
+        #expect(set == ["BASALT_MACAQ_ACTIVATIONS": "w4a8"])
+        set = [:]
+        try ServeCommand.parse([]).experimental.applyKernelEnvironment { set[$0] = $1 }
+        #expect(set.isEmpty)
     }
 }

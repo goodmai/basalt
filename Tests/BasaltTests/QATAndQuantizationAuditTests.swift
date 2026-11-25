@@ -125,6 +125,27 @@ struct QATAndQuantizationAuditTests {
         #expect(lastLoss < firstLoss * 0.4)
     }
 
+    @Test("A conversion asking for QAT refinement or a post-quantization audit is refused before it starts, instead of finishing without them")
+    func unwiredOptionsAreRefused() async throws {
+        var request = ModelConversionRequest(source: "org/m", outputId: "local/m-4bit", target: .macaqMXFP4)
+        request.qatRefine = true
+        let missing = FileManager.default.temporaryDirectory.appending(path: "no-source-\(UUID().uuidString)")
+        let failure = await #expect(throws: BasaltError.self) {
+            _ = try await UniversalModelConverter.convertToDirectory(request: request, sourceURL: missing, outputURL: missing) { _ in }
+        }
+        guard case .invalidRequestStructure(let details)? = failure else { Issue.record("\(String(describing: failure))"); return }
+        #expect(details.contains("qat_refine"))
+    }
+
+    @Test("--to checks the recipe flags and the format like the legacy paths, so a conflicting or ignored flag is refused")
+    func unifiedTargetValidatesRecipeAndFormat() throws {
+        for extra in [["--sinq", "--a-sinq"], ["--format", "hf"]] {
+            #expect(throws: (any Error).self, "\(extra)") { _ = try ConvertSubcommand.parse(["--to", "affine:4:64", "--out", "/tmp/out", "org/model"] + extra) }
+        }
+        #expect(try ConvertSubcommand.parse(["--to", "affine:4:64", "--pv-tune", "--out", "/tmp/out", "org/model"]).usesPVTune)
+        #expect(try ConvertSubcommand.parse(["--to", "affine:4:64", "--sinq", "--out", "/tmp/out", "org/model"]).sinq)
+    }
+
     @MainActor
     @Test("Universal Converter parity: CLI flags, Codable request/result, and ConvertModelSheet Light/Dark/RU with Localizable.strings")
     func universalConverterQATAuditParity() throws {
@@ -139,6 +160,8 @@ struct QATAndQuantizationAuditTests {
         req.auditSuitePath = "audit.json"
         let decReq = try JSONDecoder().decode(ModelConversionRequest.self, from: JSONEncoder().encode(req))
         #expect(decReq.qatRefine && decReq.auditSuitePath == "audit.json")
+        #expect(req.unwiredOptions == ["qat_refine", "audit"])
+        #expect(ModelConversionRequest(source: "org/m", outputId: "local/m-4bit", target: .macaqMXFP4).unwiredOptions.isEmpty)
 
         let verdict = QuantizationAuditVerdict(
             perplexityDeltaRatio: 0.04, accuracyDrop: 0.01,

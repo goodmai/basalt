@@ -88,8 +88,8 @@ public actor MLXInferenceEngine: InferenceEngine {
             let plan = GenerationPlan.make(request, settings, GenerationPlan.Facts(
                 namespace: namespace, promptTokens: prompt.tokens.count, carriesMoreThanTokens: prompt.carriesMoreThanTokens,
                 constrained: constraint != nil, jumpsForward: constraint?.fastForward == true, hasMTPDrafter: hasMTPDrafter,
-                blendAvailable: cacheBlend != nil,
-                modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState))
+                blendAvailable: cacheBlend != nil, modelIsHybrid: modelIsHybrid, modelHasRecurrentState: modelHasRecurrentState,
+                quantizedKVStart: configuration.quantizedKVStart))
             try await restoreIfNeeded(namespace, drafts: plan.drafts, tokens: prompt.tokens, container: container, epoch: epoch)
             let claim = try claimCache(namespace, drafts: plan.drafts, tokens: prompt.tokens, mediaEnd: prompt.media.end)
             let search = AnchorSearch(prompt: prompt.tokens, reused: claim.reuse?.reusedTokens ?? 0, boundary: boundary, limit: configuration.hybridAnchors)

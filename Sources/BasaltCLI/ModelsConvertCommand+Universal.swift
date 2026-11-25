@@ -52,6 +52,8 @@ extension ConvertSubcommand {
             experimentalQtip != nil,
             experimentalQtipBudget != nil,
         ].contains(true)
+        if [sinq, aSinq, quantRecipe != nil].filter({ $0 }).count > 1 { throw ValidationError("give at most one of --quant-recipe, --sinq or --a-sinq") }
+        if format != .mlx { throw ValidationError("--to writes MLX safetensors; --format \(format) applies to the legacy --quantize/--dequantize paths") }
         if legacyConflict {
             throw ValidationError("--to replaces --quantize, --dequantize, --experimental-macaq, --experimental-flatquant, --experimental-lirquant, --experimental-qtip and --experimental-qtip-budget")
         }
@@ -146,8 +148,18 @@ extension ConvertSubcommand {
         if dstPath.hasPrefix(srcPath + "/") || srcPath.hasPrefix(dstPath + "/") {
             throw ValidationError("--out and --register-cache cannot overlap (\(srcPath) vs \(dstPath))")
         }
-        try? FileManager.default.removeItem(at: snap)
-        try FileManager.default.createDirectory(at: snap.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: outURL, to: snap)
+        let snapshots = snap.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
+        let staging = snapshots.appending(component: ".registering-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try FileManager.default.copyItem(at: outURL, to: staging)
+        if FileManager.default.fileExists(atPath: snap.path) {
+            _ = try FileManager.default.replaceItemAt(snap, withItemAt: staging)
+        } else {
+            try FileManager.default.moveItem(at: staging, to: snap)
+        }
+        let refs = snapshots.deletingLastPathComponent().appending(component: "refs")
+        try FileManager.default.createDirectory(at: refs, withIntermediateDirectories: true)
+        try Data("\(snap.lastPathComponent)\n".utf8).write(to: refs.appending(component: "main"), options: .atomic)
     }
 }

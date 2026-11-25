@@ -46,7 +46,7 @@ public struct GPULockError: Error, CustomStringConvertible, Sendable {
 }
 
 public enum GPULock {
-    public static let defaultPath = "/private/tmp/basalt-gpu.lock"
+    public static let defaultPath = ProcessInfo.processInfo.environment["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
 
     public static func claim(
         _ path: String, pid: Int32, reclaiming: Bool = true,
@@ -55,18 +55,8 @@ public enum GPULock {
         guard mkdir(path, 0o755) == 0 else {
             let code = errno
             guard code == EEXIST else { throw GPULockError(path: path, code: code) }
-            if isRegularFile(path) {
-                guard reclaiming, legacyFileIsFree(path) else { return .busy(owner: legacyOwner(path)) }
-                unlink(path)
-                return try claim(path, pid: pid, reclaiming: false, writeOwner: writeOwner)
-            }
-            let holder = owner(path)
-            if reclaiming, let holder, let holderPID = Int32(holder), kill(holderPID, 0) != 0, errno == ESRCH {
-                unlink(path + "/owner")
-                rmdir(path)
-                return try claim(path, pid: pid, reclaiming: false, writeOwner: writeOwner)
-            }
-            return .busy(owner: holder)
+            guard reclaiming else { return .busy(owner: currentOwner(path)) }
+            return try reclaimingStale(path) { try claim(path, pid: pid, reclaiming: false, writeOwner: writeOwner) }
         }
         do {
             try writeOwner(path + "/owner", pid)
@@ -77,6 +67,26 @@ public enum GPULock {
         return .taken
     }
 
+    static func reclaimingStale(_ path: String, retry: () throws -> GPULockClaim) throws -> GPULockClaim {
+        let guardDescriptor = Darwin.open(path + ".reclaim", O_RDONLY | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard guardDescriptor >= 0 else { return .busy(owner: currentOwner(path)) }
+        defer { _ = Darwin.close(guardDescriptor) }
+        guard flock(guardDescriptor, LOCK_EX | LOCK_NB) == 0 else { return .busy(owner: currentOwner(path)) }
+        if isRegularFile(path) {
+            guard removeFreeFile(path) else { return .busy(owner: legacyOwner(path)) }
+            return try retry()
+        }
+        let holder = owner(path)
+        if let holder {
+            guard let holderPID = Int32(holder), holderPID > 0, kill(holderPID, 0) != 0, errno == ESRCH else { return .busy(owner: holder) }
+            unlink(path + "/owner")
+        } else if !isRegularFile(path + "/.flock") {
+            return .busy(owner: nil)
+        }
+        guard removeLeftoverFlock(path), rmdir(path) == 0 || errno == ENOENT else { return .busy(owner: holder) }
+        return try retry()
+    }
+
     public static func writeOwnerFile(_ path: String, _ pid: Int32) throws {
         try String(pid).write(toFile: path, atomically: true, encoding: .utf8)
     }
@@ -85,12 +95,16 @@ public enum GPULock {
     public static func release(_ path: String, pid: Int32) -> Bool {
         guard owner(path) == String(pid) else { return false }
         unlink(path + "/owner")
-        rmdir(path)
-        return true
+        _ = removeLeftoverFlock(path)
+        return rmdir(path) == 0 || errno == ENOENT
     }
 
     static func owner(_ path: String) -> String? {
         (try? String(contentsOfFile: path + "/owner", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func currentOwner(_ path: String) -> String? {
+        isRegularFile(path) ? legacyOwner(path) : owner(path)
     }
 
     static func isRegularFile(_ path: String) -> Bool {
@@ -98,13 +112,20 @@ public enum GPULock {
         return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
     }
 
-    static func legacyFileIsFree(_ path: String) -> Bool {
-        let descriptor = Darwin.open(path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+    static func removeLeftoverFlock(_ path: String) -> Bool {
+        !isRegularFile(path + "/.flock") || removeFreeFile(path + "/.flock")
+    }
+
+    static func removeFreeFile(_ path: String) -> Bool {
+        let descriptor = Darwin.open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else { return false }
         defer { _ = Darwin.close(descriptor) }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return false }
-        _ = flock(descriptor, LOCK_UN)
-        return true
+        var opened = stat(), named = stat()
+        guard fstat(descriptor, &opened) == 0, lstat(path, &named) == 0,
+              opened.st_dev == named.st_dev, opened.st_ino == named.st_ino, (named.st_mode & S_IFMT) == S_IFREG
+        else { return false }
+        return unlink(path) == 0
     }
 
     static func legacyOwner(_ path: String) -> String? {

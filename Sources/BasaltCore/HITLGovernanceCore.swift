@@ -193,6 +193,8 @@ public actor HITLApprovalActor {
     private var store: HITLStateStore
     private var waiters: [String: [CheckedContinuation<HITLApprovalDecision, Never>]] = [:]
     private var resolved: [String: HITLApprovalDecision] = [:]
+    private var resolvedOrder: [String] = []
+    static let resolvedLimit = 1_024
 
     public init(policy: HITLToolPolicy = .init()) {
         self.store = HITLStateStore(policy: policy)
@@ -285,7 +287,8 @@ public actor HITLApprovalActor {
     }
 
     private func finish(_ decision: HITLApprovalDecision) {
-        resolved[decision.requestId] = decision
+        if resolved.updateValue(decision, forKey: decision.requestId) == nil { resolvedOrder.append(decision.requestId) }
+        while resolvedOrder.count > Self.resolvedLimit { resolved.removeValue(forKey: resolvedOrder.removeFirst()) }
         if let continuations = waiters.removeValue(forKey: decision.requestId) {
             for continuation in continuations {
                 continuation.resume(returning: decision)

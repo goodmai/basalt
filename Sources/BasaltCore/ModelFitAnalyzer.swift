@@ -114,7 +114,7 @@ extension ModelFitAnalyzer {
         let index = directory.appending(component: "model.safetensors.index.json")
         if let data = try? Data(contentsOf: index),
            let map = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["weight_map"] as? [String: String] {
-            let urls = Set(map.values).sorted().map { directory.appending(component: $0) }
+            let urls = Set(map.values).filter { !$0.isEmpty && !$0.contains("/") && $0 != ".." }.sorted().map { directory.appending(component: $0) }
             if !urls.isEmpty, urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) { return urls }
         }
         let entries = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []

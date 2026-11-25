@@ -110,7 +110,7 @@ extension ServeCommand {
 
     func resolveModelPath() async throws -> String {
         let path = try await requestedModelPath()
-        if requireVerified { try await refuseUnverified(path) }
+        if requireVerified { try await refuseUnverified(verificationTarget(path)) }
         return path
     }
 

@@ -109,7 +109,7 @@ extension ServeCommand {
         if startMCP  { log("MCP → JSON-RPC 2.0 on stdin/stdout") }
         let mcpServer = startMCP ? try makeMCPServer(
             orchestrator: boot.orchestrator, resolvedPath: boot.resolvedPath, decisions: decisions, stages: stages,
-            pipelines: host?.registry, imageSynthesizer: activeImage) : nil
+            pipelines: host?.registry, imageSynthesizer: activeImage).withVideoSynthesizer(activeVideo) : nil
 
         try await Self.runServers(
             ServerLaunch(

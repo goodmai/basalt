@@ -228,20 +228,20 @@ extension ConvertSubcommand {
 
     private func acceptsCalibrationCorpus(isGSQRCO: Bool) -> Bool {
         [
-            experimentalPvTune, experimentalMacaqRefine, experimentalMacaq != nil,
+            usesPVTune, experimentalMacaqRefine, experimentalMacaq != nil,
             hasBasisTransformFlag, experimentalQtip != nil, experimentalQtipBudget != nil,
             isGSQRCO, aSinq, quantRecipe == .asinq, quantRecipe == .moeRW,
         ].contains(true)
     }
 
     func validatePVOptions(isGSQRCO: Bool) throws {
-        if pvTeacher != nil, !experimentalPvTune && !experimentalMacaqRefine {
+        if pvTeacher != nil, !usesPVTune && !experimentalMacaqRefine {
             throw ValidationError("--pv-teacher requires --experimental-pv-tune or --experimental-macaq-refine")
         }
         if pvCalibration != nil, !acceptsCalibrationCorpus(isGSQRCO: isGSQRCO) {
             throw ValidationError("--pv-calibration requires --experimental-pv-tune, --experimental-macaq-refine, --experimental-macaq, --experimental-qtip, --experimental-qtip-budget, --a-sinq, --quant-recipe moe-rw or --quantize gsq-rco")
         }
-        if experimentalPvTune, format != .mlx || dequantize != nil || isGGUFSource {
+        if usesPVTune, format != .mlx || dequantize != nil || isGGUFSource {
             throw ValidationError("--experimental-pv-tune applies to quantized MLX conversions (--format mlx without --dequantize)")
         }
     }
@@ -273,7 +273,7 @@ extension ConvertSubcommand {
 
     func validateGSQRCOOptions(_ targetBPW: Double?) throws {
         guard targetBPW != nil else { return }
-        let hasConflict = dequantize != nil || budgetGb != nil || adapter != nil || experimentalPvTune
+        let hasConflict = dequantize != nil || budgetGb != nil || adapter != nil || usesPVTune
         if hasConflict || format != .mlx || isGGUFSource {
             throw ValidationError("--quantize gsq-rco converts an MLX source directly without --dequantize, --budget-gb, --adapter, --experimental-pv-tune or --format hf")
         }
@@ -318,11 +318,11 @@ extension ConvertSubcommand {
             summary = try await converter.runWithSINQ(source: sourceURL, output: outURL, calibrationText: calibrationText)
             createdOutput = true
             macaqSummary = try await runOptionalMACaQRefine(output: outURL, teacher: teacherURL, calibrationText: calibrationText)
-            pvSummary = experimentalPvTune
+            pvSummary = usesPVTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
         } catch {
-            if createdOutput, (experimentalPvTune || experimentalMacaqRefine),
+            if createdOutput, (usesPVTune || experimentalMacaqRefine),
                Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
                 try? FileManager.default.removeItem(at: outURL)
             }
@@ -385,7 +385,7 @@ extension ConvertSubcommand {
                 source: sourceURL, output: outURL, targetBPW: bpw, calibrationText: calibrationText
             ) { print("  [qtip-budget] \($0)") }
             createdOutput = true
-            let pvSummary = experimentalPvTune
+            let pvSummary = usesPVTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
             let elapsed = ContinuousClock.now - start
@@ -400,7 +400,7 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if createdOutput, experimentalPvTune,
+            if createdOutput, usesPVTune,
                Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
                 try? FileManager.default.removeItem(at: outURL)
             }
@@ -427,7 +427,7 @@ extension ConvertSubcommand {
                 source: sourceURL, output: outURL, rate: rate, calibrationText: calibrationText
             ) { print("  [qtip] \($0)") }
             createdOutput = true
-            let pvSummary = experimentalPvTune
+            let pvSummary = usesPVTune
                 ? try await PVTuner.tuneConvertedDirectory(output: outURL, teacher: teacherURL, calibrationText: calibrationText) { print("  [pv-tune] \($0)") }
                 : nil
             let elapsed = ContinuousClock.now - start
@@ -441,7 +441,7 @@ extension ConvertSubcommand {
             }
             print("  Time:      \(elapsed.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
         } catch {
-            if createdOutput, experimentalPvTune,
+            if createdOutput, usesPVTune,
                Self.shouldCleanFailedOutput(source: sourceURL, output: outURL, existedBefore: existedBefore) {
                 try? FileManager.default.removeItem(at: outURL)
             }

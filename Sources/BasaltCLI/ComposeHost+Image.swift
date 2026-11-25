@@ -135,10 +135,10 @@ extension ComposeHost {
             }
         case .onDemand(let onDemand):
             return { prompt in
-                _ = try await onDemand.acquire()
+                let epoch = try await onDemand.acquireGrant().epoch
                 defer {
                     await withTaskCancellationShield {
-                        await onDemand.release()
+                        await onDemand.release(epoch: epoch)
                     }
                 }
                 if let vec = try await onDemand.model.sharedImagePromptEmbedding(prompt, dimension: 256) { return vec }

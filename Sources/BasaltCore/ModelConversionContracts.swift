@@ -19,6 +19,10 @@ public struct ModelConversionRequest: Sendable, Equatable, Codable {
     public var auditSuitePath: String? = nil
     public var stream: Bool = true
 
+    public var unwiredOptions: [String] {
+        (qatRefine ? ["qat_refine"] : []) + (auditSuitePath != nil ? ["audit"] : [])
+    }
+
     public init(
         source: String,
         outputId: String,

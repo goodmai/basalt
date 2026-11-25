@@ -65,7 +65,7 @@ final class KEqVRowKVCache: KVCacheAttentionProtocol {
 
     func copy() -> any KVCache {
         let copied = KEqVRowKVCache(layout: layout, valueUnfold: valueUnfold)
-        copied.rows = rows
+        copied.rows = rows.map { $0[.ellipsis] }
         copied.offset = offset
         copied.materializedForCaller = materializedForCaller
         return copied
