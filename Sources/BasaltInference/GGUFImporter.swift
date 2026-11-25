@@ -45,6 +45,9 @@ package struct GGUFImporter: Sendable {
               let keyDim = text["linear_key_head_dim"] as? Int, let valueDim = text["linear_value_head_dim"] as? Int else {
             throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "the template is not a supported qwen3_5 or flint checkpoint")
         }
+        guard keys > 0, values > 0, keyDim > 0, valueDim > 0, values % keys == 0 else {
+            throw BasaltError.modelConfigurationInvalid(path: template.path, reason: "linear attention heads must be positive and value heads a multiple of key heads (\(keys) key, \(values) value)")
+        }
         return GGUFQwen35Layout(keyHeads: keys, valueHeads: values, keyHeadDim: keyDim, valueHeadDim: valueDim, prefix: config["text_config"] == nil ? "model." : "language_model.model.")
     }
 

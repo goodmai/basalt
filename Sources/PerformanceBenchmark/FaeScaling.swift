@@ -31,12 +31,12 @@ extension Benchmark {
         let modelContext = ContextScalingSuite.modelContext(at: URL(fileURLWithPath: path))
         let evaluator = MemoryEvaluator()
         let zones: KVZones? = kvZones ? .standard : nil
-        let fitLevel = await evaluator.evaluate(modelId: model, kvPrecision: kvBits, kvZones: zones).fitLevel
+        let fitLevel = await evaluator.evaluate(modelId: path, kvPrecision: kvBits, kvZones: zones).fitLevel
         var measured: [Int] = []
         var notMeasured: [String] = []
         for context in ContextScalingSuite.faeContexts {
             let total = context + tokens
-            let fit = await evaluator.evaluate(modelId: model, contextLength: total, kvPrecision: kvBits, kvZones: zones)
+            let fit = await evaluator.evaluate(modelId: path, contextLength: total, kvPrecision: kvBits, kvZones: zones)
             if let maxContext, context > maxContext {
                 notMeasured.append("\(context) (above --max-context \(maxContext))")
             } else if let modelContext, total > modelContext {

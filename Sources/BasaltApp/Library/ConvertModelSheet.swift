@@ -101,7 +101,7 @@ extension ConvertModelSheet {
         case .macaq:
             Toggle("Use OCP MXFP4 Microscaling (E2M1 + E8M0)", isOn: binding(draft, \.useMXFP4InMACaQ, refreshOutput: true))
             if !draft.useMXFP4InMACaQ {
-                bitAndGroupPickers(draft, bitOptions: [2, 3, 4])
+                bitAndGroupPickers(draft, bitOptions: draft.supportedBits)
             }
             hadamardBlockPicker(draft)
         case .macaqMoE:
@@ -112,12 +112,12 @@ extension ConvertModelSheet {
             }
             hadamardBlockPicker(draft)
         case .flatQuant:
-            bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
+            bitAndGroupPickers(draft, bitOptions: draft.supportedBits)
         case .lirQuant:
-            bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 8])
+            bitAndGroupPickers(draft, bitOptions: draft.supportedBits)
             lirSubspacePicker(draft)
         case .affine:
-            bitAndGroupPickers(draft, bitOptions: [2, 3, 4, 5, 6, 8])
+            bitAndGroupPickers(draft, bitOptions: draft.supportedBits)
             recipePicker(draft)
         case .nf4:
             Picker("Group Size", selection: binding(draft, \.groupSize, refreshOutput: true)) {

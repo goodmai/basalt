@@ -48,6 +48,7 @@ struct GenerationPlan: Equatable, Sendable {
         var blendAvailable = false
         var modelIsHybrid: Bool?
         var modelHasRecurrentState: Bool?
+        var quantizedKVStart = 0
     }
 
     var kvZones: KVZones?
@@ -102,7 +103,8 @@ struct GenerationPlan: Equatable, Sendable {
     }
 
     private static func batchable(_ plan: GenerationPlan, _ request: GenerationRequest, precision: KVPrecision?, _ facts: Facts) -> Bool {
-        let batchableKV = precision == nil || (plan.kvZones == nil && precision?.isUniformAffine == true)
+        let batchableKV = precision == nil
+            || (plan.kvZones == nil && precision?.isUniformAffine == true && (facts.quantizedKVStart == 0 || facts.promptTokens > facts.quantizedKVStart))
         return !facts.jumpsForward && !plan.speculativeLookup && !plan.drafts
             && !plan.blends && batchableKV && !facts.carriesMoreThanTokens
     }

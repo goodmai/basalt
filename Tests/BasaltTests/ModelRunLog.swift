@@ -30,7 +30,7 @@ public struct GPULockGuard: ~Copyable, Sendable {
 
 
 final class ModelRunLog: Sendable {
-    static let gpuLock = ProcessInfo.processInfo.environment["BASALT_GPU_LOCK"] ?? "/private/tmp/basalt-gpu.lock"
+    static let gpuLock = GPULock.defaultPath
 
     let url: URL
     let model: String

@@ -73,18 +73,17 @@ struct ExperimentalServeOptions: ParsableArguments {
     )
     var dflash = false
 
-    var blockDiffusionConfig: BlockDiffusionConfig? {
-        dllm ? BlockDiffusionConfig() : nil
-    }
-
-    var dflashConfig: DFlashConfig? {
-        dflash ? DFlashConfig() : nil
+    func applyKernelEnvironment(_ set: (String, String) -> Void = { setenv($0, $1, 1) }) {
+        if macaqActivations != .fp16 { set("BASALT_MACAQ_ACTIVATIONS", macaqActivations.rawValue) }
     }
 
     func validate() throws {
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
         if dllm, dflash {
             throw ValidationError("--experimental-dllm and --experimental-dflash cannot be combined: Fast-dLLM decodes a diffusion language model directly while DFlash drafts for an autoregressive target")
+        }
+        if dllm || dflash {
+            throw ValidationError("\(dllm ? "--experimental-dllm" : "--experimental-dflash") is not wired to the engine yet (#574): generation would run on the standard decode path")
         }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")

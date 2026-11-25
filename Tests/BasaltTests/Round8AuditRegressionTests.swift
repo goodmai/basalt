@@ -34,6 +34,22 @@ struct Round8AuditRegressionTests {
         }
     }
 
+    @Test("convert --out --register-cache makes the copy the repo's served snapshot, and a second registration replaces it")
+    func registerCacheWritesRefs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("basalt-register-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let out = root.appendingPathComponent("out")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        try Data(#"{"model_type": "qwen3"}"#.utf8).write(to: out.appendingPathComponent("config.json"))
+        let snap = try UniversalModelConverter.cacheSnapshotDirectory(for: "org/converted", cacheRoot: root)
+        try ConvertSubcommand.copyToCacheSnapshot(from: out, to: snap)
+        #expect(ModelCache.resolve(repoId: "org/converted", root: root)?.path == snap.path)
+        try Data("second".utf8).write(to: out.appendingPathComponent("marker"))
+        try ConvertSubcommand.copyToCacheSnapshot(from: out, to: snap)
+        #expect(FileManager.default.fileExists(atPath: snap.appendingPathComponent("marker").path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: snap.deletingLastPathComponent().path) == [snap.lastPathComponent])
+    }
+
     @Test("SINQAbsorption.addsUnitOffset recognizes muse_glimmer centered RMSNorm (#705)")
     func sinqAbsorptionMuseGlimmerUnitOffset() {
         #expect(SINQAbsorption.addsUnitOffset(config: ["model_type": "muse_glimmer"]))

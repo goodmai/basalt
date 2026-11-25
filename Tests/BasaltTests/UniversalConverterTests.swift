@@ -122,6 +122,20 @@ struct UniversalConverterTests {
         }
     }
 
+    @Test("Switching family clamps a bit-width the new family does not offer, so the picker never shows an empty selection while the target silently uses 4")
+    func familySwitchClampsBits() {
+        var state = LibraryState()
+        _ = LibraryReducer.reduce(&state, .openConvert(LibraryModel(id: "mlx-community/Qwen3.8-9B-bf16", sizeBytes: 18_000_000_000, isLoaded: false)))
+        var draft = state.convertDraft!
+        (draft.family, draft.bits) = (.affine, 6)
+        _ = LibraryReducer.reduce(&state, .updateConvertDraft(draft))
+        #expect(state.convertDraft?.bits == 6)
+        draft.family = .macaq
+        _ = LibraryReducer.reduce(&state, .updateConvertDraft(draft))
+        #expect(state.convertDraft?.bits == 4)
+        #expect(state.convertDraft.map { $0.supportedBits.contains($0.bits) } == true)
+    }
+
     @Test("ModelConvertReducer transitions through open, draft update, progress KL tracking, and completion")
     func reducerStateTransitions() {
         var state = LibraryState()

@@ -125,6 +125,23 @@ struct KEqVRowPromptCacheTests {
         #expect(abs(fromLease.logits[0, -1].asType(.float32) - fromStored.logits[0, -1].asType(.float32)).max().item(Float.self) <= 1e-5)
     }
 
+    @Test("A copied row cache owns its rows: trimming and decoding into the copy leaves the original's keys and values unchanged")
+    func copyOwnsRows() throws {
+        let model = try TinyModel.make(.gemma4KEqV)
+        let rows = try KEqVRowKVCacheTests.rowCaches(model)
+        _ = model(LMInput.Text(tokens: MLXArray([Int32(5), 19, 42, 7])[.newAxis]), cache: rows, state: nil)
+        let before = rows.map { $0.state.map { $0.asType(.float32) } }
+        eval(before.flatMap { $0 })
+        let copies = rows.map { $0.copy() }
+        for copy in copies { copy.trim(1) }
+        _ = model(LMInput.Text(tokens: MLXArray([Int32(250)])[.newAxis]), cache: copies, state: nil)
+        for (layer, cache) in rows.enumerated() where cache is KEqVRowKVCache {
+            for (original, kept) in zip(cache.state, before[layer]) {
+                #expect(abs(original.asType(.float32) - kept).max().item(Float.self) == 0, "layer \(layer)")
+            }
+        }
+    }
+
     @Test("The disk prompt cache never writes a row cache, whose layout the fork would reload as plain KVCache")
     func diskSkipsRows() throws {
         let model = try TinyModel.make(.gemma4KEqV)

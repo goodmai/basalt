@@ -14,6 +14,19 @@ struct Inkling2ModelTests {
         try #require(try TinyModel.make(.inkling2Loop) as? Inkling2Model)
     }
 
+    @Test("The disk prompt cache never writes an Inkling 2 window cache, which the fork would reload as plain KVCache and then delete")
+    func diskSkipsWindowCache() throws {
+        let model = try Self.model()
+        let cache = try model.newCache(parameters: nil)
+        #expect(cache.contains { $0 is Inkling2WindowKVCache })
+        _ = model(LMInput.Text(tokens: MLXArray(Self.tokens)[.newAxis]), cache: cache, state: nil)
+        let directory = FileManager.default.temporaryDirectory.appending(path: "inkling-disk-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var store = PromptCacheDiskStore(directory: directory, byteQuota: 1 << 30, retentionDays: 1)
+        #expect(store.store(fingerprint: "f", model: "tiny", namespace: "n", tokens: Self.tokens.map(Int.init), cache: PromptCache(cache)) == nil)
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: directory.path))?.isEmpty ?? true)
+    }
+
     @Test("Two cache slots per layer visit: prelude 2 + core 2 × 3 passes + coda 2 = 10 visits, windowed caches on local layers")
     func cacheLayout() throws {
         let model = try Self.model()

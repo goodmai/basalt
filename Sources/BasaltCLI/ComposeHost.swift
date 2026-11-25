@@ -61,6 +61,9 @@ actor ComposeHost {
     }
 
     func start(defaultDecisions: (any DecisionEngine)?) async throws {
+        if let media = spec.unservedMediaModels.sorted().first {
+            throw BasaltError.invalidRequestStructure(details: "compose: the music: or video: block (\(media)) is not served by compose yet; serve the model with basalt serve --video, or remove the block")
+        }
         held = try await loadOrderedTargets(
             Array(spec.models.keys.sorted()),
             in: spec,
@@ -135,6 +138,7 @@ actor ComposeHost {
         let diff = ComposeDiff.between(spec, next)
         if let restart = diff.restart { throw .invalidRequestStructure(details: "compose apply: \(restart)") }
         if let missing = next.missingKeys(ProcessInfo.processInfo.environment).first { throw .invalidRequestStructure(details: "compose apply: \(missing) in the server's environment") }
+        if let media = next.unservedMediaModels.sorted().first { throw .invalidRequestStructure(details: "compose apply: the music: or video: block (\(media)) is not served by compose yet") }
         let order = try await admit(diff, next)
         let replaced = diff.removed + diff.reloaded
         let chatPath = await chat.modelPath

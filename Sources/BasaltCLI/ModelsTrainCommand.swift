@@ -76,6 +76,11 @@ struct TrainSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("adalora-target-rank"), help: "Optional AdaLoRA target average rank for importance-based rank pruning (#617)")
     var adaLoRATargetRank: Int?
 
+    func validate() throws {
+        if dpoPairs != nil { throw ValidationError("--dpo-pairs is not wired to corpus training yet (#617): the run would be plain SFT") }
+        if adaLoRATargetRank != nil { throw ValidationError("--adalora-target-rank is not wired to corpus training yet (#617): the run would keep a fixed rank") }
+    }
+
     mutating func run() async throws {
         guard let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path else {
             throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")

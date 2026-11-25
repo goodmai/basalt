@@ -94,7 +94,7 @@ public enum SessionLogReader {
         func rebuild(_ id: String) -> [ChatMessageInput]? {
             guard visited.insert(id).inserted, let content = requests[id]?.content else { return nil }
             let own = content.messages ?? content.prompt.map { [ChatMessageInput(role: .user, text: $0)] } ?? []
-            guard let parent = content.parent, let count = content.prefixCount else { return own }
+            guard let parent = content.parent, let count = content.prefixCount, count >= 0 else { return own }
             guard let prefix = rebuild(parent), prefix.count >= count else { return nil }
             return Array(prefix.prefix(count)) + own
         }

@@ -142,6 +142,10 @@ public actor OnDemandModel {
     }
 
     public func acquire() async throws(BasaltError) -> Duration {
+        try await acquireGrant().waited
+    }
+
+    public func acquireGrant() async throws(BasaltError) -> (waited: Duration, epoch: Int) {
         let started = ContinuousClock.now
         var loads = false
         while true {
@@ -151,7 +155,7 @@ public actor OnDemandModel {
             switch core.enter() {
             case .ready:
                 lastUsed = Date()
-                return loads ? ContinuousClock.now - started : .zero
+                return (loads ? ContinuousClock.now - started : .zero, core.loadEpoch)
             case .wait:
                 _ = await transition?.value
             case .load:
@@ -208,9 +212,9 @@ public actor OnDemandModel {
         announce.yield(core.phase)
     }
 
-    public func release() {
+    public func release(epoch: Int? = nil) {
         lastUsed = Date()
-        guard let generation = core.leave() else { return }
+        guard let generation = core.leave(epoch: epoch) else { return }
         schedule(generation)
     }
 
