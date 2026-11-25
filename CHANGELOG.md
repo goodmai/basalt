@@ -1,24 +1,40 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-26
 
-### Inkling 2 Mini
-- **Tool calls, reasoning and agent turns.** Inkling 2 serves through `/v1/chat/completions` and `/v1/messages`, with:
-  - its message frames split into reasoning, text and JSON tool calls (#686);
-  - a second agent turn that reuses the first turn's prompt cache, with window and conv states restored bit for bit (#712).
-- **`--mtp` drafts with the checkpoint's DSpark head** (`mtp.safetensors`, #728). On `mlx-community/Inkling-2-Mini-oQ3e-mtp` (M4 Pro, 24 GB, 256 tokens), decode goes 28.0 → 49.8 tok/s on code at T 0 and 26.8 → 38.4 at T 0.7, and stays even with plain decoding on prose. Each round's draft depth follows how many drafts were accepted so far.
-- **32K prompts fit in 24 GB** (#740). The prefill chunk shrinks with the key count so the relative-bias mask stays within 256 MB. A 37.5K-token passkey prompt peaks at 14.5 GB with no swap and recalls 5/5 depths; before, `serve` was killed by a Metal OOM. Prefill at 32K runs at about 155 tok/s until the fused kernel (K1) lands.
-- **`basalt fit` and Compose.**
-  - `basalt fit` ranks the oQ2.5e and oQ3e packs.
-  - New Compose profiles on oQ3e: `24gb-agent-inkling` (32K context), `36gb-agent-inkling` (64K) and `48gb-agent-inkling` (128K).
-  - The oQ4e and mlx-community 4-bit packs carry per-expert `global_scale`, and the original checkpoint is ModelOpt. They wait for #677 gaps 2 and 3.
+### Inkling 2 Mini (#650)
+- **Full looped text stack & real-model parity.** Inkling 2 Mini runs end-to-end across both oQ (`oQ2.5e`, `oQ3e`, `oQ4e`) and `mlx-lm` layouts with fused SDPA attention, compiled message gate and per-layer decode steps, and verified parity against `mlx-lm` (#657, #660–#663, #754, #755, #791).
+- **Tool calls, reasoning and agent turns.** Serves through `/v1/chat/completions` and `/v1/messages` with message frames split into reasoning, text and JSON tool calls (#686) and bitwise-restored window/conv prompt-cache reuse across agent turns (#712).
+- **`--mtp` drafts with the checkpoint's DSpark head** (`mtp.safetensors`, #728, #737). On `mlx-community/Inkling-2-Mini-oQ3e-mtp` (M4 Pro, 24 GB, 256 tokens), decode goes 28.0 → 49.8 tok/s on code at T 0 and 26.8 → 38.4 at T 0.7 with adaptive draft depth.
+- **32K prompts fit in 24 GB** (#740, #751). Prefill chunk shrinks with key count so the relative-bias mask stays under 256 MB; a 37.5K-token passkey prompt peaks at 14.5 GB with 0 swap and 5/5 depths recalled.
+- **`basalt fit` and Compose.** Ranks `oQ2.5e` / `oQ3e` and ships `24gb-agent-inkling` (32K), `36gb-agent-inkling` (64K) and `48gb-agent-inkling` (128K) profiles (#735).
 
-### Adapters
-- PEFT LoRA adapters (`adapter_config.json` + `adapter_model.safetensors`, the format of the `harness-hub` adapters) load through `--adapter name=dir`, `X-Basalt-Adapter` and `adapter_apply`. This covers VLM-style keys and rsLoRA. DoRA, `modules_to_save` and per-layer rank patterns are refused with the field named (#730).
+### NVFP4, ModelOpt & Quantization (#677)
+- **NVFP4 any-to-any target & lossless ModelOpt import.** `models convert --to nvfp4` writes MLX NVFP4 with per-expert `global_scale` on `QuantizedSwitchLinear` (#739, #773). NVIDIA ModelOpt NVFP4 checkpoints import losslessly via byte-view repack (`global_scale = s₂·2688`, FP8 layers to affine-8) one shard at a time (peak memory 32 GB → 4.6 GB, #771, #777, #783).
+- **Automatic ModelOpt cache import.** Cached ModelOpt checkpoints auto-import to `<repo>-mlx` on `models download` and `serve`, keyed to source revision, never overwriting downloaded `-mlx` repos, and honoring `--require-verified` (#794, #809).
+- **Short-room MoE auto-streaming.** MoEs whose weights fit but leave resident KV room under 8,192 tokens auto-stream experts so `Gemma-4-26B-A4B-NVFP4` no longer hits Metal OOM; `models check`, `serve --dry-run`, `/v1/models/preview` and the engine agree (#793, #809).
+- **MACaQ & MoE kernels.** 2.1× decode on `gpt-oss` PV-MACaQ by running expert matmuls in scale dtype (#651, #652), experimental 3-bit MACaQ dense/expert decode kernel (#654), and router-weighted `moe-rw` Hessians for Gemma 4, Nemotron-H and Inkling 2 (#756, #758).
 
-### Fixes
-- Qwen 3.5/3.8 checkpoints that load through the multimodal path (`model_type: qwen3_5`) ignored a YaRN `rope_parameters` entry. They now apply it like the text path (#731).
-- A Gemma 4 config with a RoPE scaling type is refused at load, instead of rotating the dimensions p-RoPE leaves unrotated (#731).
+### New Architectures, KV Cache & Memory
+- **Gemma 4 K=V shared-row KV cache (#645).** Experimental shared-row KV cuts Gemma 4 26B-A4B KV memory 1.40–1.53× at 32K–128K and integrates with prompt-cache reuse and server KV budgeting (#655, #656).
+- **Qwen3-Coder-Next (#642).** Template-driven profile, `polar4` allowlist, fused 512-expert routing, and bitwise-equal streamed experts with next-layer prefetch (#669, #681, #780).
+- **BailingHybrid (`Ling-3.0`, #672).** KDA + MLA hybrid MoE backbone with per-channel KDA Metal kernel and absorbed MLA latent cache (#759, #767).
+- **Qwen4Exp tiering core (#639).** Strata `ExpertArenaPlanner`, decayed-frequency `ExpertResidencyPolicy`, and SSD `NGramRowStore` (#766).
+- **Long-prompt memory hardening (#741, #769).** Unpinned prompt cache drops before long prefills (#747), unfused-attention prefill chunks cap score scratch under 256 MB (#762), and tensor-by-tensor `PromptCacheTree.store` draining + KV preallocation cuts 1.1–1.25 GB of long-prefill transient memory (#790).
+
+### Adapters, RoPE, Self-Rewriting & Translation
+- **PEFT LoRA load, Hub download & fused export (#675).** Loads `harness-hub` PEFT LoRA adapters via `--adapter name=dir` or `name=org/repo` (VLM key mapping, rsLoRA, float compute on `mxfp4`/`mxfp8`/`nvfp4` bases) and fuses PEFT / `mlx-lm` adapters into exported checkpoints across CLI, REST and `ConvertModelSheet` (#730, #738, #749, #763, #785).
+- **YaRN RoPE scaling (#729).** `--rope-yarn` stages YaRN config for Qwen 3.5/3.6/3.8 (both text and multimodal paths), exposes active `rope`/`effective_context` on `/v1/models*`, and refuses unsupported RoPE scaling on Gemma 4 p-RoPE (#731, #736, #750, #784).
+- **Experimental Self-Rewriting (#676, #770).** Copy-on-write `WeightCopy` isolation, `EditAdapter`, paired math/translation evaluation, `CloudPrivacyFence`, `GeminiCloudEditor`, MCP `selfedit_start`/`selfedit_status`, and `basalt selfedit` CLI harness (#764, #772, #774, #775, #779, #781, #797).
+- **Translation benchmarks & i18n.** `basalt:translation` (chrF++, COMET, MetricX-24), official MT leaderboard submission pipeline (HF model-index YAML, WMT24++/FLORES+ eval, PEFT merge), TranslateGemma-4 12B/26B-A4B profiles, and Korean (`ko`) / Indonesian (`id`) documentation (#722–#724, #727, #765, #776).
+
+### Hardening & Defect Remediation
+- **Security & REST/MCP perimeter (#810).** Validated `maxTokens` before cloud fallback on `/v1/generate`, `/api/v1/generate`, `/v1/generate/stream`, and MCP `basalt_generate`; gated all canonical, trailing-slash, and double-slash admin routes from virtual keys with isolated `vk:<id>` rate buckets (behavior note: when only virtual keys are configured without `--api-key`, admin routes fail closed with 403 and log a startup notice); preserved `hf:` adapter prefix on `/v1/models/convert`; normalized JSON body limits referencing controller constants with JSON 413 responses; omitted `[DONE]` on streaming errors; stripped `x-basalt-budget-key` / `x-basalt-rate-key` unconditionally in `RequestGuardMiddleware`.
+- **Cloud routing & budget accounting (#810).** Recorded provider-reported `usage.cost` with `usage.include = true`; enforced in-flight cost reservations across `CostTracker` (single-tier and multi-tier) and `CloudGate` (`GuardedDecisionEngine`, `CloudAnswer`); made `ModelRouter.assess` side-effect-free while tracking both `.weak` and `.strong` sticky session tiers; merged locally accepted tokens and TTFT into cascade stream metadata.
+- **Benchmarks & scoring (#810).** Added `completion_text` and teacher-forced `mean_nll` to `/v1/score` and moved `basalt:perplexity` off generated tokens onto `/v1/score`; fixed `BenchmarkEndpoint` streaming TTFT to trigger on `reasoning_content` or `content` deltas and exclude prefill from `decode_tps`; fixed `metricx24` lower-is-better comparison; preserved `task[i].*` metrics with aggregated flat means and failed gateless failing suites / missing explicit datasets.
+- **Mac app, FoundationModels, speech & l10n (#810, #811).** Preserved `BASALT_*` (including `BASALT_METALLIB`) and refreshed `CloudKeys` across engine relaunches; synced model switches across `configuredModel`, supervisor args, `UserDefaults` and loaded state; serialized `EngineSupervisor.stopAdopted` cleanup inside the awaited task; added `reasoning_effort: "none"` and strict SSE `[DONE]` EOF handling in `BasaltFoundationModels`; merged streamed tool-call fragments by index; fixed `VoiceReducer` cancellation, `LibraryReducer` transient fit retries, attachment pre-checks, async image reference resolution, speech sample-rate/empty-WAV bounds, disabled unwired QAT/audit toggles in `ConvertModelSheet` (#811), and restored EN/RU `Localizable.strings` parity (355 unique keys, 0 duplicates).
+- **Capabilities, conversion, caches, engine & CLI (#799, #809, #811).** Added `qwen3_5_text` and `qwen3_5_moe_text` capability rows (#799); preserved affine `bits`/`group_size` metadata for pass-through quantized layers (embeddings, router gates) through NF4 and onward conversion (#811); fixed quantized `Embedding` in NF4 conversion, `--macaq-refine` staged teacher, per-channel FP8 refusal, `--register-cache` atomic swap, `Inkling2WindowKVCache` disk-tier exclusion, `KEqVRowKVCache.copy()` row ownership, `BailingHybrid` per-expert biases, cancelled-generate error mapping, `--kv-bits` `quantizedKVStart` batch guard, `OnDemandModel` load-epoch release guard, `ConvertModelSheet` bit clamping, CLI refusal of unwired flags (`--experimental-dllm`, `--experimental-dflash`, `--dpo-pairs`, `--adalora-target-rank`, QAT/audit convert, unserved `music:`/`video:` compose blocks), `--experimental-macaq-activations` kernel wiring, MCP video synthesizer wiring, and unified `mkdir + owner` GPU-lock protocol (#798, #809); fixed CLI on/off flags overriding YAML booleans, XML `<arg_key>` identifier validation, `KVCacheGeometry` dimension/loop bounds, single-probe git status in `basalt chat`, and `O_APPEND` `0o600` safe file logging (#811).
+- **Dependencies & deterministic tests.** Updated `swift-jinja` 3.2.1, `hummingbird`, `swift-huggingface` 1.0.1, `swift-log` 1.17.2 (#786–#789); replaced global `MLXRandom.seed` with task-local `RandomState` across 15 test suites and eliminated parallel CI flakes (#659, #761, #778, #792).
 
 ## 0.12.0 — 2026-11-20
 
