@@ -144,6 +144,23 @@ struct BailingHybridIntegrationTests {
         #expect(sanitized["model.layers.1.mlp.experts.1.gate_proj.weight"] != nil)
     }
 
+    @Test("Sanitize stacks per-expert biases with the weights when use_bias is set, leaving no per-expert keys behind")
+    func sanitizeStacksExpertBias() throws {
+        var config = try JSONDecoder.json5().decode(BailingHybridConfiguration.self, from: Data(TinyModel.Family.bailingHybrid.config.utf8))
+        config.useBias = true
+        let layer = try #require((0 ..< config.numHiddenLayers).first { config.isMoELayer($0) })
+        let prefix = "model.layers.\(layer).mlp.experts"
+        var raw: [String: MLXArray] = [:]
+        for expert in 0 ..< config.numExperts {
+            raw["\(prefix).\(expert).gate_proj.weight"] = MLXArray.zeros([32, 64])
+            raw["\(prefix).\(expert).gate_proj.bias"] = MLXArray.zeros([32])
+        }
+        let sanitized = BailingHybridCheckpoint.sanitize(raw, config: config)
+        #expect(sanitized["\(prefix).gate_proj.weight"]?.shape == [config.numExperts, 32, 64])
+        #expect(sanitized["\(prefix).gate_proj.bias"]?.shape == [config.numExperts, 32])
+        #expect(!sanitized.keys.contains { $0.hasPrefix("\(prefix).0.") })
+    }
+
     @Test("ModelDeepCheck and ModelInspector handle quantization_config-only and dual quantization configs without double-quantizing")
     func deepCheckAndInspectorRecognizeQuantizedCheckpoints() async throws {
         let source = try Self.makePackedTinyModel()
