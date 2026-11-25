@@ -38,13 +38,20 @@ struct KVBitsRefusalTests {
 
     @Test("A verified family under --kv-bits, and any family without it, loads as before")
     func supportedFamiliesUnchanged() {
-        for modelType in ["qwen3_5", "lfm2_moe", "gemma4", "qwen3"] {
+        for modelType in ["qwen3_5", "qwen3_5_text", "qwen3_5_moe_text", "lfm2_moe", "gemma4", "qwen3"] {
             #expect(throws: Never.self) { try ModelCapabilities.refuseUnverifiedKVBits(.q4, modelType: modelType, path: "") }
         }
         for modelType in Self.trappingTypes {
             #expect(throws: Never.self) { try ModelCapabilities.refuseUnverifiedKVBits(nil, modelType: modelType, path: "") }
             #expect(ModelCapabilities.of(modelType: modelType) == nil)
         }
+    }
+
+    @Test("A text-only Qwen3.5 checkpoint (model_type qwen3_5_text, as the Heretic packs ship) gets the same capabilities as qwen3_5, not the conservative plan")
+    func textOnlyQwen35IsVerified() {
+        #expect(ModelCapabilities.of(modelType: "qwen3_5_text") == ModelCapabilities.of(modelType: "qwen3_5"))
+        #expect(ModelCapabilities.of(modelType: "qwen3_5_moe_text") == ModelCapabilities.of(modelType: "qwen3_5_moe"))
+        #expect(ModelCapabilities.of(modelType: "qwen3_5_text")?.allows(.mtp) == true)
     }
 
     @Test("Under auto a Gemma 2 decodes on an fp16 cache even when handed a 4-bit rung, instead of trapping in QuantizedKVCache.update")
