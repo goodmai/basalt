@@ -222,7 +222,7 @@ public struct TranslationBenchmarkAdapter: BenchmarkAdapter {
         let isFull = mode == "full"
         let qeMode = context.task.params["qe_mode"]?.stringValue ?? (isFull ? "llm_judge" : "proxy")
         let judgeModel = context.task.params["judge_model"]?.stringValue ?? context.resolvedModelName
-        let items = loadItems(context: context, isFull: isFull)
+        let items = try loadItems(context: context, isFull: isFull)
 
         var samples: [BenchmarkSampleRecord] = []
         var chrfValues: [Double] = []
@@ -275,11 +275,15 @@ public struct TranslationBenchmarkAdapter: BenchmarkAdapter {
         return BenchmarkAdapterOutput(samples: samples, metrics: metrics)
     }
 
-    private func loadItems(context: BenchmarkTaskContext, isFull: Bool) -> [TranslationProbeItem] {
+    private func loadItems(context: BenchmarkTaskContext, isFull: Bool) throws -> [TranslationProbeItem] {
         var items: [TranslationProbeItem] = []
-        if let path = context.task.dataset,
-           FileManager.default.fileExists(atPath: path),
-           let raw = try? String(contentsOfFile: path, encoding: .utf8) {
+        if let path = context.task.dataset, !path.isEmpty {
+            let raw: String
+            do {
+                raw = try String(contentsOfFile: path, encoding: .utf8)
+            } catch {
+                throw BenchmarkError.invalidResponse("failed to read translation dataset '\(path)': \(error.localizedDescription)")
+            }
             let decoder = JSONDecoder()
             for line in raw.split(separator: "\n") {
                 if let data = String(line).data(using: .utf8),
@@ -287,8 +291,12 @@ public struct TranslationBenchmarkAdapter: BenchmarkAdapter {
                     items.append(decoded)
                 }
             }
+            guard !items.isEmpty else {
+                throw BenchmarkError.invalidResponse("translation dataset '\(path)' contained no valid JSONL entries")
+            }
+        } else {
+            items = Self.builtinProbes
         }
-        if items.isEmpty { items = Self.builtinProbes }
         if let filterRaw = context.task.params["locales"]?.stringValue {
             let allowed = Set(filterRaw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
             if !allowed.isEmpty { items = items.filter { allowed.contains($0.targetLang) } }

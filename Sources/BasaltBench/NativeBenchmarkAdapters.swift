@@ -81,15 +81,18 @@ public struct BasaltThroughputAdapter: BenchmarkAdapter {
                 "max_tokens": maxTokens,
                 "temperature": context.temperature,
                 "seed": context.seed,
+                "stream": true,
+                "stream_options": ["include_usage": true],
             ]
             let (json, reply) = try await context.endpoint.postJSON("/v1/chat/completions", payload: payload)
             let content = BenchmarkStats.extractChatContent(json)
             let usage = BenchmarkStats.extractUsage(json)
             let completion = max(1, usage.completion > 0 ? usage.completion : max(1, content.split(separator: " ").count))
-            let tps = (json["decode_tps"] as? Double) ?? (Double(completion) / max(0.001, reply.totalMs / 1000.0))
-            let ttft = reply.ttftMs ?? (json["ttft_ms"] as? Double) ?? (reply.totalMs * 0.15)
+            let ttft = reply.ttftMs ?? (json["ttft_ms"] as? Double)
+            let decodeMs = max(1.0, reply.totalMs - (ttft ?? 0.0))
+            let tps = (json["decode_tps"] as? Double) ?? (Double(completion) / (decodeMs / 1000.0))
             tpsValues.append(tps)
-            ttfts.append(ttft)
+            if let ttft { ttfts.append(ttft) }
             var record = BenchmarkSampleRecord(
                 id: "throughput-\(idx)", adapter: id, model: context.resolvedModelName,
                 prompt: basePrompt, answer: content, score: content.isEmpty ? 0 : 1
@@ -105,11 +108,13 @@ public struct BasaltThroughputAdapter: BenchmarkAdapter {
         }
         var metrics: [String: Double] = [
             "decode_tps": BenchmarkStats.percentile(tpsValues, 0.5),
-            "ttft_ms": BenchmarkStats.percentile(ttfts, 0.5),
             "p50_ms": BenchmarkStats.percentile(samples.map(\.latencyMs), 0.5),
             "p95_ms": BenchmarkStats.percentile(samples.map(\.latencyMs), 0.95),
             "accuracy": Double(samples.filter(\.passed).count) / Double(max(1, samples.count)),
         ]
+        if !ttfts.isEmpty {
+            metrics["ttft_ms"] = BenchmarkStats.percentile(ttfts, 0.5)
+        }
         if let peakGB = await fetchPeakGB(endpoint: context.endpoint) {
             metrics["peak_gb"] = peakGB
         }
@@ -166,7 +171,7 @@ public struct BasaltSystemOneAdapter: BenchmarkAdapter {
     ]
 
     public func run(context: BenchmarkTaskContext) async throws -> BenchmarkAdapterOutput {
-        let probes = loadProbes(path: context.task.dataset)
+        let probes = try loadProbes(path: context.task.dataset)
         var samples: [BenchmarkSampleRecord] = []
         var calibrationPairs: [(confidence: Double, correct: Bool)] = []
         var abstains = 0
@@ -215,10 +220,16 @@ public struct BasaltSystemOneAdapter: BenchmarkAdapter {
         return BenchmarkAdapterOutput(samples: samples, metrics: metrics)
     }
 
-    func loadProbes(path: String?) -> [ProbeItem] {
-        guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let decoded = try? JSONDecoder().decode([ProbeItem].self, from: data), !decoded.isEmpty else {
-            return Self.defaultProbes
+    func loadProbes(path: String?) throws -> [ProbeItem] {
+        guard let path, !path.isEmpty else { return Self.defaultProbes }
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            throw BenchmarkError.invalidResponse("failed to read system-one dataset '\(path)': \(error.localizedDescription)")
+        }
+        guard let decoded = try? JSONDecoder().decode([ProbeItem].self, from: data), !decoded.isEmpty else {
+            throw BenchmarkError.invalidResponse("system-one dataset '\(path)' is empty or malformed JSON")
         }
         return decoded
     }
@@ -232,17 +243,17 @@ public struct BasaltPerplexityAdapter: BenchmarkAdapter {
     public init() {}
 
     public func run(context: BenchmarkTaskContext) async throws -> BenchmarkAdapterOutput {
+        let prompt = context.task.params["prompt"]?.stringValue ?? "Continue:"
         let text = context.task.params["text"]?.stringValue
             ?? "Apple Silicon unified memory shares physical DRAM pages between CPU, Metal GPU, and the Neural Engine."
         let payload: [String: Any] = [
-            "model": context.resolvedModelName,
-            "messages": [["role": "user", "content": text]],
-            "max_tokens": context.task.params["max_tokens"]?.intValue ?? 16,
-            "temperature": 0.0,
-            "logprobs": true,
+            "messages": [["role": "user", "content": prompt]],
+            "completion": [] as [Int],
+            "completion_text": text,
+            "top_logprobs": 1,
         ]
-        let (json, reply) = try await context.endpoint.postJSON("/v1/chat/completions", payload: payload)
-        let nll = Self.extractMeanNLL(json)
+        let (json, reply) = try await context.endpoint.postJSON("/v1/score", payload: payload)
+        let nll = try Self.extractMeanNLL(json)
         let ppl = exp(min(20.0, max(0.0, nll)))
         var sample = BenchmarkSampleRecord(
             id: "ppl-0", adapter: id, model: context.resolvedModelName,
@@ -253,15 +264,10 @@ public struct BasaltPerplexityAdapter: BenchmarkAdapter {
         return BenchmarkAdapterOutput(samples: [sample], metrics: ["ppl": ppl, "p50_ms": reply.totalMs])
     }
 
-    static func extractMeanNLL(_ json: [String: Any]) -> Double {
-        if let direct = json["nll"] as? Double, direct >= 0 { return direct }
-        guard let choices = json["choices"] as? [[String: Any]],
-              let logprobs = choices.first?["logprobs"] as? [String: Any],
-              let content = logprobs["content"] as? [[String: Any]], !content.isEmpty else {
-            return 1.5
+    static func extractMeanNLL(_ json: [String: Any]) throws -> Double {
+        if let direct = (json["mean_nll"] as? Double) ?? (json["nll"] as? Double), direct.isFinite, direct >= 0 {
+            return direct
         }
-        let values = content.compactMap { $0["logprob"] as? Double }
-        guard !values.isEmpty else { return 1.5 }
-        return -values.reduce(0, +) / Double(values.count)
+        throw BenchmarkError.invalidResponse("perplexity /v1/score response missing finite non-negative mean_nll")
     }
 }

@@ -369,10 +369,9 @@ extension MathAnswerGrader {
 
     static func lastLabeledAnswer(in text: String) -> String? {
         let markers = ["final answer:", "answer:", "the answer is"]
-        let lower = text.lowercased()
         var bestRange: Range<String.Index>?
         for marker in markers {
-            if let range = lower.range(of: marker, options: .backwards) {
+            if let range = text.range(of: marker, options: [.backwards, .caseInsensitive]) {
                 if bestRange == nil || range.lowerBound > bestRange!.lowerBound {
                     bestRange = range
                 }

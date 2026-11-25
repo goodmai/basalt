@@ -82,20 +82,25 @@ extension MCPServer {
         }
     }
 
+    private static let maxSelfEditDatasetBytes = 32 * 1024 * 1024
+
     func selfEditStart(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
-        guard (args?["experimentalSelfRewrite"] as? Bool) == true else {
+        guard (try MCPArguments.optionalBoolean("experimentalSelfRewrite", in: args)) == true else {
             throw .invalidParams("selfedit_start requires experimentalSelfRewrite=true")
         }
         let practicePath = try MCPArguments.required("practicePath", MCPArguments.string("practicePath", in: args))
         let editor = (try MCPArguments.string("editor", in: args)) ?? "local"
-        let allowCloud = (args?["allowCloudEditor"] as? Bool) ?? false
+        let allowCloud = (try MCPArguments.optionalBoolean("allowCloudEditor", in: args)) ?? false
         let taskRaw = (try MCPArguments.string("task", in: args)) ?? "improve"
         let scopeRaw = (try MCPArguments.string("scope", in: args)) ?? EditTargetScope.textBackboneOnly.rawValue
         let decontamPath = try MCPArguments.string("decontaminatePath", in: args)
         let practiceCount = try MCPArguments.integer("practiceCount", in: args, 1 ... 100_000)
         let maxPasses = (try MCPArguments.integer("maxForwardPasses", in: args, 1 ... 10_000)) ?? 20
         let maxTools = (try MCPArguments.integer("maxToolCalls", in: args, 1 ... 100_000)) ?? 200
-        let maxCloudUSD = (args?["maxCloudUSD"] as? Double) ?? 2.0
+        let maxCloudUSD = (try MCPArguments.double("maxCloudUSD", in: args)) ?? 2.0
+        guard maxCloudUSD.isFinite, maxCloudUSD >= 0 else {
+            throw .invalidParams("maxCloudUSD must be a finite non-negative number")
+        }
 
         try Self.validateSelfEditEditor(editor, allowCloud: allowCloud)
         guard EditTargetScope(rawValue: scopeRaw) != nil else {
@@ -103,9 +108,16 @@ extension MCPServer {
         }
         let taskMode = try Self.parseSelfEditTask(taskRaw)
         _ = try Self.validateSelfEditBudget(passes: maxPasses, tools: maxTools, editor: editor, maxCloudUSD: maxCloudUSD)
+        let allowedRoots = harnessRoots + [selfEditDirectory]
+        let practiceURL = try Self.validatedSelfEditFile(practicePath, label: "practicePath", allowedRoots: allowedRoots)
+        let decontamURL: URL? = if let decontamPath {
+            try Self.validatedSelfEditFile(decontamPath, label: "decontaminatePath", allowedRoots: allowedRoots)
+        } else {
+            nil
+        }
         let splitInfo = try Self.loadSelfEditSplit(
-            practicePath: practicePath,
-            decontamPath: decontamPath,
+            practiceURL: practiceURL,
+            decontamURL: decontamURL,
             practiceCount: practiceCount
         )
         let sessionId = "selfedit-\(UUID().uuidString.prefix(8))"
@@ -178,16 +190,42 @@ extension MCPServer {
             throw .invalidParams(error.description)
         }
     }
+}
+
+extension MCPServer {
+    static func validatedSelfEditFile(
+        _ rawPath: String,
+        label: String,
+        allowedRoots: [URL]
+    ) throws(MCPFailure) -> URL {
+        let resolved = URL(fileURLWithPath: rawPath).resolvingSymlinksInPath().standardizedFileURL
+        let allowed = allowedRoots.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+        let insideAllowed = allowed.contains { root in
+            let prefix = root.hasSuffix("/") ? root : root + "/"
+            return resolved.path.hasPrefix(prefix)
+        }
+        guard insideAllowed else {
+            throw .invalidParams("\(label) must reside inside an allowed root")
+        }
+        guard let values = try? resolved.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true else {
+            throw .invalidParams("\(label) must refer to a readable regular file")
+        }
+        if let bytes = values.fileSize, bytes > maxSelfEditDatasetBytes {
+            throw .invalidParams("\(label) exceeds \(maxSelfEditDatasetBytes) byte limit")
+        }
+        return resolved
+    }
 
     private static func loadSelfEditSplit(
-        practicePath: String,
-        decontamPath: String?,
+        practiceURL: URL,
+        decontamURL: URL?,
         practiceCount: Int?
     ) throws(MCPFailure) -> (split: PairedDatasetSplit, removedDuplicates: Int) {
         do {
             return try SelfRewriteDatasetLoader.buildSplit(
-                practiceURL: URL(fileURLWithPath: practicePath),
-                decontaminateURL: decontamPath.map { URL(fileURLWithPath: $0) },
+                practiceURL: practiceURL,
+                decontaminateURL: decontamURL,
                 practiceCount: practiceCount
             )
         } catch {

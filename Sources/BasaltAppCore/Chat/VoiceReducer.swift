@@ -159,10 +159,8 @@ public enum VoiceReducer {
     private static func beginSynthesis(_ state: inout VoiceSessionState, id: MessageID, raw: String) -> [VoiceEffect] {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
-        let stopFirst = state.isSpeaking
         (state.synthesizingMessage, state.speakingMessage, state.error) = (id, nil, nil)
-        let synth = VoiceEffect.synthesize(id, text: text, voice: state.voice, speed: state.speed)
-        return stopFirst ? [.stopPlayback, synth] : [synth]
+        return [.synthesize(id, text: text, voice: state.voice, speed: state.speed)]
     }
 }
 
@@ -222,7 +220,10 @@ public enum VoiceEffects {
             case .playAudio(let id, let wav):
                 return .run(id: playbackID) { send in await play(id, wav: wav, environment, send) }
             case .stopPlayback:
-                return .run(id: playbackID) { _ in await environment.stopPlayback() }
+                return .run(id: playbackID) { _ in
+                    guard !Task.isCancelled else { return }
+                    await environment.stopPlayback()
+                }
             }
         }
     }
@@ -243,6 +244,8 @@ public enum VoiceEffects {
         _ id: MessageID, text: String, voice: String, speed: Double,
         _ environment: VoiceEnvironment, _ send: @escaping @Sendable (VoiceAction) async -> Void
     ) async {
+        await environment.stopPlayback()
+        guard !Task.isCancelled else { return }
         guard let engine = await environment.engine() else { return await send(.failed("the engine is not running")) }
         do {
             let wav = try await engine.synthesizeSpeech(SpeechSynthesisCall(input: text, voice: voice, speed: speed))

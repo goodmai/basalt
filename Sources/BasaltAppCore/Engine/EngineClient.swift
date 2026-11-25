@@ -121,11 +121,12 @@ extension EngineClient {
     static func relay(_ bytes: URLSession.AsyncBytes, to continuation: AsyncThrowingStream<ChatDelta, any Error>.Continuation) async throws {
         var parser = SSEParser()
         var pending: [UInt8] = []
+        var toolCallIDs: [Int: String] = [:]
         for try await byte in bytes {
             pending.append(byte)
             guard byte == UInt8(ascii: "\n") else { continue }
             for event in parser.feed(pending) {
-                switch try ChatDeltaDecoder.decode(event) {
+                switch try ChatDeltaDecoder.decode(event, toolCallIDs: &toolCallIDs) {
                 case .done: return
                 case .deltas(let deltas): for delta in deltas { continuation.yield(delta) }
                 }

@@ -164,14 +164,13 @@
 "Activate" = "Activate";
 "Activate Profile" = "Activate Profile";
 "Adaptive thinking budgets tuned for multi-step math and logic." = "Adaptive thinking budgets tuned for multi-step math and logic.";
-"All 91" = "All 91";
+"All %lld" = "All %lld";
 "Belnap" = "Belnap";
 "Bundled Profile" = "Bundled Profile";
 "CLI Command" = "CLI Command";
 "Chat" = "Chat";
 "Choose any hardware-tuned multi-model profile on the left." = "Choose any hardware-tuned multi-model profile on the left.";
 "Cloud Cap" = "Cloud Cap";
-"Code" = "Code";
 "Coding Agent & MCP" = "Coding Agent & MCP";
 "Compose Profiles" = "Compose Profiles";
 "Compose Specification (YAML)" = "Compose Specification (YAML)";
@@ -229,7 +228,6 @@
 "Speech" = "Speech";
 "Targets %@ Macs; may exceed this Mac's memory" = "Targets %@ Macs; may exceed this Mac's memory";
 "TeaCache" = "TeaCache";
-"Thinking" = "Thinking";
 "TTS 44.1 kHz" = "TTS 44.1 kHz";
 "Upsample" = "Upsample";
 "Vision" = "Vision";
@@ -270,7 +268,6 @@
 "Estimating output footprint…" = "Estimating output footprint…";
 "PV-Tuning (Teacher KL Code & Scale Refinement)" = "PV-Tuning (Teacher KL Code & Scale Refinement)";
 "Preset" = "Preset";
-"Fast" = "Fast";
 "Balanced" = "Balanced";
 "Thorough" = "Thorough";
 "Teacher Model" = "Teacher Model";
@@ -352,3 +349,8 @@
 "Merge LoRA Adapter (Optional)" = "Merge LoRA Adapter (Optional)";
 "org/adapter-repo" = "org/adapter-repo";
 "Fuses a PEFT or mlx-lm LoRA repository into the converted weights." = "Fuses a PEFT or mlx-lm LoRA repository into the converted weights.";
+"Target Budget: %@ bpw" = "Target Budget: %@ bpw";
+"%lld-bit" = "%lld-bit";
+"Estimated Size: %@ → %@" = "Estimated Size: %@ → %@";
+"Peak Conversion RAM: %@" = "Peak Conversion RAM: %@";
+"%@ of %@" = "%@ of %@";

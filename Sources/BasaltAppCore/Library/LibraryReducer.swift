@@ -57,6 +57,7 @@ public enum LibraryAction: Sendable {
     case appeared
     case listed([LibraryModel])
     case fitted(String, ModelFit)
+    case fitFailed(String, String)
     case load(String)
     case loaded(String)
     case download(String)
@@ -125,6 +126,10 @@ public enum LibraryReducer {
             return pending.map(LibraryEffect.fit)
         case .fitted(let id, let fit):
             state.fits[id] = fit
+            return []
+        case .fitFailed(let id, let message):
+            state.fitAttempted.remove(id)
+            state.problem = message
             return []
         case .load(let id):
             return load(&state, id)

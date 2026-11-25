@@ -5,7 +5,8 @@ import Foundation
 extension AppModel {
     static func makeComposeProfilesStore(
         initialCompose: String,
-        supervisor: EngineSupervisor
+        supervisor: EngineSupervisor,
+        cloudEnvironment: @escaping @Sendable () -> [String: String] = { CloudKeys.environment(defaults: .standard, keychain: .live()) }
     ) -> ComposeProfilesStore {
         Store(
             ComposeProfilesState(activeCompose: initialCompose),
@@ -18,7 +19,9 @@ extension AppModel {
                             await send(.failed("Unknown compose profile: \(id)"))
                             return
                         }
-                        if let endpoint = await supervisor.endpoint {
+                        let current = await supervisor.launch
+                        let freshEnv = Self.refreshedEnvironment(preserving: current.environment, cloud: cloudEnvironment())
+                        if freshEnv == current.environment, let endpoint = await supervisor.endpoint {
                             do {
                                 let diff = try await EngineClient.http(endpoint).applyCompose(ComposeApplyCall(yaml: yaml))
                                 if let refusal = diff.refusal {
@@ -37,13 +40,13 @@ extension AppModel {
                             } catch {}
                         }
                         guard !Task.isCancelled else { return }
-                        let current = await supervisor.launch
-                        let freshEnv = CloudKeys.environment(defaults: .standard, keychain: .live())
+                        let latest = await supervisor.launch
+                        let relaunchEnv = Self.refreshedEnvironment(preserving: latest.environment, cloud: cloudEnvironment())
                         await supervisor.relaunch(
                             HelperLaunch(
-                                executable: current.executable,
+                                executable: latest.executable,
                                 arguments: ["serve", "--compose", id],
-                                environment: freshEnv
+                                environment: relaunchEnv
                             )
                         )
                         guard !Task.isCancelled else { return }

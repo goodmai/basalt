@@ -86,9 +86,7 @@ public actor ModelRouter: Sendable {
             }
             return try await self.localOrchestrator.generate(request: request, modelId: path)
         } cloud: { client, model in
-            let response = try await self.routeToCloud(client: client, model: model, request: request)
-            await self.recordCloudCost(model: model, response: response, context: context)
-            return response
+            try await self.routeToCloudReserved(client: client, model: model, request: request, context: context)
         }
     }
 
@@ -114,6 +112,9 @@ public actor ModelRouter: Sendable {
     }
 
     public func recordLocalOutcome(_ request: GenerationRequest, response: GenerationResponse, localModel: String) {
+        if state.cost != nil {
+            state = .reduce(state, .tierChosen(.weak, sessionId: request.sessionId, request: request))
+        }
         let before = state.cost?.outcomeBias
         state = .reduce(state, .outcome(request, response, localModel: localModel, at: Date()))
         guard let cost = state.cost, cost.outcomeBias != before, let url = cost.routing.outcomeBiasURL else { return }
@@ -122,6 +123,10 @@ public actor ModelRouter: Sendable {
         } catch {
             log("Saving the routing outcome bias to \(url.path) failed: \(error)")
         }
+    }
+
+    func sessionTier(for sessionId: String) -> StickyRoutingPolicy.Tier? {
+        state.cost?.sessionTier(for: sessionId)
     }
 
     public var routingBias: [String: [String: Double]]? {
@@ -242,9 +247,7 @@ extension ModelRouter {
         try await callCloudChain(ModelCatalog.cloudModels(for: modelId), context: context, localFallback: localFallback) { path in
             try await self.localOrchestrator.generate(request: request, modelId: path)
         } cloud: { client, model in
-            let (response, reportedCost) = try await self.routeToCloudWithCost(client: client, model: model, request: request)
-            await self.recordCloudCost(model: model, response: response, context: context, reportedCost: reportedCost)
-            return response
+            try await self.routeToCloudReserved(client: client, model: model, request: request, context: context)
         }
     }
 
@@ -269,13 +272,7 @@ extension ModelRouter {
         }
     }
 
-    func routeToCloud(
-        client: OpenRouterClient, model: String, request: GenerationRequest
-    ) async throws -> GenerationResponse {
-        try await routeToCloudWithCost(client: client, model: model, request: request).0
-    }
-
-    private func routeToCloudWithCost(
+    func routeToCloudWithCost(
         client: OpenRouterClient, model: String, request: GenerationRequest
     ) async throws -> (GenerationResponse, Double?) {
         let startTime = ContinuousClock.now
@@ -294,16 +291,59 @@ extension ModelRouter {
         return (reply, chatResponse.usage?.cost)
     }
 
+    private func reserveCloudBudget(
+        model: String, request: GenerationRequest, context: RoutingContext
+    ) async throws(BasaltError) -> UUID? {
+        guard let costTracker else { return nil }
+        let estimated = estimateCost(
+            model: model,
+            promptTokens: Self.estimatedPromptTokens(request),
+            completionTokens: request.maxTokens ?? 1_024
+        )
+        guard let token = await costTracker.reserve(estimatedCost: estimated, scopes: context.budgetScopes) else {
+            throw .invalidRequestStructure(details: "Cloud budget exhausted for \(model)")
+        }
+        return token
+    }
+
+    private func routeToCloudReserved(
+        client: OpenRouterClient, model: String, request: GenerationRequest, context: RoutingContext
+    ) async throws -> GenerationResponse {
+        let reservation = try await reserveCloudBudget(model: model, request: request, context: context)
+        defer {
+            if let reservation {
+                await withTaskCancellationShield { await costTracker?.release(reservation: reservation) }
+            }
+        }
+        let (response, reportedCost) = try await routeToCloudWithCost(client: client, model: model, request: request)
+        await recordCloudCost(model: model, response: response, context: context, reportedCost: reportedCost)
+        return response
+    }
+
     private func routeToCloudStream(
         client: OpenRouterClient, model: String, request: GenerationRequest, context: RoutingContext
     ) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        let reservation = try await reserveCloudBudget(model: model, request: request, context: context)
         let startTime = ContinuousClock.now
-        let sourceStream = try await client.chatStream(request: Self.chatRequest(request, model: model, stream: true))
+        let sourceStream: AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error>
+        do {
+            sourceStream = try await client.chatStream(request: Self.chatRequest(request, model: model, stream: true))
+        } catch {
+            if let reservation {
+                await withTaskCancellationShield { await costTracker?.release(reservation: reservation) }
+            }
+            throw error
+        }
+        let tracker = costTracker
         return Self.relayCloudStream(sourceStream, startTime: startTime, onUsageWithCost: { [weak self] metadata, cost in
             await self?.recordCloudCost(model: model, response: metadata, context: context, reportedCost: cost)
+        }, onFinish: {
+            if let reservation { await tracker?.release(reservation: reservation) }
         })
     }
+}
 
+extension ModelRouter {
     static func chatRequest(_ request: GenerationRequest, model: String, stream: Bool) -> OpenRouterClient.ChatRequest {
         var req = OpenRouterClient.ChatRequest(
             model: model,
@@ -312,7 +352,7 @@ extension ModelRouter {
             maxTokens: request.maxTokens,
             stream: stream
         )
-        if stream { req.usage = .init(include: true) }
+        req.usage = .init(include: true)
         return req
     }
 
@@ -320,10 +360,16 @@ extension ModelRouter {
         _ source: AsyncThrowingStream<OpenRouterClient.ChatStreamResponse, Error>,
         startTime: ContinuousClock.Instant,
         onUsage: @escaping @Sendable (GenerationResponse) async -> Void = { _ in },
-        onUsageWithCost: (@Sendable (GenerationResponse, Double?) async -> Void)? = nil
+        onUsageWithCost: (@Sendable (GenerationResponse, Double?) async -> Void)? = nil,
+        onFinish: (@Sendable () async -> Void)? = nil
     ) -> AsyncThrowingStream<StreamChunk, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                defer {
+                    if let onFinish {
+                        await withTaskCancellationShield { await onFinish() }
+                    }
+                }
                 do {
                     var finishReason: String?
                     var usage: OpenRouterClient.ChatResponse.Usage?
@@ -403,27 +449,41 @@ extension ModelRouter: CloudFallback {
         if let costTracker, await costTracker.isExhausted(scopes: context.budgetScopes) { return nil }
         let completionTokens = request.maxTokens ?? 1_024
         let choice = state.cost?.stickyTier(request, sessionId: context.sessionId, localModel: localModel, at: Date())
-        if let choice { state = .reduce(state, .tierChosen(choice.tier, sessionId: context.sessionId, request: request)) }
         let gap = choice?.capabilityGap ?? 0
         return CloudAssessment(
             capabilityGap: gap,
-            estimatedCost: estimateCost(model: cloudModel, promptTokens: request.prompt.utf8.count / 4, completionTokens: completionTokens),
+            estimatedCost: estimateCost(model: cloudModel, promptTokens: Self.estimatedPromptTokens(request), completionTokens: completionTokens),
             remainingBudget: await costTracker?.remaining(scopes: context.budgetScopes),
             latencySeconds: Double(completionTokens) / Self.assumedCloudTokensPerSecond
         )
     }
 
+    static func estimatedPromptTokens(_ request: GenerationRequest) -> Int {
+        let text = (request.messages?.isEmpty == false)
+            ? ChatMessageInput.plainText(request.messages ?? [])
+            : request.prompt
+        return text.utf8.count / 4
+    }
+
     public func generate(_ request: GenerationRequest) async throws -> GenerationResponse {
+        let context = RoutingContext(request)
+        if state.cost != nil {
+            state = .reduce(state, .tierChosen(.strong, sessionId: context.sessionId, request: request))
+        }
         if state.fallback.isMultiTier {
             return try await generateFromFallbackTiers(request)
         }
-        return try await route(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
+        return try await route(request: request, preferredModel: fallbackCloudModel, context: context)
     }
 
     public func generateStream(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
+        let context = RoutingContext(request)
+        if state.cost != nil {
+            state = .reduce(state, .tierChosen(.strong, sessionId: context.sessionId, request: request))
+        }
         if state.fallback.isMultiTier {
             return try await generateStreamFromFallbackTiers(request)
         }
-        return try await routeStream(request: request, preferredModel: fallbackCloudModel, context: RoutingContext(request))
+        return try await routeStream(request: request, preferredModel: fallbackCloudModel, context: context)
     }
 }

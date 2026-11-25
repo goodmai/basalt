@@ -90,6 +90,7 @@ public actor AudioCaptureActor {
         audioEngine.stop()
         (self.engine, self.captured) = (nil, nil)
         let recorded = sink.state.withLock { $0 }
+        guard !recorded.samples.isEmpty else { return Data() }
         return Self.encodeMono16kWAV(samples: recorded.samples, sourceRate: recorded.rate)
     }
 
@@ -139,6 +140,7 @@ public actor AudioCaptureActor {
     }
 
     public nonisolated static func encodeMono16kWAV(samples: [Float], sourceRate: Double) -> Data {
+        guard !samples.isEmpty else { return Data() }
         let resampled = resample(samples: samples, from: sourceRate, to: Double(targetSampleRate))
         return WAVEncoder.encode(samples: resampled, sampleRate: targetSampleRate)
     }

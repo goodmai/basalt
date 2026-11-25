@@ -133,11 +133,11 @@ struct ComposerGlassBar: View {
     }
 
     static func attach(_ url: URL, to store: ChatStore) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        if let data = try? Data(contentsOf: url),
-           let attachment = ChatAttachment(name: url.lastPathComponent, data: data, sourcePath: url.path) {
-            store.send(.attach(attachment))
+        guard url.isFileURL, ChatAttachment.accepts(url.lastPathComponent) else { return }
+        Task {
+            if let attachment = await ChatAttachment.loadAsync(from: url) {
+                store.send(.attach(attachment))
+            }
         }
     }
 }

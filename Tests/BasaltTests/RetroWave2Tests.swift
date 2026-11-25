@@ -136,6 +136,6 @@ struct RetroWave2Tests {
         let req = ModelRouter.chatRequest(GenerationRequest(prompt: "hi"), model: "openai/gpt-4o-mini", stream: true)
         #expect(req.usage?.include == true)
         let nonStream = ModelRouter.chatRequest(GenerationRequest(prompt: "hi"), model: "openai/gpt-4o-mini", stream: false)
-        #expect(nonStream.usage == nil)
+        #expect(nonStream.usage?.include == true)
     }
 }

@@ -130,7 +130,7 @@ public struct RateLimitMiddleware<Context: RequestContext>: RouterMiddleware {
         context: Context,
         next: (Request, Context) async throws -> Response
     ) async throws -> Response {
-        if APIKeyAuthenticator<Context>.publicPaths.contains(request.uri.path) {
+        if APIKeyAuthenticator<Context>.publicPaths.contains(APIKeyAuthenticator<Context>.normalizedPath(request.uri.path)) {
             return try await next(request, context)
         }
         let now = clock()

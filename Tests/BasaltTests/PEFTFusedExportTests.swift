@@ -241,7 +241,7 @@ extension PEFTFusedExportTests {
             ) { $0.status }
             #expect(repoStatus == .ok)
         }
-        #expect(await service.lastRequest?.adapter == "harness-hub/Qwen3.8-27B-pi-adapted")
+        #expect(await service.lastRequest?.adapter == "hf:harness-hub/Qwen3.8-27B-pi-adapted")
 
         var draft = ConversionDraft(sourceId: "org/base", sourceBytes: 4096)
         #expect(draft.toRequest().adapter == nil)

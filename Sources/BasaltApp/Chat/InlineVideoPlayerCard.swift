@@ -396,14 +396,31 @@ enum InlineVideoIO {
     }
 
     static func exportMP4WithPanel(part: GeneratedVideoPart) {
-        guard let path = part.filePath,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return }
+        guard let path = part.filePath, FileManager.default.fileExists(atPath: path) else { return }
+        let sourceURL = URL(fileURLWithPath: path)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie]
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = part.assetID.isEmpty ? "basalt-video.mp4" : part.assetID
         if panel.runModal() == .OK, let outURL = panel.url {
-            try? data.write(to: outURL, options: .atomic)
+            Task { try? await copyFile(from: sourceURL, to: outURL) }
+        }
+    }
+
+    @concurrent
+    static func copyFile(from source: URL, to destination: URL) async throws {
+        let resolvedSource = source.resolvingSymlinksInPath()
+        let resolvedDestination = destination.resolvingSymlinksInPath()
+        guard resolvedSource != resolvedDestination else { return }
+        let fm = FileManager.default
+        let tempURL = destination.deletingLastPathComponent()
+            .appending(path: ".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+        defer { try? fm.removeItem(at: tempURL) }
+        try fm.copyItem(at: resolvedSource, to: tempURL)
+        if fm.fileExists(atPath: destination.path) {
+            _ = try fm.replaceItemAt(destination, withItemAt: tempURL)
+        } else {
+            try fm.moveItem(at: tempURL, to: destination)
         }
     }
 }

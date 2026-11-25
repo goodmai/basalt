@@ -81,7 +81,8 @@ public struct RequestGuardMiddleware: RouterMiddleware {
         if let mediaFailure = Self.validatePostMediaType(request) {
             return mediaFailure
         }
-        return try await next(request, context)
+        let sanitized = APIKeyAuthenticator<BasicRequestContext>.request(request, budgetKey: nil, rateKey: nil)
+        return try await next(sanitized, context)
     }
 
     private static func validatePostMediaType(_ request: Request) -> Response? {

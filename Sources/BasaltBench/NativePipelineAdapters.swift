@@ -79,7 +79,7 @@ public struct BasaltMoMAdapter: BenchmarkAdapter {
         let cost = stages.reduce(0.0) { $0 + (($1["cost"] as? Double) ?? 0.0) }
         let tokens = stages.reduce(0) { $0 + (($1["tokens"] as? Int) ?? 0) }
         let system2 = (json["system2"] as? [String: Any])?["text"] as? String ?? label
-        let matched = label.isEmpty ? !system2.isEmpty : (label == expectedLabel)
+        let matched = !label.isEmpty && label == expectedLabel
         var sample = BenchmarkSampleRecord(
             id: "mom-0", adapter: id, model: context.task.target,
             prompt: promptText, answer: system2, score: matched ? 1.0 : 0.0

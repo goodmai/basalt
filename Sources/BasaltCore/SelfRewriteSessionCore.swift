@@ -127,7 +127,7 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
                 if ch == "\\" { escaped = true } else if ch == "\"" { inString = false }
                 continue
             }
-            if ch == "\"" {
+            if depth > 0, ch == "\"" {
                 inString = true
             } else if ch == "{" {
                 if depth == 0 { startIndex = idx }
@@ -379,7 +379,7 @@ public enum CloudPrivacyFence {
         _ text: String,
         privateStrings: Set<String>
     ) throws(SelfRewriteSessionError) {
-        for forbidden in forbiddenPathSubstrings where text.contains(forbidden) {
+        for forbidden in forbiddenPathSubstrings where text.range(of: forbidden, options: .caseInsensitive) != nil {
             throw .privacyFenceViolation("outbound text contains forbidden path or checkpoint token '\(forbidden)'")
         }
         for secret in privateStrings where secret.count >= 16 && text.contains(secret) {
@@ -391,25 +391,25 @@ public enum CloudPrivacyFence {
     }
 
     private static func exceedsInlineFloatLimit(_ text: String) -> Bool {
-        var inBracket = false
+        var depth = 0
         var numericRun = 0
         var token = ""
         for ch in text {
             if ch == "[" {
-                inBracket = true
-                numericRun = 0
-                token.removeAll(keepingCapacity: true)
-            } else if ch == "]" {
-                if inBracket, isNumericToken(token) { numericRun += 1 }
-                if numericRun > maxInlineNumericTokens { return true }
-                inBracket = false
-                numericRun = 0
-                token.removeAll(keepingCapacity: true)
-            } else if inBracket {
-                if ch == "," || ch.isWhitespace {
-                    if isNumericToken(token) { numericRun += 1 }
-                    if numericRun > maxInlineNumericTokens { return true }
+                if depth == 0 {
+                    numericRun = 0
                     token.removeAll(keepingCapacity: true)
+                } else if flushNumericToken(&token, run: &numericRun) {
+                    return true
+                }
+                depth += 1
+            } else if ch == "]" {
+                if depth > 0, flushNumericToken(&token, run: &numericRun) { return true }
+                depth = max(0, depth - 1)
+                if depth == 0 { numericRun = 0 }
+            } else if depth > 0 {
+                if ch == "," || ch.isWhitespace {
+                    if flushNumericToken(&token, run: &numericRun) { return true }
                 } else {
                     token.append(ch)
                 }
@@ -418,8 +418,14 @@ public enum CloudPrivacyFence {
         return false
     }
 
-    private static func isNumericToken(_ token: String) -> Bool {
+    private static func flushNumericToken(_ token: inout String, run: inout Int) -> Bool {
+        defer { token.removeAll(keepingCapacity: true) }
         guard !token.isEmpty else { return false }
-        return Double(token) != nil
+        if Double(token) != nil {
+            run += 1
+            return run > maxInlineNumericTokens
+        }
+        run = 0
+        return false
     }
 }

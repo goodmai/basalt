@@ -66,9 +66,9 @@ struct SwitchModelIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let (_, endpoint) = try await AppServices.engine()
+        let (appModel, endpoint) = try await AppServices.engine()
         let loaded = try await IntentActions.switchModel(model, library: .live(endpoint))
-        UserDefaults.standard.set(loaded, forKey: "model")
+        await appModel.recordLoadedModel(loaded)
         return .result(value: loaded)
     }
 }

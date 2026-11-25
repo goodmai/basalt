@@ -22,36 +22,68 @@ extension MLXInferenceEngine {
         guard !request.messages.isEmpty, request.messages.allSatisfy({ $0["role"] != nil && $0["content"] != nil }) else {
             throw refused("messages must be a non-empty array of {\"role\": …, \"content\": …}")
         }
-        guard scoreTokens.contains(request.completion.count) else { throw refused("completion must hold \(scoreTokens) token ids") }
+        let hasText = !(request.completionText ?? "").isEmpty
+        guard scoreTokens.contains(request.completion.count) || (request.completion.isEmpty && hasText) else {
+            throw refused("completion must hold \(scoreTokens) token ids (or provide completion_text)")
+        }
         guard scoreTopK.contains(request.topLogprobs) else { throw refused("top_logprobs must be in \(scoreTopK)") }
     }
 
     static func score(_ request: ScoreRequest, model: any LanguageModel, tokenizer: any Tokenizer) throws -> ScoreReport {
+        let completion: [Int]
+        if !request.completion.isEmpty {
+            completion = request.completion
+        } else if let text = request.completionText, !text.isEmpty {
+            completion = tokenizer.encode(text: text, addSpecialTokens: false)
+            guard scoreTokens.contains(completion.count) else {
+                throw BasaltError.invalidRequestStructure(details: "score: completion_text tokenized to \(completion.count) tokens, expected \(scoreTokens)")
+            }
+        } else {
+            throw BasaltError.invalidRequestStructure(details: "score: completion or completion_text is required")
+        }
         let vocabulary = 0 ..< vocabularySize(model)
-        guard request.completion.allSatisfy(vocabulary.contains), request.topLogprobs <= vocabulary.count else {
+        guard completion.allSatisfy(vocabulary.contains), request.topLogprobs <= vocabulary.count else {
             throw BasaltError.invalidRequestStructure(details: "score: completion ids and top_logprobs must be below the vocabulary size \(vocabulary.upperBound)")
         }
         let prompt = try labPrompt(messages: request.messages, tokenizer)
         guard !prompt.isEmpty else { throw BasaltError.invalidRequestStructure(details: "score: the chat template rendered the messages to no tokens") }
-        let positions = try topLogprobs(prompt: prompt, completion: request.completion, k: request.topLogprobs, model: model)
-        return ScoreReport(tokenizer: tokenizerFingerprint(tokenizer), promptTokens: prompt.count, positions: positions)
+        let scored = try scorePositions(prompt: prompt, completion: completion, k: request.topLogprobs, model: model)
+        return ScoreReport(tokenizer: tokenizerFingerprint(tokenizer), promptTokens: prompt.count, positions: scored.positions, meanNLL: scored.meanNLL)
     }
 
     static func topLogprobs(prompt: [Int], completion: [Int], k: Int, model: any LanguageModel, chunk: Int = scoreChunk) throws -> [TopLogprobs] {
+        try scorePositions(prompt: prompt, completion: completion, k: k, model: model, chunk: chunk).positions
+    }
+
+    static func scorePositions(
+        prompt: [Int], completion: [Int], k: Int, model: any LanguageModel, chunk: Int = scoreChunk
+    ) throws -> (positions: [TopLogprobs], meanNLL: Double) {
         let cache = try model.newCache(parameters: nil)
         if prompt.count > 1 { _ = model(MLXArray(prompt.dropLast().map(Int32.init))[.newAxis], cache: cache) }
         let inputs = [prompt[prompt.count - 1]] + completion.dropLast()
-        return stride(from: 0, to: inputs.count, by: chunk).flatMap { start in
-            let ids = inputs[start ..< min(start + chunk, inputs.count)].map(Int32.init)
-            return topK(model(MLXArray(ids)[.newAxis], cache: cache)[0].asType(.float32), k: k)
+        var positions: [TopLogprobs] = []
+        positions.reserveCapacity(inputs.count)
+        var nllSum = 0.0
+        for start in stride(from: 0, to: inputs.count, by: chunk) {
+            let end = min(start + chunk, inputs.count)
+            let ids = inputs[start ..< end].map(Int32.init)
+            let logits = model(MLXArray(ids)[.newAxis], cache: cache)[0].asType(.float32)
+            let logprobs = logits - logSumExp(logits, axis: -1, keepDims: true)
+            let targets = MLXArray(completion[start ..< end].map(Int32.init))[0..., .newAxis]
+            nllSum -= Double(takeAlong(logprobs, targets, axis: -1).sum().item(Float.self))
+            positions.append(contentsOf: topK(fromLogprobs: logprobs, k: k))
         }
+        return (positions, nllSum / Double(max(1, completion.count)))
     }
 
     static func topK(_ logits: MLXArray, k: Int) -> [TopLogprobs] {
-        let logprobs = logits - logSumExp(logits, axis: -1, keepDims: true)
+        topK(fromLogprobs: logits - logSumExp(logits, axis: -1, keepDims: true), k: k)
+    }
+
+    static func topK(fromLogprobs logprobs: MLXArray, k: Int) -> [TopLogprobs] {
         let candidates = argPartition(-logprobs, kth: k - 1, axis: -1)[0..., ..<k]
         let (ids, values) = (candidates.asType(.int32).asArray(Int32.self), takeAlong(logprobs, candidates, axis: -1).asArray(Float.self))
-        return (0 ..< logits.dim(0)).map { row in
+        return (0 ..< logprobs.dim(0)).map { row in
             let ranked = (row * k ..< (row + 1) * k).sorted { (values[$0], -ids[$0]) > (values[$1], -ids[$1]) }
             return TopLogprobs(ids: ranked.map { Int(ids[$0]) }, logprobs: ranked.map { values[$0] })
         }

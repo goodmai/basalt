@@ -151,7 +151,9 @@ private final class StreamSink: Sendable {
            let channel = source.floatChannelData?[0] {
             return Array(UnsafeBufferPointer(start: channel, count: Int(source.frameLength)))
         }
-        let capacity = AVAudioFrameCount(Double(source.frameLength) * target.sampleRate / source.format.sampleRate + 512)
+        let capacity = try AppleSpeechSynthesizer.validatedConversionCapacity(
+            frameLength: source.frameLength, sourceRate: source.format.sampleRate, targetRate: target.sampleRate
+        )
         guard let converter = AVAudioConverter(from: source.format, to: target),
               let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: max(capacity, 512)) else {
             throw .inferenceError("apple-speech could not convert audio from \(Int(source.format.sampleRate)) Hz")
@@ -224,5 +226,20 @@ private final class SynthesisSession {
         synthesizer?.delegate = nil
         synthesizer = nil
         delegate = nil
+    }
+}
+
+extension AppleSpeechSynthesizer {
+    static func validatedConversionCapacity(
+        frameLength: AVAudioFrameCount, sourceRate: Double, targetRate: Double
+    ) throws(BasaltError) -> AVAudioFrameCount {
+        guard sourceRate.isFinite, sourceRate > 0 else {
+            throw .inferenceError("apple-speech received invalid source sample rate \(sourceRate)")
+        }
+        let rawCapacity = Double(frameLength) * targetRate / sourceRate + 512
+        guard rawCapacity.isFinite, rawCapacity >= 0, rawCapacity <= Double(AVAudioFrameCount.max) else {
+            throw .inferenceError("apple-speech output buffer capacity overflow")
+        }
+        return AVAudioFrameCount(rawCapacity)
     }
 }

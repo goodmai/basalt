@@ -31,10 +31,19 @@ final class ServiceProvider: NSObject {
         if let arguments = applyLaunch(urls) {
             Task { await model.switchEngine(arguments) }
         }
-        let attachments = urls.filter(\.isFileURL).compactMap { url in (try? Data(contentsOf: url)).flatMap { ChatAttachment(name: url.lastPathComponent, data: $0) } }
-        guard !attachments.isEmpty else { return }
-        model.startConversation(text: "", attachments: attachments)
-        show()
+        let fileURLs = urls.filter { $0.isFileURL && ChatAttachment.accepts($0.lastPathComponent) }
+        guard !fileURLs.isEmpty else { return }
+        Task {
+            var attachments: [ChatAttachment] = []
+            for url in fileURLs {
+                if let attachment = await ChatAttachment.loadAsync(from: url) {
+                    attachments.append(attachment)
+                }
+            }
+            guard !attachments.isEmpty else { return }
+            model.startConversation(text: "", attachments: attachments)
+            show()
+        }
     }
 }
 

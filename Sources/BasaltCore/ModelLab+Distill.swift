@@ -90,16 +90,19 @@ public struct ScoreRequest: Sendable, Codable, Equatable {
     public var messages: [[String: String]]
     public var completion: [Int]
     public var topLogprobs: Int
+    public var completionText: String?
 
     enum CodingKeys: String, CodingKey {
         case messages, completion
         case topLogprobs = "top_logprobs"
+        case completionText = "completion_text"
     }
 
-    public init(messages: [[String: String]], completion: [Int], topLogprobs: Int) {
+    public init(messages: [[String: String]], completion: [Int], topLogprobs: Int, completionText: String? = nil) {
         self.messages = messages
         self.completion = completion
         self.topLogprobs = topLogprobs
+        self.completionText = completionText
     }
 }
 
@@ -117,15 +120,18 @@ public struct ScoreReport: Sendable, Codable, Equatable {
     public var tokenizer: String
     public var promptTokens: Int
     public var positions: [TopLogprobs]
+    public var meanNLL: Double?
 
     enum CodingKeys: String, CodingKey {
         case tokenizer, positions
         case promptTokens = "prompt_tokens"
+        case meanNLL = "mean_nll"
     }
 
-    public init(tokenizer: String, promptTokens: Int, positions: [TopLogprobs]) {
+    public init(tokenizer: String, promptTokens: Int, positions: [TopLogprobs], meanNLL: Double? = nil) {
         self.tokenizer = tokenizer
         self.promptTokens = promptTokens
         self.positions = positions
+        self.meanNLL = meanNLL
     }
 }

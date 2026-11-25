@@ -62,7 +62,10 @@ public struct BasaltFoundationRequest: Sendable, Equatable {
         if let topK { payload["top_k"] = topK }
         if let seed { payload["seed"] = seed }
         if let maxTokens { payload["max_tokens"] = maxTokens }
-        if let enableThinking { payload["enable_thinking"] = enableThinking }
+        if let enableThinking {
+            payload["enable_thinking"] = enableThinking
+            if !enableThinking { payload["reasoning_effort"] = "none" }
+        }
         if !tools.isEmpty {
             payload["tools"] = try tools.map(Self.serializeTool)
         }
@@ -322,12 +325,13 @@ extension BasaltFoundationTransport {
     ) async throws {
         var parser = SSEParser()
         var pending: [UInt8] = []
+        var toolCallIDs: [Int: String] = [:]
         for try await byte in bytes {
             try Task.checkCancellation()
             pending.append(byte)
             guard byte == UInt8(ascii: "\n") else { continue }
             for event in parser.feed(pending) {
-                switch try ChatDeltaDecoder.decode(event) {
+                switch try ChatDeltaDecoder.decode(event, toolCallIDs: &toolCallIDs) {
                 case .done: return
                 case .deltas(let deltas):
                     for delta in deltas { continuation.yield(delta) }
@@ -340,12 +344,13 @@ extension BasaltFoundationTransport {
         }
         pending.append(UInt8(ascii: "\n"))
         for event in parser.feed(pending) {
-            switch try ChatDeltaDecoder.decode(event) {
+            switch try ChatDeltaDecoder.decode(event, toolCallIDs: &toolCallIDs) {
             case .done: return
             case .deltas(let deltas):
                 for delta in deltas { continuation.yield(delta) }
             }
         }
+        throw Task.isCancelled ? EngineError.cancelled : EngineError.transport("chat stream ended before [DONE]")
     }
 
     private static func inProcessStream(

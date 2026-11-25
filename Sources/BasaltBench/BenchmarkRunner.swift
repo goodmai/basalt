@@ -62,26 +62,20 @@ public struct BenchmarkRunner: Sendable {
         let started = ContinuousClock.now
         var allSamples: [BenchmarkSampleRecord] = []
         var mergedMetrics: [String: Double] = [:]
+        var metricSums: [String: Double] = [:]
+        var metricCounts: [String: Int] = [:]
         var allGateResults: [BenchmarkGateResult] = []
         var totalExtraCost = 0.0
         for (index, task) in suite.tasks.enumerated() {
             try Task.checkCancellation()
             try checkSuiteBudget(suite.budget, started: started, samples: allSamples, extraCost: totalExtraCost)
-            guard let adapter = registry.adapter(for: task.adapter) else {
-                throw BenchmarkError.unknownAdapter(task.adapter)
-            }
-            let context = BenchmarkTaskContext(
-                spec: request.spec, suiteName: request.suiteName,
-                task: task, defaults: defaults, endpoint: request.endpoint
-            )
+            guard let adapter = registry.adapter(for: task.adapter) else { throw BenchmarkError.unknownAdapter(task.adapter) }
+            let context = BenchmarkTaskContext(spec: request.spec, suiteName: request.suiteName, task: task, defaults: defaults, endpoint: request.endpoint)
             let output = try await adapter.run(context: context)
             allSamples += Self.taggedSamples(output.samples, index: index, multiTask: suite.tasks.count > 1)
             totalExtraCost += output.extraCostUSD
-            for (k, v) in output.metrics { mergedMetrics[k] = v }
-            let taskCard = BenchmarkScorecard.evaluate(
-                metrics: output.metrics, gates: task.gates,
-                samples: output.samples, extraCostUSD: output.extraCostUSD
-            )
+            Self.mergeMetrics(output.metrics, index: index, multiTask: suite.tasks.count > 1, sums: &metricSums, counts: &metricCounts, into: &mergedMetrics)
+            let taskCard = BenchmarkScorecard.evaluate(metrics: output.metrics, gates: task.gates, samples: output.samples, extraCostUSD: output.extraCostUSD)
             allGateResults += taskCard.gates.map { gate in
                 var tagged = gate
                 if suite.tasks.count > 1 { tagged.gate = "task[\(index)].\(gate.gate)" }
@@ -145,14 +139,20 @@ public struct BenchmarkRunner: Sendable {
     ) -> BenchmarkRunArtifact {
         var finalMetrics = summary.metrics
         if !summary.samples.isEmpty {
-            finalMetrics["pass_rate"] = Double(summary.samples.filter(\.passed).count) / Double(summary.samples.count)
+            let passRate = Double(summary.samples.filter(\.passed).count) / Double(summary.samples.count)
+            finalMetrics["pass_rate"] = passRate
+            if suite.tasks.count > 1, finalMetrics["accuracy"] != nil {
+                finalMetrics["accuracy"] = passRate
+            }
             finalMetrics["p50_ms"] = BenchmarkStats.percentile(summary.samples.map(\.latencyMs), 0.5)
         }
         var scorecard = BenchmarkScorecard.evaluate(
             metrics: finalMetrics, gates: nil, samples: summary.samples, extraCostUSD: summary.extraCost
         )
         scorecard.gates = summary.gates
-        scorecard.passed = summary.gates.allSatisfy(\.passed)
+        scorecard.passed = summary.gates.isEmpty
+            ? (!summary.samples.isEmpty && summary.samples.allSatisfy(\.passed))
+            : summary.gates.allSatisfy(\.passed)
         var manifest = BenchmarkManifest(
             runID: request.runID, composeName: request.spec.name, suite: request.suiteName,
             seed: defaults.seed ?? 42, temperature: defaults.temperature ?? 0.0,
@@ -197,6 +197,22 @@ private extension BenchmarkRunner {
             var tagged = sample
             tagged.id = "task[\(index)].\(sample.id)"
             return tagged
+        }
+    }
+
+    static func mergeMetrics(
+        _ metrics: [String: Double],
+        index: Int,
+        multiTask: Bool,
+        sums: inout [String: Double],
+        counts: inout [String: Int],
+        into merged: inout [String: Double]
+    ) {
+        for (key, value) in metrics {
+            if multiTask { merged["task[\(index)].\(key)"] = value }
+            sums[key, default: 0] += value
+            counts[key, default: 0] += 1
+            merged[key] = sums[key, default: 0] / Double(counts[key, default: 1])
         }
     }
 }

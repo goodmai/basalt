@@ -58,6 +58,7 @@ public actor CostTracker: Sendable {
     static let maxTrackedSessions = 4_096
     private var sessionUsage: [String: (cost: Double, tick: UInt64)] = [:]
     private var sessionTick: UInt64 = 0
+    private var reservations: [UUID: (amount: Double, scopes: Set<BudgetScope>)] = [:]
     
     private let logger = Logger()
     
@@ -119,18 +120,43 @@ public actor CostTracker: Sendable {
         }
     }
 
+    private var totalReserved: Double {
+        reservations.values.reduce(0) { $0 + $1.amount }
+    }
+
+    private func reserved(in scope: BudgetScope) -> Double {
+        reservations.values.reduce(0) { $0 + ($1.scopes.contains(scope) ? $1.amount : 0) }
+    }
+
     public func isExhausted(scopes: [BudgetScope]) -> Bool {
         resetCountersIfNeeded()
-        if stats.dailyUsage >= budget.dailyLimit || stats.monthlyUsage >= budget.monthlyLimit { return true }
+        if stats.dailyUsage + totalReserved >= budget.dailyLimit || stats.monthlyUsage + totalReserved >= budget.monthlyLimit {
+            return true
+        }
         return scopes.contains { scope in
-            limit(for: scope).map { spent(in: scope) >= $0 } ?? false
+            limit(for: scope).map { spent(in: scope) + reserved(in: scope) >= $0 } ?? false
         }
     }
 
     public func remaining(scopes: [BudgetScope]) -> Double {
         resetCountersIfNeeded()
-        let scoped = scopes.compactMap { scope in limit(for: scope).map { $0 - spent(in: scope) } }
-        return ([budget.dailyLimit - stats.dailyUsage, budget.monthlyLimit - stats.monthlyUsage] + scoped).min()!
+        let scoped = scopes.compactMap { scope in limit(for: scope).map { $0 - spent(in: scope) - reserved(in: scope) } }
+        let global = [budget.dailyLimit - stats.dailyUsage - totalReserved, budget.monthlyLimit - stats.monthlyUsage - totalReserved]
+        return (global + scoped).min()!
+    }
+
+    public func reserve(estimatedCost: Double, scopes: [BudgetScope] = []) -> UUID? {
+        resetCountersIfNeeded()
+        let amount = estimatedCost.isFinite && estimatedCost > 0 ? estimatedCost : 0
+        if isExhausted(scopes: scopes) { return nil }
+        if amount > 0 && amount > remaining(scopes: scopes) + 1e-12 { return nil }
+        let token = UUID()
+        reservations[token] = (amount, Set(scopes))
+        return token
+    }
+
+    public func release(reservation token: UUID) {
+        reservations.removeValue(forKey: token)
     }
 
     public func recordUsage(model: String, cost: Double, scopes: [BudgetScope] = []) throws {

@@ -149,7 +149,7 @@ struct AppImageCanvasReducerAndStoreTests {
             Issue.record("Expected .generateImage effect for I2I edit")
             return
         }
-        #expect(!editCall.referenceImages.isEmpty && editCall.beforeFilePath == "/tmp/basalt-second.png")
+        #expect(editCall.referenceImages.isEmpty && editCall.referenceImagePaths == ["/tmp/basalt-second.png"] && editCall.beforeFilePath == "/tmp/basalt-second.png")
         #expect(editCall.endpointPath == "v1/images/edits")
     }
 

@@ -28,30 +28,40 @@ extension ModelRouter {
     ) -> Double? {
         if tier.isFree { return 0 }
         guard !exhausted else { return nil }
-        let text = (request.messages?.isEmpty == false)
-            ? ChatMessageInput.plainText(request.messages ?? [])
-            : request.prompt
-        let promptTokens = text.utf8.count / 4
+        let promptTokens = Self.estimatedPromptTokens(request)
         let completionTokens = request.maxTokens ?? 1_024
         let cost = estimateCost(model: tier.model, promptTokens: promptTokens, completionTokens: completionTokens)
         if let remaining, cost > remaining { return nil }
         return cost
     }
 
+    private func reservePaidTier(_ tier: FallbackTier, request: GenerationRequest, context: RoutingContext) async -> (allowed: Bool, token: UUID?) {
+        if tier.isFree { return (true, nil) }
+        guard let costTracker else { return (true, nil) }
+        let exhausted = await costTracker.isExhausted(scopes: context.budgetScopes)
+        let remaining = await costTracker.remaining(scopes: context.budgetScopes)
+        guard let cost = tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) else {
+            return (false, nil)
+        }
+        guard let token = await costTracker.reserve(estimatedCost: cost, scopes: context.budgetScopes) else {
+            return (false, nil)
+        }
+        return (true, token)
+    }
+
     func assessFallbackTiers(_ request: GenerationRequest, localModel: String) async -> CloudAssessment? {
         guard Self.isFallbackEligible(request) else { return nil }
         let context = RoutingContext(request)
         let completionTokens = request.maxTokens ?? 1_024
-        let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
-        let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
+            let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
+            let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
             guard let estimatedCost = tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) else {
                 continue
             }
             let tierRemaining: Double? = tier.isFree ? nil : remaining
             guard await isTierHealthy(tier) else { continue }
             let choice = state.cost?.stickyTier(request, sessionId: context.sessionId, localModel: localModel, at: Date())
-            if let choice { state = .reduce(state, .tierChosen(choice.tier, sessionId: context.sessionId, request: request)) }
             return CloudAssessment(
                 capabilityGap: choice?.capabilityGap ?? 0,
                 estimatedCost: estimatedCost,
@@ -61,23 +71,29 @@ extension ModelRouter {
         }
         return nil
     }
+}
 
+extension ModelRouter {
     func generateFromFallbackTiers(_ request: GenerationRequest) async throws -> GenerationResponse {
         let context = RoutingContext(request)
-        let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
-        let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         var lastError: Error?
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
-            guard tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) != nil else { continue }
             guard await isTierHealthy(tier) else {
                 if Task.isCancelled { throw CancellationError() }
                 continue
             }
+            let claim = await reservePaidTier(tier, request: request, context: context)
+            guard claim.allowed else { continue }
             do {
-                let response = try await routeToCloud(client: tier.client, model: tier.model, request: request)
+                defer {
+                    if let token = claim.token {
+                        await withTaskCancellationShield { await costTracker?.release(reservation: token) }
+                    }
+                }
+                let (response, reportedCost) = try await routeToCloudWithCost(client: tier.client, model: tier.model, request: request)
                 state = .reduce(state, .fallback(.sessionBound(sessionId: context.sessionId, tierId: tier.id)))
                 if !tier.isFree {
-                    await recordCloudCost(model: tier.model, response: response, context: context)
+                    await recordCloudCost(model: tier.model, response: response, context: context, reportedCost: reportedCost)
                 }
                 return response
             } catch {
@@ -92,26 +108,32 @@ extension ModelRouter {
 
     func generateStreamFromFallbackTiers(_ request: GenerationRequest) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         let context = RoutingContext(request)
-        let exhausted = if let costTracker { await costTracker.isExhausted(scopes: context.budgetScopes) } else { false }
-        let remaining = await costTracker?.remaining(scopes: context.budgetScopes)
         var lastError: Error?
         for tier in state.fallback.orderedTiers(sessionId: context.sessionId) {
-            guard tierEstimatedCost(tier, request: request, exhausted: exhausted, remaining: remaining) != nil else { continue }
             guard await isTierHealthy(tier) else {
                 if Task.isCancelled { throw CancellationError() }
                 continue
             }
+            let claim = await reservePaidTier(tier, request: request, context: context)
+            guard claim.allowed else { continue }
             do {
                 let startTime = ContinuousClock.now
                 let source = try await tier.client.chatStream(request: Self.chatRequest(request, model: tier.model, stream: true))
                 state = .reduce(state, .fallback(.sessionBound(sessionId: context.sessionId, tierId: tier.id)))
                 let isFree = tier.isFree
                 let model = tier.model
-                return Self.relayCloudStream(source, startTime: startTime) { [weak self] metadata in
-                    guard !isFree else { return }
-                    await self?.recordCloudCost(model: model, response: metadata, context: context)
-                }
+                let tracker = costTracker
+                let token = claim.token
+                return Self.relayCloudStream(source, startTime: startTime, onUsageWithCost: { [weak self] metadata, cost in
+                    if !isFree {
+                        await self?.recordCloudCost(model: model, response: metadata, context: context, reportedCost: cost)
+                    }
+                    if let token { await tracker?.release(reservation: token) }
+                }, onFinish: {
+                    if let token { await tracker?.release(reservation: token) }
+                })
             } catch {
+                if let token = claim.token { await costTracker?.release(reservation: token) }
                 if Self.isCancellation(error) { throw error }
                 lastError = error
                 let instant = state.fallback.probeConfig.now()
