@@ -239,10 +239,10 @@ struct AuditInferenceAndAppRegressionTests {
 
     @Test("BlockSparseRoutingMetal handles lK not divisible by blockSize and EngineConfiguration clamps topK (#666)")
     func blockSparseNonMultipleAndTopKClamp() {
-        MLXRandom.seed(7)
-        let q = MLXRandom.normal([1, 2, 1, 32]).asType(.float16)
-        let k = MLXRandom.normal([1, 2, 70, 32]).asType(.float16)
-        let v = MLXRandom.normal([1, 2, 70, 32]).asType(.float16)
+        let rng = MLXRandom.RandomState(seed: 7)
+        let q = MLXRandom.normal([1, 2, 1, 32], key: rng).asType(.float16)
+        let k = MLXRandom.normal([1, 2, 70, 32], key: rng).asType(.float16)
+        let v = MLXRandom.normal([1, 2, 70, 32], key: rng).asType(.float16)
         let selected = BlockSparseRoutingMetal.selectMoBABlocks(q: q, k: k, blockSize: 16, topBlocks: 2)
         eval(selected)
         #expect(selected.shape == [2, 1, 2])

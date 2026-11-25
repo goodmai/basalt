@@ -8,11 +8,11 @@ import Testing
 struct SpectralSVDAndOBRTests {
     @Test("SVD-LLM V2 whitened truncation satisfies exact Eckart-Young-Mirsky output error identity ||X W^T - X W_r^T||_F^2 == sum_{i>r} sigma_i^2")
     func whitenedSVDEckartYoungIdentity() {
-        MLXRandom.seed(5520)
+        let rng = MLXRandom.RandomState(seed: 5520)
         let (m, n, k, rank) = (64, 24, 32, 12)
         let scales = MLXArray((0 ..< k).map { Float(exp(Double($0) * 0.12)) }).reshaped(1, k)
-        let x = MLXRandom.normal([m, k], dtype: .float32) * scales
-        let w = MLXRandom.normal([n, k], dtype: .float32)
+        let x = MLXRandom.normal([m, k], dtype: .float32, key: rng) * scales
+        let w = MLXRandom.normal([n, k], dtype: .float32, key: rng)
         let h = matmul(x.T, x)
 
         let res = InputWhitenedSVD.factorize(weight: w, hessian: h, rank: rank, epsilonFloor: 1e-12)
@@ -31,12 +31,12 @@ struct SpectralSVDAndOBRTests {
 
     @Test("SAES-SVD drift compensation reduces cross-layer output error vs uncompensated SVD and HiSVD respects budget")
     func saesDriftCompensationAndHiSVDBudget() {
-        MLXRandom.seed(5521)
+        let rng = MLXRandom.RandomState(seed: 5521)
         let (m, n, k, rank) = (96, 20, 24, 14)
-        let xClean = MLXRandom.normal([m, k], dtype: .float32)
-        let drift = matmul(xClean, MLXRandom.normal([k, k], dtype: .float32) * Float(0.18))
+        let xClean = MLXRandom.normal([m, k], dtype: .float32, key: rng)
+        let drift = matmul(xClean, MLXRandom.normal([k, k], dtype: .float32, key: rng) * Float(0.18))
         let xDrifted = xClean + drift
-        let w = MLXRandom.normal([n, k], dtype: .float32)
+        let w = MLXRandom.normal([n, k], dtype: .float32, key: rng)
         let yClean = matmul(xClean, w.T)
 
         let naive = InputWhitenedSVD.factorize(weight: w, hessian: matmul(xClean.T, xClean), rank: rank)
@@ -61,12 +61,12 @@ struct SpectralSVDAndOBRTests {
 
     @Test("OBR closed-form Hessian restoration strictly improves both pruned MSE and post-MACaQ quantization MSE")
     func obrImprovesPrunedAndMACaQQuantizedError() throws {
-        MLXRandom.seed(25091)
+        let rng = MLXRandom.RandomState(seed: 25091)
         let (m, n, k) = (128, 16, 64)
-        let latent = MLXRandom.normal([m, 16], dtype: .float32)
-        let mixer = MLXRandom.normal([16, k], dtype: .float32)
-        let x = matmul(latent, mixer) + MLXRandom.normal([m, k], dtype: .float32) * Float(0.15)
-        let w = MLXRandom.normal([n, k], dtype: .float32)
+        let latent = MLXRandom.normal([m, 16], dtype: .float32, key: rng)
+        let mixer = MLXRandom.normal([16, k], dtype: .float32, key: rng)
+        let x = matmul(latent, mixer) + MLXRandom.normal([m, k], dtype: .float32, key: rng) * Float(0.15)
+        let w = MLXRandom.normal([n, k], dtype: .float32, key: rng)
         let h = matmul(x.T, x)
 
         let prunedCols = Array(48 ..< 64)
@@ -102,11 +102,11 @@ struct SpectralSVDAndOBRTests {
 
     @Test("SharedBasisSwitchLinear is exact at full rank and MAEP protects vision-critical experts under text-heavy calibration")
     func sharedBasisMoEAndMAEPScoring() {
-        MLXRandom.seed(26110)
+        let rng = MLXRandom.RandomState(seed: 26110)
         let (numExperts, n, k) = (4, 12, 16)
-        let x = MLXRandom.normal([20, k], dtype: .float32)
+        let x = MLXRandom.normal([20, k], dtype: .float32, key: rng)
         let h = matmul(x.T, x)
-        let experts = (0 ..< numExperts).map { _ in MLXRandom.normal([n, k], dtype: .float32) }
+        let experts = (0 ..< numExperts).map { _ in MLXRandom.normal([n, k], dtype: .float32, key: rng) }
 
         let fullMoE = SharedBasisSwitchLinear.factorizeExperts(expertWeights: experts, hessian: h, rank: k, epsilonFloor: 1e-10)
         let idx = MLXArray([Int32]((0 ..< 40).map { Int32($0 % numExperts) })).reshaped(20, 2)

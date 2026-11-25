@@ -23,9 +23,9 @@ struct PVTuningTests {
 
     @Test("2-bit, 3-bit, 4-bit affine and 4-bit nf4 pack/unpack round-trips are bit-identical on 2D and 3D expert tensors and match MLX dequantized within 1e-6")
     func codeRoundTripAndDequant() throws {
-        MLXRandom.seed(410)
+        let rng = MLXRandom.RandomState(seed: 410)
         for shape in [[12, 64], [4, 8, 64]] {
-            let w = MLXRandom.normal(shape).asType(.float32)
+            let w = MLXRandom.normal(shape, key: rng).asType(.float32)
             for (bits, encoding) in [(2, PVCodeGrid.Encoding.affine(.affine)), (3, .affine(.affine)), (4, .affine(.affine)), (4, .nf4)] {
                 let packed: MLXArray
                 let scales: MLXArray

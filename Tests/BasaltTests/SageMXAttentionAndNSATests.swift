@@ -49,10 +49,10 @@ struct SageMXAttentionAndNSATests {
 
     @Test("SageAttention token-mean centering is algebraically exact under softmax")
     func sageMeanCenteringExactIdentity() {
-        MLXRandom.seed(24102)
+        let rng = MLXRandom.RandomState(seed: 24102)
         let (heads, lQ, lK, d) = (2, 8, 16, 64)
-        let q = MLXRandom.normal([heads, lQ, d], dtype: .float32) + Float(5.0)
-        let k = MLXRandom.normal([heads, lK, d], dtype: .float32) - Float(3.0)
+        let q = MLXRandom.normal([heads, lQ, d], dtype: .float32, key: rng) + Float(5.0)
+        let k = MLXRandom.normal([heads, lK, d], dtype: .float32, key: rng) - Float(3.0)
         let scale = 1.0 / Float(d).squareRoot()
 
         let refProbs = softmax(matmul(q, k.swappedAxes(-1, -2)) * scale, axis: -1)
@@ -68,14 +68,14 @@ struct SageMXAttentionAndNSATests {
 
     @Test("MoBA / DeepSeek NSA fused Metal block-sparse attention matches gathered MLX reference (#228)")
     func mobaAndNSABlockSparseParity() {
-        MLXRandom.seed(2502)
+        let rng = MLXRandom.RandomState(seed: 2502)
         let (heads, lQ, lK, d) = (2, 6, 64, 64)
         let blockSize = 16
         let topBlocks = 2
         let scale = 1.0 / Float(d).squareRoot()
-        let q = MLXRandom.normal([heads, lQ, d], dtype: .float32)
-        let k = MLXRandom.normal([heads, lK, d], dtype: .float32)
-        let v = MLXRandom.normal([heads, lK, d], dtype: .float32)
+        let q = MLXRandom.normal([heads, lQ, d], dtype: .float32, key: rng)
+        let k = MLXRandom.normal([heads, lK, d], dtype: .float32, key: rng)
+        let v = MLXRandom.normal([heads, lK, d], dtype: .float32, key: rng)
 
         let sel = BlockSparseRoutingMetal.selectMoBABlocks(q: q, k: k, blockSize: blockSize, topBlocks: topBlocks)
         eval(sel)

@@ -10,11 +10,11 @@ import Testing
 struct GGUFMacAqE8PAndTurboBoATests {
     @Test("GGUFMacAqRefiner unpacks and repacks Q4_K, Q5_K, and Q6_K bit-identically and reduces Hessian loss")
     func ggufMacAqRoundTripAndHessianRefinement() throws {
-        MLXRandom.seed(5490)
+        let rng = MLXRandom.RandomState(seed: 5490)
         let rows = 4
         let cols = 256
-        let target = MLXRandom.normal([rows, cols], dtype: .float32) * Float(1.5)
-        let xCal = MLXRandom.normal([64, cols], dtype: .float32)
+        let target = MLXRandom.normal([rows, cols], dtype: .float32, key: rng) * Float(1.5)
+        let xCal = MLXRandom.normal([64, cols], dtype: .float32, key: rng)
         let hessian = (matmul(xCal.T, xCal) / Float(64.0)) + eye(cols, dtype: .float32) * Float(0.05)
         eval(target, hessian)
         let targetHost = target.asArray(Float.self)
@@ -32,7 +32,7 @@ struct GGUFMacAqE8PAndTurboBoATests {
             originalBytes: q4Bytes, codes: q4State.codes.asArray(Int32.self), type: .q4K)
         #expect(q4Repack == q4Bytes)
 
-        let perturbedTarget = target + MLXRandom.normal([rows, cols], dtype: .float32) * Float(0.25)
+        let perturbedTarget = target + MLXRandom.normal([rows, cols], dtype: .float32, key: rng) * Float(0.25)
         let (refinedQ4, flipRes) = try GGUFMacAqRefiner.refineTensorBytes(
             rawBytes: q4Bytes, type: .q4K, targetWeight: perturbedTarget, hessian: hessian, maxIterations: 32)
         #expect(refinedQ4.count == q4Bytes.count)
@@ -71,7 +71,7 @@ struct GGUFMacAqE8PAndTurboBoATests {
 
     @Test("QuIP# E8P 2-bit Gosset lattice codebook satisfies exact E8 parity and fused Metal kernel matches CPU float32 and TinyModel (#228)")
     func e8pLatticeAndFusedMetalParity() throws {
-        MLXRandom.seed(2402)
+        let rng = MLXRandom.RandomState(seed: 2402)
         for trial in 0 ..< 32 {
             let vec = (0 ..< 8).map { j in sinf(Float(trial * 8 + j) * 0.73) * 2.1 }
             let code = E8PLattice.nearestCode(vec)
@@ -80,8 +80,8 @@ struct GGUFMacAqE8PAndTurboBoATests {
         }
 
         let (nOut, k) = (16, 64)
-        let w = MLXRandom.normal([nOut, k], dtype: .float32)
-        let bias = MLXRandom.normal([nOut], dtype: .float32) * Float(0.05)
+        let w = MLXRandom.normal([nOut, k], dtype: .float32, key: rng)
+        let bias = MLXRandom.normal([nOut], dtype: .float32, key: rng) * Float(0.05)
         let pack = E8PMetalKernels.quantizeWeight(w, seed: 77)
         eval(pack.packedCodes, pack.rowScale, pack.rhtSigns, bias)
         let wordsHost = pack.packedCodes.asArray(UInt32.self)
@@ -91,7 +91,7 @@ struct GGUFMacAqE8PAndTurboBoATests {
 
         for dtype in [DType.float32, .float16, .bfloat16] {
             for rows in [1, 4, 8] {
-                let xIn = MLXRandom.normal([rows, k], dtype: .float32).asType(dtype)
+                let xIn = MLXRandom.normal([rows, k], dtype: .float32, key: rng).asType(dtype)
                 let xHost = xIn.asType(.float32).asArray(Float.self)
                 let cpuPack = E8PMetalKernels.QuantizedPack(
                     packedCodes: pack.packedCodes,
@@ -150,12 +150,12 @@ struct GGUFMacAqE8PAndTurboBoATests {
         eval(recon)
         #expect(abs(recon - bRed).max().item(Float.self) < 1e-4)
 
-        MLXRandom.seed(2602)
+        let rng = MLXRandom.RandomState(seed: 2602)
         let k = 128
-        let w = MLXRandom.normal([32, k], dtype: .float32)
-        let latent = MLXRandom.normal([96, 16], dtype: .float32)
-        let mix = MLXRandom.normal([16, k], dtype: .float32)
-        let xCorr = matmul(latent, mix) + MLXRandom.normal([96, k], dtype: .float32) * Float(0.15)
+        let w = MLXRandom.normal([32, k], dtype: .float32, key: rng)
+        let latent = MLXRandom.normal([96, 16], dtype: .float32, key: rng)
+        let mix = MLXRandom.normal([16, k], dtype: .float32, key: rng)
+        let xCorr = matmul(latent, mix) + MLXRandom.normal([96, k], dtype: .float32, key: rng) * Float(0.15)
         let hCorr = matmul(xCorr.T, xCorr) / Float(96.0)
 
         let affineRes = BabaiLLLCompensator.turboBoAQuantize(

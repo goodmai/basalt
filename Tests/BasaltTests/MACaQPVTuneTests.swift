@@ -30,9 +30,9 @@ struct MACaQPVTuneTests {
 
     @Test("Differentiable Hadamard matches fused Metal kernel within 1e-5 and produces finite VJPs for x and pre_scale")
     func differentiableHadamardParityAndAutograd() {
-        MLXRandom.seed(543)
-        let x = MLXRandom.normal([6, 64]).asType(.float32)
-        let pre = MLXRandom.uniform(low: 0.4, high: 1.8, [64]).asType(.float32)
+        let rng = MLXRandom.RandomState(seed: 543)
+        let x = MLXRandom.normal([6, 64], key: rng).asType(.float32)
+        let pre = MLXRandom.uniform(low: 0.4, high: 1.8, [64], key: rng).asType(.float32)
         let metalOut = MACaQFusedKernels.blockHadamard(x, scaleVector: pre, blockSize: 32, isInverse: false)
         let diffOut = MACaQFusedKernels.differentiableBlockHadamard(x, scaleVector: pre, blockSize: 32)
         let maxErr = abs(metalOut - diffOut).max()
@@ -51,8 +51,8 @@ struct MACaQPVTuneTests {
         #expect(gxNorm.item(Float.self) > 0 && gxNorm.item(Float.self).isFinite)
         #expect(gpNorm.item(Float.self) > 0 && gpNorm.item(Float.self).isFinite)
 
-        let xSw = MLXRandom.normal([3, 1, 1, 64]).asType(.float32)
-        let preExp = MLXRandom.uniform(low: 0.5, high: 1.6, [4, 64]).asType(.float32)
+        let xSw = MLXRandom.normal([3, 1, 1, 64], key: rng).asType(.float32)
+        let preExp = MLXRandom.uniform(low: 0.5, high: 1.6, [4, 64], key: rng).asType(.float32)
         let idx = MLXArray([Int32(2), 1, 0, 3, 3, 2]).reshaped(3, 2)
         let vgSw = valueAndGrad({ arrays in
             let y = MACaQFusedKernels.differentiableSwitchHadamard(
@@ -67,10 +67,10 @@ struct MACaQPVTuneTests {
 
     @Test("PVMACaQGrid MXFP4 2D and 3D pack/unpack round-trips bit-identically and discreteStep lowers linear proxy objective")
     func mxfp4GridRoundTripAndDiscreteStep() {
-        MLXRandom.seed(5431)
+        let rng = MLXRandom.RandomState(seed: 5431)
         let spec = PVCodeGrid.Spec(groupSize: 32, bits: 4, mode: .mxfp4)
         for shape in [[8, 64], [3, 6, 64]] {
-            let w = MLXRandom.normal(shape).asType(.bfloat16)
+            let w = MLXRandom.normal(shape, key: rng).asType(.bfloat16)
             let (wq, sc, _) = MLX.quantized(w, groupSize: 32, bits: 4, mode: .mxfp4)
             let codes = PVMACaQGrid.unpackCodes(wq, spec: spec)
             let repacked = PVMACaQGrid.packCodes(codes, spec: spec)
@@ -82,7 +82,7 @@ struct MACaQPVTuneTests {
             #expect(maxDeqDiff.item(Float.self) == 0)
             #expect(repacked.asArray(UInt32.self) == repackedTwice.asArray(UInt32.self))
 
-            let grad = MLXRandom.normal(shape).asType(.float32)
+            let grad = MLXRandom.normal(shape, key: rng).asType(.float32)
             let step = PVMACaQGrid.discreteStep(codes: codes, scales: sc, grad: grad, spec: spec, fraction: 0.1)
             #expect(step.updated > 0)
             let wAfter = MLX.dequantized(

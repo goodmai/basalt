@@ -102,11 +102,11 @@ struct QATAndQuantizationAuditTests {
 
     @Test("QATFakeQuantizer STE gradient decreases 4-bit fake-quantized MSE loss over training steps")
     func qatFakeQuantizerSTEDecreasesLoss() throws {
-        MLXRandom.seed(42)
-        let trueW = MLXRandom.normal([16, 64]).asType(.float32) * 0.25
-        let x = MLXRandom.normal([32, 64]).asType(.float32)
+        let rng = MLXRandom.RandomState(seed: 42)
+        let trueW = MLXRandom.normal([16, 64], key: rng).asType(.float32) * 0.25
+        let x = MLXRandom.normal([32, 64], key: rng).asType(.float32)
         let target = matmul(x, trueW.transposed())
-        var w = trueW + MLXRandom.normal([16, 64]).asType(.float32) * 0.15
+        var w = trueW + MLXRandom.normal([16, 64], key: rng).asType(.float32) * 0.15
         eval(trueW, x, target, w)
 
         let snr = QATFakeQuantizer.quantizationSQNRdB(

@@ -69,7 +69,7 @@ struct ModelOptImporterTests {
     static func load(_ family: TinyModel.Family, from directory: URL) throws -> any LanguageModel {
         let config = try Data(contentsOf: directory.appending(component: "config.json"))
         let base = try JSONDecoder.json5().decode(BaseConfiguration.self, from: config)
-        let model = try family.model(config)
+        let model = try withRandomState(MLXRandom.RandomState(seed: family.seed)) { try family.model(config) }
         try loadWeights(modelDirectory: directory, model: model, perLayerQuantization: base.perLayerQuantization)
         return model
     }
