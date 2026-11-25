@@ -105,8 +105,9 @@ package struct WeightConverter: Sendable {
     package func run(source: URL, output: URL) throws -> Summary {
         try Self.checkOutput(output, source: source)
         let configURL = source.appending(component: "config.json")
-        guard let config = ModelCache.config(at: source) else { throw Failure.malformed("\(configURL.path) is missing or unreadable") }
-        let layout = try SourceLayout(directory: source, config: config, configData: Data(contentsOf: configURL))
+        guard let sourceConfig = ModelCache.config(at: source) else { throw Failure.malformed("\(configURL.path) is missing or unreadable") }
+        let layout = try SourceLayout(directory: source, config: sourceConfig, configData: Data(contentsOf: configURL))
+        let config = if case .nf4 = precision { Self.recordingNF4Passthrough(sourceConfig, layout) } else { sourceConfig }
         try checkNF4Source(layout, source: source)
         let lora = try adapter.map { try LoRAUpdate(directory: $0, keys: layout.shardOf) }
         var converter = self

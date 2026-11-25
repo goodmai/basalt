@@ -80,7 +80,7 @@ struct WeightConverterNF4Tests {
     }
 
     @Test("An affine source whose embedding is quantized too (as mlx-community packs ship) converts to nf4 and loads, with the embedding kept as an affine QuantizedEmbedding")
-    func nf4KeepsQuantizedEmbeddingLoadable() throws {
+    func nf4KeepsQuantizedEmbeddingLoadable() async throws {
         let scratch = try WeightConverterTests.Scratch()
         let tiny = scratch.url("tiny")
         try FileManager.default.createDirectory(at: tiny, withIntermediateDirectories: true)
@@ -107,6 +107,14 @@ struct WeightConverterNF4Tests {
         let input = MLXArray(TinyModel.tokens("embedding").map(Int32.init)).reshaped(1, -1)
         let logits = loaded(input, cache: nil).asType(.float32)
         #expect(!isNaN(logits).any().item(Bool.self) && abs(logits).max().item(Float.self).isFinite)
+
+        let recorded = try #require((try WeightConverterTests.config(scratch.url("nf4"))["quantization"] as? [String: Any])?[base] as? [String: Any])
+        #expect(recorded["mode"] as? String == "affine" && recorded["bits"] as? Int == 4 && recorded["group_size"] as? Int == 32)
+        _ = try await UniversalSourceReader.exportCanonicalDense(from: scratch.url("nf4"), to: scratch.url("dense"))
+        let dense = try WeightConverterTests.weights(scratch.url("dense"))
+        #expect(dense[base + ".biases"] == nil && dense[base + ".scales"] == nil)
+        let expected = MLX.dequantized(codes, scales: scales, biases: biases, groupSize: 32, bits: 4, mode: .affine, dtype: .bfloat16)
+        #expect(WeightConverterTests.maxDifference(try #require(dense[embedKey]), expected) == 0)
     }
 
     static func decoded(_ weights: [String: MLXArray]) -> [(String, MLXArray)] {

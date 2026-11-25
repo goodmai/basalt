@@ -25,7 +25,7 @@ extension KVCacheGeometry {
 
     static func visits(_ kinds: [LayerKind], _ c: [String: Any]) -> [LayerKind] {
         guard let loop = c["loop_config"] as? [String: Any], let start = loop["core_start"] as? Int, let end = loop["core_end"] as? Int,
-              let passes = loop["num_passes"] as? Int, passes > 1, start >= 0, start < end, end <= kinds.count else { return kinds }
+              let passes = loop["num_passes"] as? Int, (2 ... 64).contains(passes), start >= 0, start < end, end <= kinds.count else { return kinds }
         return Array(kinds[..<start]) + Array(repeating: kinds[start ..< end], count: passes).flatMap { $0 } + Array(kinds[end...])
     }
 
