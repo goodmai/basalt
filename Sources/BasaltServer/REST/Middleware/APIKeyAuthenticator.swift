@@ -23,6 +23,16 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         self.virtualKeyDigests = virtualKeys.map { (SHA256.hash(data: Data($0.key.utf8)), $0.id) }
     }
 
+    static func isAdminRequest(_ request: Request) -> Bool {
+        let path = request.uri.path
+        if request.method == .delete && path.hasPrefix("/v1/models/") { return true }
+        if path == "/v1/models/load" || path == "/v1/models/download" || path == "/v1/models/publish" { return true }
+        if path.hasPrefix("/v1/models/convert") || path.hasPrefix("/api/v1/models/convert") { return true }
+        if path == "/v1/compose/apply" || path == "/v1/compose/diff" { return true }
+        if path.hasPrefix("/v1/mcp/approvals") { return true }
+        return false
+    }
+
     static func request(_ request: Request, budgetKey: String?, rateKey: String? = nil) -> Request {
         guard budgetKey != nil || rateKey != nil || request.headers[budgetKeyHeader] != nil || request.headers[rateKeyHeader] != nil else {
             return request
@@ -73,7 +83,14 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
                 return try await next(Self.request(request, budgetKey: nil, rateKey: "master"), context)
             }
             if let id = virtualKeyId(for: candidate) {
-                return try await next(Self.request(request, budgetKey: id, rateKey: id), context)
+                if Self.isAdminRequest(request) {
+                    return ProviderErrorResponse.response(
+                        status: .forbidden,
+                        message: "Forbidden: virtual keys cannot access admin or control routes.",
+                        path: request.uri.path
+                    )
+                }
+                return try await next(Self.request(request, budgetKey: id, rateKey: "vk:\(id)"), context)
             }
         }
 

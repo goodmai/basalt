@@ -31,12 +31,14 @@ extension OpenAIController {
         let data = Data(buffer.readableBytesView)
         let dto: GenerationRequest
         do {
-            dto = PromptCacheKey.scoped(try JSONDecoder().decode(GenerationRequest.self, from: data), headers: request.headers).routed(by: request.headers)
+            let decoded = try JSONDecoder().decode(GenerationRequest.self, from: data)
+            dto = PromptCacheKey.scoped(decoded, headers: request.headers).routed(by: request.headers)
                 .withOrigin(RequestOrigin(source: "generate", endpoint: "/v1/generate", stream: false))
         } catch {
             return ProviderErrorResponse.response(status: .badRequest, message: ModelsController.publicMessage(for: error), error: error, shape: .openAI)
         }
         do {
+            _ = try dto.validated()
             let result = try await orchestrator.generate(request: dto)
             let encoded = try JSONEncoder().encode(result)
             return makeDataResponse(encoded)

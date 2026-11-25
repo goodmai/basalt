@@ -125,7 +125,7 @@ struct ModelsConvertController: Sendable {
                 return ProviderErrorResponse.response(
                     status: .badRequest, message: "Local adapter paths are not permitted over REST; pass a Hugging Face repo id (org/repo) or use `basalt models convert --adapter`.", shape: .openAI)
             }
-            normalized.adapter = adapterId
+            normalized.adapter = ServedAdapterSource.repositoryPrefix + adapterId
         }
         guard let jobId = await operations.conversionCoordinator.tryBegin() else {
             return ProviderErrorResponse.response(
