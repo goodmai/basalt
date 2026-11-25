@@ -45,6 +45,7 @@ enum RopeYarnStage {
         }
         for key in ["rope_theta", "partial_rotary_factor"] where rope[key] == nil { rope[key] = text[key] }
         rope["rope_type"] = "yarn"
+        rope["type"] = "yarn"
         rope["factor"] = factor
         rope["original_max_position_embeddings"] = native
         let effective = Int((Double(native) * factor).rounded())

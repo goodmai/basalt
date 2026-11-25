@@ -1,4 +1,7 @@
 import Foundation
+import MLX
+import MLXLLM
+import MLXLMCommon
 import Testing
 @testable import BasaltCore
 @testable import BasaltInference
@@ -127,5 +130,38 @@ struct RopeYarnFlagTests {
         let entries = try FileManager.default.contentsOfDirectory(atPath: staged.directory.path)
         #expect(!entries.contains("model-00002.safetensors"))
         #expect(!FileManager.default.fileExists(atPath: abandoned.path))
+    }
+
+    @Test("Rewriting a Qwen 3.5/3.8 config that already sets rope_parameters.type=default overwrites type to yarn so MLXLLM instantiates YarnRoPE (#729)")
+    func rewriteOverwritesDefaultRopeTypeForMLXLLM() throws {
+        let baseData = Data(TinyModel.Family.qwen35.config.utf8)
+        var text = try #require(JSONSerialization.jsonObject(with: baseData) as? [String: Any])
+        text["max_position_embeddings"] = 32
+        text["rope_parameters"] = [
+            "type": "default",
+            "partial_rotary_factor": 0.5,
+            "rope_theta": 10_000_000.0,
+            "mrope_section": [2, 1, 1],
+            "mrope_interleaved": true,
+        ] as [String: Any]
+        let root: [String: Any] = ["model_type": "qwen3_5", "text_config": text]
+        let (rewritten, native, effective) = try RopeYarnStage.rewritten(root, factor: 2)
+        #expect(native == 32 && effective == 64)
+        let rewrittenText = try #require(rewritten["text_config"] as? [String: Any])
+        let rewrittenRope = try #require(rewrittenText["rope_parameters"] as? [String: Any])
+        #expect(rewrittenRope["rope_type"] as? String == "yarn" && rewrittenRope["type"] as? String == "yarn")
+
+        let decoder = JSONDecoder()
+        let stockCfg = try decoder.decode(MLXLLM::Qwen35Configuration.self, from: JSONSerialization.data(withJSONObject: root))
+        let yarnCfg = try decoder.decode(MLXLLM::Qwen35Configuration.self, from: JSONSerialization.data(withJSONObject: rewritten))
+        let stockModel = withRandomState(MLXRandom.RandomState(seed: 729)) { MLXLLM::Qwen35Model(stockCfg) }
+        let yarnModel = MLXLLM::Qwen35Model(yarnCfg)
+        try yarnModel.update(parameters: stockModel.parameters(), verify: [])
+        let stockRopeTypes = RopeYarnRealModelTests.fullAttentionRoPETypeNames(in: stockModel)
+        let yarnRopeTypes = RopeYarnRealModelTests.fullAttentionRoPETypeNames(in: yarnModel)
+        #expect(!stockRopeTypes.isEmpty && stockRopeTypes.allSatisfy { $0 == "RoPE" })
+        #expect(!yarnRopeTypes.isEmpty && yarnRopeTypes.allSatisfy { $0 == "YarnRoPE" })
+        let tokens = MLXArray((0 ..< 64).map { Int32(($0 * 29 + 7) % 250) })[.newAxis]
+        #expect(abs(yarnModel(tokens, cache: nil) - stockModel(tokens, cache: nil)).max().item(Float.self) > 1e-3)
     }
 }
