@@ -178,10 +178,13 @@ public enum LibraryEffects {
 
     static func call(_ effect: LibraryEffect, _ environment: LibraryEnvironment, _ send: @escaping @Sendable (LibraryAction) async -> Void) async {
         guard let client = await environment.client() else {
-            if case .load = effect {
+            switch effect {
+            case .fit(let id):
+                await send(.fitFailed(id, "the engine is not running"))
+            case .load, .delete:
                 await send(.listFailed("the engine is not running"))
-            } else if case .delete = effect {
-                await send(.listFailed("the engine is not running"))
+            default:
+                break
             }
             return
         }
@@ -200,7 +203,9 @@ public enum LibraryEffects {
             }
         } catch {
             switch effect {
-            case .list, .fit:
+            case .fit(let id):
+                await send(.fitFailed(id, Self.describe(error)))
+            case .list:
                 await send(.listFailed(Self.describe(error)))
             default:
                 await send(.failed(Self.describe(error)))

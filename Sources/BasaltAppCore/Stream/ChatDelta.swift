@@ -24,6 +24,7 @@ public enum ChatDeltaDecoder {
                         var arguments: String?
                     }
 
+                    var index: Int?
                     var id: String?
                     var function: Function?
                 }
@@ -67,6 +68,11 @@ public enum ChatDeltaDecoder {
     }
 
     public static func decode(_ event: SSEEvent) throws(EngineError) -> Decoded {
+        var ids: [Int: String] = [:]
+        return try decode(event, toolCallIDs: &ids)
+    }
+
+    public static func decode(_ event: SSEEvent, toolCallIDs: inout [Int: String]) throws(EngineError) -> Decoded {
         guard event.data != "[DONE]" else { return .done }
         let frame: Frame
         do {
@@ -80,11 +86,26 @@ public enum ChatDeltaDecoder {
             if let reasoning = choice.delta?.reasoning, !reasoning.isEmpty { deltas.append(.reasoning(reasoning)) }
             if let text = choice.delta?.content, !text.isEmpty { deltas.append(.text(text)) }
             for call in choice.delta?.toolCalls ?? [] {
-                deltas.append(.toolCall(ToolCallOutput(id: call.id ?? "", name: call.function?.name ?? "", arguments: call.function?.arguments ?? "")))
+                let resolvedID = resolveToolCallID(call, in: &toolCallIDs)
+                deltas.append(.toolCall(ToolCallOutput(id: resolvedID, name: call.function?.name ?? "", arguments: call.function?.arguments ?? "")))
             }
             if let reason = choice.finishReason { deltas.append(.finish(reason)) }
         }
         if let usage = frame.usage { deltas.append(.usage(prompt: usage.promptTokens, completion: usage.completionTokens)) }
         return .deltas(deltas)
+    }
+
+    private static func resolveToolCallID(_ call: Frame.Choice.Delta.ToolCall, in map: inout [Int: String]) -> String {
+        if let rawID = call.id, !rawID.isEmpty {
+            if let idx = call.index { map[idx] = rawID }
+            return rawID
+        }
+        if let idx = call.index {
+            if let known = map[idx] { return known }
+            let generated = "call_\(idx)"
+            map[idx] = generated
+            return generated
+        }
+        return ""
     }
 }

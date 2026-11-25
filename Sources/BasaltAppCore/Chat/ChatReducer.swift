@@ -1,3 +1,4 @@
+import BasaltCore
 import Foundation
 
 public struct ChatState: Sendable, Equatable {
@@ -252,7 +253,16 @@ public enum ChatReducer {
             message.parts[index] = .reasoning(text)
         case (.text(let piece), _): message.parts.append(.text(piece))
         case (.reasoning(let piece), _): message.parts.append(.reasoning(piece))
-        case (.toolCall(let call), _): message.parts.append(.toolCall(call))
+        case (.toolCall(let call), _):
+            if !call.id.isEmpty, let idx = message.parts.firstIndex(where: {
+                if case .toolCall(let existing) = $0 { return existing.id == call.id }
+                return false
+            }), case .toolCall(let existing) = message.parts[idx] {
+                let mergedName = existing.name.isEmpty ? call.name : existing.name
+                message.parts[idx] = .toolCall(ToolCallOutput(id: existing.id, name: mergedName, arguments: existing.arguments + call.arguments))
+            } else {
+                message.parts.append(.toolCall(call))
+            }
         case (.usage(let prompt, let completion), _):
             message.receipt?.promptTokens = prompt
             message.receipt?.completionTokens = completion

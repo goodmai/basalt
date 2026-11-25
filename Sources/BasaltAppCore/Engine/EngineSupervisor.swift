@@ -26,6 +26,8 @@ public actor EngineSupervisor {
     private let environment: EngineEnvironment
     private var process: Process?
     private var adoptedPID: Int32?
+    private var adoptedStopTask: Task<Void, Never>?
+    var onAdoptedStopWait: (@Sendable () -> Void)?
     private var stoppingPID: Int32?
     private var graceKillTasks: [Int32: Task<Void, Never>] = [:]
     private var ended: Set<Int32> = []
@@ -77,6 +79,11 @@ public actor EngineSupervisor {
 
     public func shutdown() async {
         await withTaskCancellationShield {
+            if let existing = adoptedStopTask {
+                onAdoptedStopWait?()
+                await existing.value
+                return
+            }
             if process == nil, let adopted = adoptedPID { return await stopAdopted(adopted) }
             if process == nil, let pid = stoppingPID {
                 await end(of: pid)
@@ -93,12 +100,17 @@ public actor EngineSupervisor {
 
     func stopAdopted(_ pid: Int32) async {
         adoptedPID = nil
-        kill(pid, SIGINT)
-        let deadline = environment.now() + HelperLaunch.stopGrace
-        while environment.isAlive(pid), environment.now() < deadline { _ = try? await environment.sleep(.milliseconds(100)) }
-        if environment.isAlive(pid) { kill(pid, SIGKILL) }
-        environment.records.remove()
-        send(.stop)
+        let epoch = state.epoch
+        let env = environment
+        let task = Task { [weak self] in
+            kill(pid, SIGINT)
+            let deadline = env.now() + HelperLaunch.stopGrace
+            while env.isAlive(pid), env.now() < deadline { _ = try? await env.sleep(.milliseconds(100)) }
+            if env.isAlive(pid) { kill(pid, SIGKILL) }
+            await self?.finishAdoptedStop(epoch: epoch)
+        }
+        adoptedStopTask = task
+        await task.value
     }
 
     func end(of pid: Int32) async {
@@ -231,6 +243,20 @@ extension EngineSupervisor {
         graceKillTasks[pid] = Task {
             guard (try? await sleep(HelperLaunch.stopGrace)) != nil, isAlive(pid) else { return }
             kill(pid, SIGKILL)
+        }
+    }
+}
+
+extension EngineSupervisor {
+    func setOnAdoptedStopWait(_ hook: (@Sendable () -> Void)?) {
+        onAdoptedStopWait = hook
+    }
+
+    func finishAdoptedStop(epoch: Int) {
+        adoptedStopTask = nil
+        if state.epoch == epoch {
+            environment.records.remove()
+            send(.stop)
         }
     }
 }
