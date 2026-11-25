@@ -108,8 +108,8 @@ struct ModelCapabilities: Equatable, Sendable {
         let bailingHybrid = ModelCapabilities(verified: [.batchedDecode, .promptCacheReuse, .grammarJumpForward])
         let table: [([String], ModelCapabilities)] = [
             (["llama", "qwen3", "qwen3_moe", "mimo", "minimax", "minimax_m1", "minimax-m1", "minimax_m2", "minimax-m2", "hunyuan", "hunyuan_mt", "hunyuan-mt", "hunyuan_v1_dense"], attention),
-            (["qwen3_5", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8", PrismHadamard.modelType], qwen35),
-            (["qwen3_5_moe", "qwen3_6_moe", "qwen3_8_moe", "qwen3.8_moe"], qwen35),
+            (["qwen3_5", "qwen3_5_text", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8", PrismHadamard.modelType], qwen35),
+            (["qwen3_5_moe", "qwen3_5_moe_text", "qwen3_6_moe", "qwen3_8_moe", "qwen3.8_moe"], qwen35),
             ([NemotronLightningModel.modelType, NemotronLightningModel.aliasModelType, "nemotron-lightning"], nemotron),
             ([NemotronTranscribeModel.modelType, "lfm2", "lfm2_moe", "lfm3", "lfm-3", "lfm3_moe", "lfm-3-moe", "mimo_v2_flash", "mimo-v2-flash", RicursiveModel.modelType, RicursiveModel.aliasModelType, MuseGlimmerTextModel.multimodalModelType, MuseGlimmerTextModel.modelType, "muse-glimmer"], recurrent),
             (["gemma3", "gemma3_text"], gemma3),
