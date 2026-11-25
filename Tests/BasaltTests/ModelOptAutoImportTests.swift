@@ -19,11 +19,11 @@ struct ModelOptAutoImportTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let source = try Self.cachedSnapshot("org/tiny", root: root)
         _ = try ModelOptImporterTests.write(.gemma4Moe, at: source, algorithm: "NVFP4") { _ in false }
-        #expect(ModelCache.resolve(repoId: "org/tiny", root: root) == source)
+        #expect(ModelCache.resolve(repoId: "org/tiny", root: root)?.path == source.path)
 
         let pack = try #require(try await ModelOptAutoImport.ensureImported(repoId: "org/tiny", cacheRoot: root) { _ in })
-        #expect(pack.standardizedFileURL == root.appending(component: "models--org--tiny-mlx/snapshots/local").standardizedFileURL)
-        #expect(ModelCache.resolve(repoId: "org/tiny", root: root)?.standardizedFileURL == pack.standardizedFileURL)
+        #expect(pack.path == root.appending(component: "models--org--tiny-mlx/snapshots/local").path)
+        #expect(ModelCache.resolve(repoId: "org/tiny", root: root)?.path == pack.path)
         let config = try #require(ModelCache.config(at: pack))
         #expect((config["quantization"] as? [String: Any])?["mode"] as? String == "nvfp4")
         #expect(!ModelCache.isModelOpt(pack))
@@ -33,7 +33,7 @@ struct ModelOptAutoImportTests {
         let shard = try #require(try FileManager.default.contentsOfDirectory(at: pack, includingPropertiesForKeys: nil).first { $0.pathExtension == "safetensors" })
         let written = try shard.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         let again = try await ModelOptAutoImport.ensureImported(repoId: "org/tiny", cacheRoot: root) { _ in Issue.record("re-imported an existing pack") }
-        #expect(again?.standardizedFileURL == pack.standardizedFileURL)
+        #expect(again?.path == pack.path)
         #expect(try shard.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == written)
     }
 
@@ -45,7 +45,7 @@ struct ModelOptAutoImportTests {
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
         try Data(TinyModel.Family.gemma4Moe.config.utf8).write(to: source.appending(component: "config.json"))
         #expect(try await ModelOptAutoImport.ensureImported(repoId: "org/plain", cacheRoot: root) { _ in } == nil)
-        #expect(ModelCache.resolve(repoId: "org/plain", root: root) == source)
+        #expect(ModelCache.resolve(repoId: "org/plain", root: root)?.path == source.path)
         #expect(!FileManager.default.fileExists(atPath: root.appending(component: "models--org--plain-mlx").path))
     }
 
@@ -58,6 +58,6 @@ struct ModelOptAutoImportTests {
         let partial = root.appending(component: "models--org--tiny-mlx/snapshots/local")
         try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
         try Data(TinyModel.Family.gemma4Moe.config.utf8).write(to: partial.appending(component: "config.json"))
-        #expect(ModelCache.resolve(repoId: "org/tiny", root: root) == source)
+        #expect(ModelCache.resolve(repoId: "org/tiny", root: root)?.path == source.path)
     }
 }
