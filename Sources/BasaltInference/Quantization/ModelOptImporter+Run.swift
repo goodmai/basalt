@@ -8,8 +8,17 @@ extension ModelOptImporter {
     typealias ExpertParts = [String: [Int: [String: MLXArray]]]
 
     package func run(output: URL, model: any LanguageModel) throws -> Summary {
-        let arrays = try Self.loadShards(in: source)
         var summary = Summary()
+        var weights = try converted(model: model, summary: &summary)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try writeConfig(output: output, weights: weights)
+        summary.bytes = try Self.write(&weights, to: output)
+        try Self.copySidecars(from: source, to: output)
+        return summary
+    }
+
+    func converted(model: any LanguageModel, summary: inout Summary) throws -> [String: MLXArray] {
+        let arrays = try Self.loadShards(in: source)
         var plain: [String: MLXArray] = [:]
         var experts: ExpertParts = [:]
         for key in arrays.keys.sorted() {
@@ -34,11 +43,7 @@ extension ModelOptImporter {
         let stacked = try Self.stack(experts, targets: Self.switchTargets(model))
         summary.stackedExperts = experts.count
         weights.merge(stacked) { _, new in new }
-        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        summary.bytes = try Self.write(weights, to: output)
-        try writeConfig(output: output, weights: weights)
-        try Self.copySidecars(from: source, to: output)
-        return summary
+        return weights
     }
 
     func convert(stem: String, arrays: [String: MLXArray], summary: inout Summary) throws(Refused) -> [String: MLXArray] {
@@ -105,11 +110,11 @@ extension ModelOptImporter {
         return arrays
     }
 
-    static func write(_ weights: [String: MLXArray], to output: URL) throws -> Int {
+    static func write(_ weights: inout [String: MLXArray], to output: URL) throws -> Int {
         var writer = ShardWriter(directory: output, maxBytes: 4 << 30, metadata: ["format": "mlx"])
         var bytes = 0
         for key in weights.keys.sorted() {
-            guard let array = weights[key] else { continue }
+            guard let array = weights.removeValue(forKey: key) else { continue }
             bytes += array.nbytes
             try writer.add([key: array])
         }
