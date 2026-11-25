@@ -117,8 +117,15 @@ struct ModelsConvertController: Sendable {
             normalized.pvTeacher = teacherId
         }
         if let rawAdapter = req.adapter, !rawAdapter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return ProviderErrorResponse.response(
-                status: .badRequest, message: "Local adapter paths are not permitted over REST; use `basalt models convert --adapter`.", shape: .openAI)
+            let trimmed = rawAdapter.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stripped = trimmed.hasPrefix(ServedAdapterSource.repositoryPrefix)
+                ? String(trimmed.dropFirst(ServedAdapterSource.repositoryPrefix.count))
+                : trimmed
+            guard let adapterId = ModelsController.restModel(from: stripped).repoId else {
+                return ProviderErrorResponse.response(
+                    status: .badRequest, message: "Local adapter paths are not permitted over REST; pass a Hugging Face repo id (org/repo) or use `basalt models convert --adapter`.", shape: .openAI)
+            }
+            normalized.adapter = adapterId
         }
         guard let jobId = await operations.conversionCoordinator.tryBegin() else {
             return ProviderErrorResponse.response(

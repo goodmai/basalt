@@ -33,6 +33,39 @@ public enum ServedAdapterSource: Sendable, Equatable {
             || (names.contains("edit.json") && names.contains("edit.safetensors"))
     }
 
+    public static func parseSingle(_ value: String) throws(Invalid) -> ServedAdapterSource {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw Invalid(description: "--adapter value must not be empty")
+        }
+        if trimmed.hasPrefix(repositoryPrefix) {
+            return try source(trimmed)
+        }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        let looksLocal = trimmed.hasPrefix("/") || trimmed.hasPrefix(".") || trimmed.hasPrefix("~")
+            || FileManager.default.fileExists(atPath: expanded)
+        if !looksLocal, trimmed.split(separator: "/", omittingEmptySubsequences: false).count == 2,
+           HuggingFaceHub.isRepoId(trimmed) {
+            return .repository(trimmed)
+        }
+        return .directory(URL(fileURLWithPath: expanded))
+    }
+
+    public static func cachedDirectory(for repo: String, cacheRoot: URL = ModelCache.root) -> URL? {
+        let folder = cacheRoot.appending(path: "models--" + repo.replacingOccurrences(of: "/", with: "--"))
+        let snaps = folder.appending(component: "snapshots")
+        if let names = try? FileManager.default.contentsOfDirectory(atPath: snaps.path).filter({ !$0.hasPrefix(".") }).sorted(),
+           let last = names.last {
+            let candidate = snaps.appending(component: last)
+            if isAdapterDirectory(candidate) { return candidate }
+        }
+        if cacheRoot == ModelCache.root {
+            let flat = ModelCache.cacheDir(for: repo)
+            if isAdapterDirectory(flat) { return flat }
+        }
+        return nil
+    }
+
     static func source(_ value: String) throws(Invalid) -> ServedAdapterSource {
         guard value.hasPrefix(repositoryPrefix) else { return .directory(URL(fileURLWithPath: (value as NSString).expandingTildeInPath)) }
         let repo = String(value.dropFirst(repositoryPrefix.count))

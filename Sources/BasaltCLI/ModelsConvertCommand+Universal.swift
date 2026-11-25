@@ -6,6 +6,13 @@ import Foundation
 extension ConvertSubcommand {
     var usesPVTune: Bool { pvTune || experimentalPvTune }
 
+    func resolvedAdapterURL() async throws -> URL? {
+        guard let raw = adapter?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        return try await UniversalModelConverter.resolveAdapterDirectory(raw)
+    }
+
     func resolvedClusterPeers() throws -> [String] {
         guard !clusterPeers.isEmpty else { return [] }
         do {

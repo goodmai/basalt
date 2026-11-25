@@ -119,6 +119,12 @@ extension UniversalModelConverter {
             onProgress(.init(phase: "cluster", completed: 0, total: 4, message: "Validated \(validatedPeers.count) cluster peer(s) for distributed calibration"))
         }
         let teacherURL = try request.pvTeacher.map { try resolveDirectory($0, cacheRoot: cacheRoot) } ?? sourceURL
+        var resolvedRequest = request
+        if let rawAdapter = request.adapter?.trimmingCharacters(in: .whitespacesAndNewlines), !rawAdapter.isEmpty {
+            resolvedRequest.adapter = try await resolveAdapterDirectory(rawAdapter, cacheRoot: cacheRoot).path
+        } else {
+            resolvedRequest.adapter = nil
+        }
         let existedBefore = FileManager.default.fileExists(atPath: outputURL.path)
         var stagingURL: URL?
         defer {
@@ -128,15 +134,15 @@ extension UniversalModelConverter {
         }
 
         do {
-            if detected.format.hasPrefix("modelopt:"), request.target == .nvfp4, !request.pvTune, !request.macaqRefine {
-                return try await importModelOpt(request: request, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
+            if detected.format.hasPrefix("modelopt:"), resolvedRequest.target == .nvfp4, !resolvedRequest.pvTune, !resolvedRequest.macaqRefine, resolvedRequest.adapter == nil {
+                return try await importModelOpt(request: resolvedRequest, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
             }
-            if request.target.isDense {
+            if resolvedRequest.target.isDense {
                 return try await exportDenseTarget(
-                    request: request, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
+                    request: resolvedRequest, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
             }
             return try await runQuantizedPipeline(
-                request: request, detected: detected, sourceURL: sourceURL, outputURL: outputURL,
+                request: resolvedRequest, detected: detected, sourceURL: sourceURL, outputURL: outputURL,
                 teacherURL: teacherURL, stagingURL: &stagingURL, onProgress: onProgress)
         } catch {
             if !existedBefore, outputURL != sourceURL {
@@ -153,8 +159,19 @@ extension UniversalModelConverter {
         outputURL: URL,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionResult {
-        onProgress(.init(phase: "decoding", completed: 1, total: 2, message: "Decoding \(detected.format) to \(request.target.specString)"))
         let dt: DType = request.target == .denseFP16 ? .float16 : .bfloat16
+        if let adapterPath = request.adapter {
+            let summary = try await fuseAdapterIntoDense(
+                sourceURL: sourceURL, adapterURL: URL(fileURLWithPath: adapterPath),
+                outputURL: outputURL, dtype: dt, detected: detected, onProgress: onProgress)
+            onProgress(.init(phase: "writing", completed: 2, total: 2, message: "Completed fused dense export"))
+            return ModelConversionResult(
+                outputId: request.outputId,
+                bytesBefore: Int64(summary.bytesBefore),
+                bytesAfter: Int64(summary.bytesAfter),
+                shards: summary.shards)
+        }
+        onProgress(.init(phase: "decoding", completed: 1, total: 2, message: "Decoding \(detected.format) to \(request.target.specString)"))
         let summary = try await UniversalSourceReader.exportCanonicalDense(from: sourceURL, to: outputURL, dtype: dt) { msg in
             onProgress(.init(phase: "writing", completed: 1, total: 2, message: msg))
         }
@@ -182,8 +199,10 @@ extension UniversalModelConverter {
         return ModelConversionResult(
             outputId: request.outputId, bytesBefore: detected.totalBytes, bytesAfter: Int64(summary.bytes), shards: shards)
     }
+}
 
-    private static func runQuantizedPipeline(
+extension UniversalModelConverter {
+    fileprivate static func runQuantizedPipeline(
         request: ModelConversionRequest,
         detected: DetectedSourceCheckpoint,
         sourceURL: URL,
@@ -192,8 +211,18 @@ extension UniversalModelConverter {
         stagingURL: inout URL?,
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> ModelConversionResult {
+        var activeRequest = request
         let workingSource: URL
-        if needsCanonicalStaging(detected: detected, target: request.target) {
+        if let adapterPath = request.adapter, needsAdapterPreFuse(target: request.target) {
+            try checkStaging(detected)
+            let tmp = FileManager.default.temporaryDirectory.appending(path: "basalt-fused-\(UUID().uuidString)")
+            stagingURL = tmp
+            _ = try await fuseAdapterIntoDense(
+                sourceURL: sourceURL, adapterURL: URL(fileURLWithPath: adapterPath),
+                outputURL: tmp, dtype: .bfloat16, detected: detected, onProgress: onProgress)
+            activeRequest.adapter = nil
+            workingSource = tmp
+        } else if needsCanonicalStaging(detected: detected, target: request.target) {
             try checkStaging(detected)
             onProgress(.init(phase: "decoding", completed: 1, total: 4, message: "Unrotating & decoding \(detected.format) source"))
             let tmp = FileManager.default.temporaryDirectory.appending(path: "basalt-canon-\(UUID().uuidString)")
@@ -203,11 +232,12 @@ extension UniversalModelConverter {
         } else {
             workingSource = sourceURL
         }
-        onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: "Quantizing to \(request.target.specString)"))
+        onProgress(.init(phase: "quantizing", completed: 2, total: 4, message: "Quantizing to \(activeRequest.target.specString)"))
         let encoded = try await encodeTarget(
-            request: request, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
+            request: activeRequest, workingSource: workingSource, outputURL: outputURL, onProgress: onProgress)
+        let effectiveTeacher = (request.adapter != nil && teacherURL == sourceURL) ? workingSource : teacherURL
         let pvOut = try await applyPostRefinements(
-            request: request, outputURL: outputURL, teacherURL: teacherURL, onProgress: onProgress)
+            request: activeRequest, outputURL: outputURL, teacherURL: effectiveTeacher, onProgress: onProgress)
         let finalBytes = UniversalSourceReader.directoryWeightBytes(outputURL)
         onProgress(.init(
             phase: "writing", completed: 4, total: 4, message: "Finished \(request.outputId)",

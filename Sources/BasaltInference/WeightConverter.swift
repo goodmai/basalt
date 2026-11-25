@@ -414,6 +414,10 @@ struct LoRAUpdate {
     let pairs: [String: (a: MLXArray, b: MLXArray)]
 
     init(directory: URL, keys: [String: URL]) throws {
+        if PEFTLoRAReader.isPEFT(directory) {
+            self = try LoRAUpdate(peftDirectory: directory, keys: keys)
+            return
+        }
         let configuration = try JSONDecoder().decode(
             LoRAConfiguration.self, from: Data(contentsOf: directory.appending(component: "adapter_config.json")))
         guard configuration.fineTuneType == .lora else {
