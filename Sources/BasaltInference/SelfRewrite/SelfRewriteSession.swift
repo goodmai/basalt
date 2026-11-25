@@ -138,12 +138,33 @@ public enum SelfRewriteSessionDriver {
         var turnCount: Int = 0
     }
 
+    private static let maxConsecutiveErrors = 3
+
+    private static func nextTurn(
+        state: SessionRunState,
+        turnCount: Int,
+        editor: (any EditSessionEditor)?
+    ) async throws -> EditEditorTurn {
+        if let editor {
+            return try await editor.nextTurn(transcript: state.core.transcript, remainingBudget: state.core.budget)
+        }
+        return try generateLocalTurn(state: state, turnIndex: turnCount)
+    }
+
+    private static func isRecoverableActionError(_ error: any Error) -> Bool {
+        if error is WeightCopyError || error is EditValidationError || error is TensorRegistryError { return true }
+        if let sessionError = error as? SelfRewriteSessionError, sessionError == .noCandidateEdit { return true }
+        if case .invalidRequestStructure = error as? BasaltError { return true }
+        return false
+    }
+
     private static func runLoop(
         state: inout SessionRunState,
         copy: inout WeightCopy,
         editor: (any EditSessionEditor)?
     ) async throws -> LoopSummary {
         var summary = LoopSummary()
+        var consecutiveErrors = 0
         while !state.core.phase.isTerminal {
             try Task.checkCancellation()
             if state.core.budget.isExhausted {
@@ -151,10 +172,13 @@ public enum SelfRewriteSessionDriver {
                 break
             }
             let turn: EditEditorTurn
-            if let editor {
-                turn = try await editor.nextTurn(transcript: state.core.transcript, remainingBudget: state.core.budget)
-            } else {
-                turn = try generateLocalTurn(state: state, turnIndex: summary.turnCount)
+            do {
+                turn = try await nextTurn(state: state, turnCount: summary.turnCount, editor: editor)
+            } catch let error as SelfRewriteSessionError {
+                consecutiveErrors += 1
+                guard case .invalidEditorTurn(let detail) = error, consecutiveErrors < maxConsecutiveErrors else { throw error }
+                state.core.appendObservation("{\"error\":\"invalid JSON turn: \(detail). Reply ONLY with one valid EditEditorTurn JSON object.\"}")
+                continue
             }
             summary.turnCount += 1
             let epoch: UInt64
@@ -163,16 +187,21 @@ public enum SelfRewriteSessionDriver {
             } catch is SelfRewriteBudgetError {
                 break
             }
-            let outcome: ActionOutcome
             do {
-                outcome = try executeAction(turn.action, epoch: epoch, state: &state, copy: &copy)
+                let outcome = try executeAction(turn.action, epoch: epoch, state: &state, copy: &copy)
+                consecutiveErrors = 0
+                if let program = outcome.submitted {
+                    summary.submittedProgram = program
+                    summary.savedURL = outcome.savedURL
+                }
             } catch let budgetError as SelfRewriteBudgetError {
                 state.core.markExhausted(reason: budgetError.description)
                 break
-            }
-            if let program = outcome.submitted {
-                summary.submittedProgram = program
-                summary.savedURL = outcome.savedURL
+            } catch {
+                consecutiveErrors += 1
+                guard isRecoverableActionError(error), consecutiveErrors < maxConsecutiveErrors else { throw error }
+                let extra = error is TensorRegistryError ? " (registered keys: \(state.registry.keys))" : ""
+                state.core.appendObservation("{\"error\":\"action rejected: \(error)\(extra)\"}")
             }
         }
         return summary

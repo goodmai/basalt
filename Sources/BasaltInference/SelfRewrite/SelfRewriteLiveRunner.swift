@@ -89,7 +89,8 @@ extension SelfRewriteSessionDriver {
     ) throws -> EditEditorTurn {
         let prompt = SelfRewritePromptFormatter.formatSinglePrompt(
             entries: state.core.transcript,
-            budget: state.core.budget
+            budget: state.core.budget,
+            practiceIds: state.split.practice.map(\.id)
         )
         let promptIds = state.evalSpec.encode(prompt)
         let seed = UInt64(676 &+ turnIndex)
@@ -185,6 +186,19 @@ extension MLXInferenceEngine {
         return Gemma4EditTopology(config: root)
     }
 
+    static func encodeChatPrompt(_ text: String, tokenizer: any Tokenizer) -> [Int] {
+        let messages: [[String: any Sendable]] = [["role": "user", "content": text]]
+        if let ids = try? tokenizer.applyChatTemplate(
+            messages: messages, tools: nil, additionalContext: ["enable_thinking": false]
+        ), !ids.isEmpty {
+            return ids
+        }
+        if let ids = try? tokenizer.applyChatTemplate(messages: messages, tools: nil, additionalContext: nil), !ids.isEmpty {
+            return ids
+        }
+        return tokenizer.encode(text: text)
+    }
+
     public func runSelfRewrite(
         config: SelfRewriteLiveConfig,
         split: PairedDatasetSplit,
@@ -205,7 +219,7 @@ extension MLXInferenceEngine {
                 )
                 let tokenizer = context.tokenizer
                 let evalSpec = PairedEvaluationSpec(
-                    encode: { text in tokenizer.encode(text: text) },
+                    encode: { text in Self.encodeChatPrompt(text, tokenizer: tokenizer) },
                     decode: { ids in tokenizer.decode(tokenIds: ids, skipSpecialTokens: true) },
                     grader: grader,
                     config: evalConfig

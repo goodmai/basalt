@@ -129,6 +129,7 @@ public enum PairedTestRunner {
             seed: seed
         )
         let input = LMInput(tokens: MLXArray(promptIds.map(Int32.init)))
+        defer { Memory.clearCache() }
         let generated = try withRandomState(MLXRandom.RandomState(seed: seed)) {
             var iterator = try TokenIterator(input: input, model: model, parameters: parameters)
             var out: [Int] = []

@@ -58,16 +58,8 @@ enum ModelSkeletonBuilder {
     }
 
     static func buildFromMirror(_ original: any LanguageModel) throws -> any LanguageModel {
-        if let qwen35 = original as? Qwen35TextModel,
-           let config: Qwen35TextConfiguration = reflectedChild(of: qwen35, matching: Qwen35TextConfiguration.self) {
-            return Qwen35TextModel(config)
-        }
-        if let qwen35Wrapper = original as? MLXLLM.Qwen35Model,
-           let textModel = qwen35Wrapper.namedModules().first(where: { $0.0 == "language_model" })?.1 as? Qwen35TextModel,
-           let textConfig: Qwen35TextConfiguration = reflectedChild(of: textModel, matching: Qwen35TextConfiguration.self) {
-            let encoded = try JSONEncoder().encode(["text_config": textConfig])
-            let wrapperConfig = try JSONDecoder().decode(MLXLLM.Qwen35Configuration.self, from: encoded)
-            return original is MLXLLM.Qwen35MoEModel ? MLXLLM.Qwen35MoEModel(wrapperConfig) : MLXLLM.Qwen35Model(wrapperConfig)
+        if let qwen35 = try buildQwen35FromMirror(original) {
+            return qwen35
         }
         if let qwen3 = original as? Qwen3Model,
            let config: Qwen3Configuration = reflectedChild(of: qwen3, matching: Qwen3Configuration.self) {
@@ -254,6 +246,38 @@ extension ModelSkeletonBuilder {
 }
 
 extension ModelSkeletonBuilder {
+    private struct Qwen35WrapperPayload: Encodable {
+        let modelType: String
+        let textConfig: Qwen35TextConfiguration
+
+        enum CodingKeys: String, CodingKey {
+            case modelType = "model_type"
+            case textConfig = "text_config"
+        }
+    }
+
+    static func buildQwen35FromMirror(_ original: any LanguageModel) throws -> (any LanguageModel)? {
+        if let qwen35 = original as? Qwen35TextModel,
+           let config: Qwen35TextConfiguration = reflectedChild(of: qwen35, matching: Qwen35TextConfiguration.self) {
+            return Qwen35TextModel(config)
+        }
+        if let qwen35VLM = original as? MLXVLM::Qwen35 {
+            return original is MLXVLM::Qwen35MoE
+                ? MLXVLM::Qwen35MoE(qwen35VLM.config)
+                : MLXVLM::Qwen35(qwen35VLM.config)
+        }
+        if let qwen35Wrapper = original as? MLXLLM::Qwen35Model,
+           let textModel = qwen35Wrapper.namedModules().first(where: { $0.0 == "language_model" })?.1 as? Qwen35TextModel,
+           let textConfig: Qwen35TextConfiguration = reflectedChild(of: textModel, matching: Qwen35TextConfiguration.self) {
+            let isMoE = original is MLXLLM::Qwen35MoEModel
+            let payload = Qwen35WrapperPayload(modelType: isMoE ? "qwen3_5_moe" : "qwen3_5", textConfig: textConfig)
+            let encoded = try JSONEncoder().encode(payload)
+            let wrapperConfig = try JSONDecoder().decode(MLXLLM::Qwen35Configuration.self, from: encoded)
+            return isMoE ? MLXLLM::Qwen35MoEModel(wrapperConfig) : MLXLLM::Qwen35Model(wrapperConfig)
+        }
+        return nil
+    }
+
     static func buildGemma4FromMirror(_ original: any LanguageModel) throws -> (any LanguageModel)? {
         if let gemma4 = original as? MLXLLM::Gemma4TextModel,
            let config: MLXLLM::Gemma4TextConfiguration = reflectedChild(of: gemma4, matching: MLXLLM::Gemma4TextConfiguration.self) {
