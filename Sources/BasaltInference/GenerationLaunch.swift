@@ -181,25 +181,29 @@ struct GenerationLauncher {
 
     func stock(batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
         let model = context.model
-        if let batch, let layers = BatchedTokenIterator.batchableLayers(try model.newCache(parameters: params)),
-           let seat = batch.seat(in: context, kvBits: params.kvBits) {
-            try components.validate(parameters: params)
+        let fresh = try model.newCache(parameters: params)
+        let plan = prefillKVPlan(layers: fresh)
+        plan.apply(to: fresh)
+        defer { plan.restore(fresh) }
+        let launchParams = parameters(for: plan)
+        if let batch, let layers = BatchedTokenIterator.batchableLayers(fresh),
+           let seat = batch.seat(in: context, kvBits: launchParams.kvBits) {
+            try components.validate(parameters: launchParams)
             return uncached(try BatchedTokenIterator(
                 input: input, model: model, layers: layers,
-                decoding: DecodingSettings(processor: components.logitProcessor(parameters: params), parameters: params),
+                decoding: DecodingSettings(processor: components.logitProcessor(parameters: launchParams), parameters: launchParams),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
         }
-        let fresh = lookup.requested && !MLXInferenceEngine.carriesMoreThanTokens(input)
-            ? try model.newCache(parameters: params) : []
-        guard PromptLookupTokenIterator.supports(fresh, routesExperts: lookup.routesExperts) else {
-            return uncached(try TokenIterator(input: input, model: model, parameters: params, components: components))
+        guard lookup.requested, !MLXInferenceEngine.carriesMoreThanTokens(input),
+              PromptLookupTokenIterator.supports(fresh, routesExperts: lookup.routesExperts) else {
+            return uncached(try TokenIterator(input: input, model: model, cache: fresh, parameters: launchParams, components: components))
         }
-        try components.validate(parameters: params)
+        try components.validate(parameters: launchParams)
         var quantizing = lookup
-        quantizing.kvQuantization = params.kvBits == nil && params.kvScheme == nil ? nil : params
+        quantizing.kvQuantization = launchParams.kvBits == nil && launchParams.kvScheme == nil ? nil : launchParams
         return uncached(try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: input, history: input.text.tokens.asArray(Int.self)), model: model, cache: fresh,
-            decoding: DecodingSettings(processor: components.makeProcessor(parameters: params), parameters: params),
+            decoding: DecodingSettings(processor: components.makeProcessor(parameters: launchParams), parameters: launchParams),
             lookup: quantizing))
     }
 
@@ -273,11 +277,15 @@ struct GenerationLauncher {
                     "Blended \(blended.tokens) prompt tokens: \(blended.reused) from cached chunks, \(blended.recomputed) of them recomputed")
             }
         }
+        let plan = prefillKVPlan(layers: cache.layers, reusedTokens: blended.map { reused + $0.tokens } ?? reused)
+        plan.apply(to: cache.layers)
+        defer { plan.restore(cache.layers) }
+        let launchParams = parameters(for: plan)
         let head = try blended.map { (anchors: [PromptCache](), kept: $0.cache as PromptCache?, start: reused + $0.tokens, state: $0.cache.state) }
             ?? HybridPrefixSnapshot.prefillHead(
-                input.text.tokens, into: cache, plan: prompt, model: context.model, prefill: params.prefill, image: input.image)
+                input.text.tokens, into: cache, plan: prompt, model: context.model, prefill: launchParams.prefill, image: input.image)
         let tail = LMInput(text: LMInput.Text(tokens: input.text.tokens[.ellipsis, head.start...]), image: head.start == 0 ? input.image : nil)
-        let processor = components.makeProcessor(parameters: params).map {
+        let processor = components.makeProcessor(parameters: launchParams).map {
             PromptAnchoredProcessor(base: $0, prompt: input.text.tokens)
         }
         let hybrid = cache.isHybrid
@@ -290,19 +298,19 @@ struct GenerationLauncher {
                 onyxReasoning: onyx)
         }
         if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers),
-           let seat = batch.seat(in: context, kvBits: params.kvBits) {
+           let seat = batch.seat(in: context, kvBits: launchParams.kvBits) {
             return launching(try BatchedTokenIterator(
-                input: tail, model: context.model, layers: layers, decoding: DecodingSettings(processor: processor, parameters: params),
+                input: tail, model: context.model, layers: layers, decoding: DecodingSettings(processor: processor, parameters: launchParams),
                 stopTokens: MLXInferenceEngine.batchStopTokens(context), seat: seat))
         }
         if lookup.requested, PromptLookupTokenIterator.supports(cache.layers, routesExperts: lookup.routesExperts) {
             return launching(try PromptLookupTokenIterator(
                 prompt: PromptLookupTokenIterator.Prompt(input: tail, history: input.text.tokens.asArray(Int.self)), model: context.model,
-                cache: cache.layers, state: head.state, decoding: DecodingSettings(processor: processor, parameters: params),
+                cache: cache.layers, state: head.state, decoding: DecodingSettings(processor: processor, parameters: launchParams),
                 lookup: lookup))
         }
         return launching(try TokenIterator(
             input: tail, model: context.model, cache: cache.layers, state: head.state,
-            processor: processor, sampler: params.sampler(), prefill: params.prefill, maxTokens: params.maxTokens))
+            processor: processor, sampler: launchParams.sampler(), prefill: launchParams.prefill, maxTokens: launchParams.maxTokens))
     }
 }

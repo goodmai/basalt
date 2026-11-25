@@ -241,7 +241,7 @@ extension MLXInferenceEngine {
             logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes.rawValue >> 10) KB each")
         }
         if let cache = launch.cache {
-            promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache)
+            promptCaches.store(namespace, tokens: Array(tokens.prefix(cache.tokenCount)), cache: cache, drainSource: true)
             if let mtpPrefix = launch.mtpPrefix {
                 mtpPrefixes.removeAll { $0.namespace == namespace }
                 mtpPrefixes.append((namespace, Array(tokens.prefix(cache.tokenCount)), mtpPrefix))
