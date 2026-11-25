@@ -51,27 +51,30 @@ struct ModelsController: Sendable {
     func listModels(request: Request, context: BasicRequestContext) async throws -> Response {
         let cached   = await orchestrator.cachedModels().filter { model in !embeddingModels.contains { $0.id == model.id } }
         let loadedId = await orchestrator.currentModelId
+        let rope     = await orchestrator.ropeStatus
         let now      = Int(Date().timeIntervalSince1970)
 
         var entries: [[String: Any]]
 
         if cached.isEmpty {
             let hfId     = loadedId.isEmpty ? defaultModelId : loadedId
-            entries = [[
+            var entry: [String: Any] = [
                 "id":           claudeLocalId(from: hfId),
                 "display_name": hfId,
                 "object":       "model",
                 "created":      now,
                 "owned_by":     "basalt",
                 "is_loaded":    true,
-            ]]
+            ]
+            Self.applyRoPEFields(rope, to: &entry)
+            entries = [entry]
         } else {
             let sorted = cached.sorted { a, b in
                 if a.isLoaded != b.isLoaded { return a.isLoaded }
                 return a.id < b.id
             }
             entries = sorted.map { m -> [String: Any] in
-                [
+                var entry: [String: Any] = [
                     "id":           claudeLocalId(from: m.id),
                     "display_name": m.id,
                     "object":       "model",
@@ -81,6 +84,8 @@ struct ModelsController: Sendable {
                     "size_bytes":   m.sizeBytes,
                     "size_human":   m.sizeFormatted,
                 ]
+                if m.isLoaded { Self.applyRoPEFields(rope, to: &entry) }
+                return entry
             }
         }
 
@@ -96,11 +101,12 @@ struct ModelsController: Sendable {
     func currentModel(request: Request, context: BasicRequestContext) async throws -> Response {
         let snapshot = await orchestrator.healthSnapshot(modelId: nil)
         let loadedId = await orchestrator.currentModelId
+        let rope     = await orchestrator.ropeStatus
         let cached   = await orchestrator.cachedModels()
         let sizeInfo = cached.first(where: { $0.id == loadedId })
         let hfId     = loadedId.isEmpty ? defaultModelId : loadedId
 
-        return makeJSONResponse([
+        var payload: [String: Any] = [
             "id":           claudeLocalId(from: hfId),
             "display_name": hfId,
             "object":       "model",
@@ -110,7 +116,9 @@ struct ModelsController: Sendable {
             "status":       snapshot.status,
             "size_bytes":   sizeInfo?.sizeBytes ?? 0,
             "size_human":   sizeInfo?.sizeFormatted ?? "unknown",
-        ])
+        ]
+        Self.applyRoPEFields(rope, to: &payload)
+        return makeJSONResponse(payload)
     }
 
     @Sendable
@@ -149,58 +157,6 @@ struct ModelsController: Sendable {
         return makeJSONResponse(body)
     }
 
-    // MARK: — POST /v1/models/load
-
-    /// Hot-swap the loaded model.
-    ///
-    /// Accepts both forms:
-    ///   { "model": "mlx-community/Qwen3.5-4B-4bit" }          ← HF repo ID
-    ///   { "model": "claude-local/mlx-community--Qwen3.5-4B-4bit" }  ← discovery ID
-    ///
-    /// Blocks until loaded (10–60 s). All queued generate requests run after.
-    @Sendable
-    func loadModel(request: Request, context: BasicRequestContext) async throws -> Response {
-        let buffer = try await request.body.collect(upTo: 1 * 1024 * 1024)
-        let data   = Data(buffer.readableBytesView)
-
-        struct LoadRequest: Codable { let model: String }
-
-        guard let dto = try? JSONDecoder().decode(LoadRequest.self, from: data),
-              !dto.model.isEmpty else {
-            return makeErrorResponse(status: .badRequest,
-                                     message: "Request body must be JSON with a non-empty \"model\" field.")
-        }
-
-        guard let hfId = Self.restModel(from: dto.model).repoId else {
-            fputs("🔴 [Models] Load refused, not a repo id: \(dto.model)\n", stderr)
-            return makeErrorResponse(status: .badRequest, message: Self.repoIdRequired)
-        }
-        fputs("🔄 [Models] Load: \(dto.model) → \(hfId)\n", stderr)
-
-        do {
-            try await orchestrator.switchModel(to: hfId)
-        } catch {
-            return makeErrorResponse(status: HTTPResponse.Status(code: error.httpStatus),
-                                     message: Self.publicMessage(for: error))
-        }
-
-        let loadedId = await orchestrator.currentModelId
-        fputs("✅ [Models] Loaded: \(loadedId)\n", stderr)
-        return makeJSONResponse([
-            "id":       claudeLocalId(from: loadedId),
-            "display_name": loadedId,
-            "object":   "model",
-            "created":  Int(Date().timeIntervalSince1970),
-            "owned_by": "basalt",
-            "status":   "loaded",
-        ])
-    }
-
-    // MARK: — ID helpers
-
-    /// Converts an HF repo ID to the claude-local/ form that Claude Code's
-    /// model discovery filter accepts:
-    ///   "mlx-community/Qwen3.5-4B-4bit"  →  "claude-local/mlx-community--Qwen3.5-4B-4bit"
     static func claudeLocalId(from hfId: String) -> String {
         ModelCache.claudeLocalId(from: hfId)
     }
@@ -279,5 +235,59 @@ struct ModelsController: Sendable {
 
     private func makeErrorResponse(status: HTTPResponse.Status, message: String) -> Response {
         ProviderErrorResponse.response(status: status, message: message, shape: .openAI)
+    }
+}
+
+extension ModelsController {
+    @Sendable
+    func loadModel(request: Request, context: BasicRequestContext) async throws -> Response {
+        let buffer = try await request.body.collect(upTo: 1 * 1024 * 1024)
+        let data   = Data(buffer.readableBytesView)
+
+        struct LoadRequest: Codable { let model: String }
+
+        guard let dto = try? JSONDecoder().decode(LoadRequest.self, from: data),
+              !dto.model.isEmpty else {
+            return makeErrorResponse(status: .badRequest,
+                                     message: "Request body must be JSON with a non-empty \"model\" field.")
+        }
+
+        guard let hfId = Self.restModel(from: dto.model).repoId else {
+            fputs("🔴 [Models] Load refused, not a repo id: \(dto.model)\n", stderr)
+            return makeErrorResponse(status: .badRequest, message: Self.repoIdRequired)
+        }
+        fputs("🔄 [Models] Load: \(dto.model) → \(hfId)\n", stderr)
+
+        do {
+            try await orchestrator.switchModel(to: hfId)
+        } catch {
+            return makeErrorResponse(status: HTTPResponse.Status(code: error.httpStatus),
+                                     message: Self.publicMessage(for: error))
+        }
+
+        let loadedId = await orchestrator.currentModelId
+        let rope     = await orchestrator.ropeStatus
+        fputs("✅ [Models] Loaded: \(loadedId)\n", stderr)
+        var payload: [String: Any] = [
+            "id":       Self.claudeLocalId(from: loadedId),
+            "display_name": loadedId,
+            "object":   "model",
+            "created":  Int(Date().timeIntervalSince1970),
+            "owned_by": "basalt",
+            "status":   "loaded",
+        ]
+        Self.applyRoPEFields(rope, to: &payload)
+        if !rope.loadWarnings.isEmpty {
+            payload["warnings"] = rope.loadWarnings
+        }
+        return makeJSONResponse(payload)
+    }
+
+    static func applyRoPEFields(_ status: ModelRoPEStatus, to payload: inout [String: Any]) {
+        guard let label = status.ropeLabel else { return }
+        payload["rope"] = label
+        if let effective = status.effectiveContext {
+            payload["effective_context"] = effective
+        }
     }
 }

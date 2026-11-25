@@ -35,6 +35,7 @@ struct ModelFacts: Sendable {
     var adapters: [String: ServedAdapter] = [:]
     var adapter: String?
     var switchingAdapter = false
+    var ropeStatus = ModelRoPEStatus.empty
 }
 
 struct LoadedModel: Sendable {
