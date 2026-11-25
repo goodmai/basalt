@@ -100,11 +100,13 @@ extension SelfRewritingP3HarnessTests {
 extension SelfRewritingP3HarnessTests {
     @Test("MCP selfedit_start and selfedit_status require --research-tools, enforce experimental & cloud opt-ins, and report persisted transcripts")
     func mcpSelfEditToolsGatingAndStatus() async throws {
-        let practiceURL = try Self.writeJSONL(Self.sampleDatasetLines(), name: "mcp_practice.jsonl")
         let sessionDir = FileManager.default.temporaryDirectory.appending(path: "selfedit-mcp-dir-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        let practiceURL = sessionDir.appending(path: "mcp_practice.jsonl")
+        try Data((Self.sampleDatasetLines().joined(separator: "\n") + "\n").utf8).write(to: practiceURL)
+        let outsideURL = try Self.writeJSONL(Self.sampleDatasetLines(), name: "outside.jsonl")
         defer {
-            try? FileManager.default.removeItem(at: practiceURL.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: outsideURL.deletingLastPathComponent())
             try? FileManager.default.removeItem(at: sessionDir)
         }
         let persisted = sessionDir.appending(path: "prior-session.jsonl")
@@ -122,19 +124,40 @@ extension SelfRewritingP3HarnessTests {
             .withResearchTools(true)
             .withSelfEditDirectory(sessionDir)
 
+        let subdirURL = sessionDir.appending(path: "not_a_file")
+        try FileManager.default.createDirectory(at: subdirURL, withIntermediateDirectories: true)
+        let hugeURL = sessionDir.appending(path: "huge.jsonl")
+        FileManager.default.createFile(atPath: hugeURL.path, contents: Data())
+        let handle = try FileHandle(forWritingTo: hugeURL)
+        try handle.truncate(atOffset: 33 * 1024 * 1024)
+        try handle.close()
+
         await server.dispatch(#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
         await server.dispatch(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":false,"practicePath":"\#(practiceURL.path)"}}}"#)
         await server.dispatch(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(practiceURL.path)","editor":"cloud:gemini/gemini-2.5-pro","allowCloudEditor":false}}}"#)
         await server.dispatch(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(practiceURL.path)","practiceCount":2,"task":"repair:\#(Self.textOProj).weight:0,1:5.0"}}}"#)
         await server.dispatch(#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"selfedit_status","arguments":{}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(practiceURL.path)","editor":"cloud:gemini/gemini-2.5-pro","allowCloudEditor":true,"maxCloudUSD":-1}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(practiceURL.path)","editor":"cloud:gemini/gemini-2.5-pro","allowCloudEditor":1}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(outsideURL.path)"}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(subdirURL.path)"}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(hugeURL.path)"}}}"#)
+        await server.dispatch(#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"selfedit_start","arguments":{"experimentalSelfRewrite":true,"practicePath":"\#(practiceURL.path)","editor":"cloud:gemini/gemini-2.5-pro","allowCloudEditor":true,"maxCloudUSD":0}}}"#)
 
         let lines = capturer.lines
-        #expect(lines.count == 5)
+        #expect(lines.count == 11)
         #expect(lines[0].contains("selfedit_start") && lines[0].contains("selfedit_status"))
         #expect(lines[1].contains("-32602") && lines[1].contains("experimentalSelfRewrite=true"))
         #expect(lines[2].contains("-32602") && lines[2].contains("--allow-cloud-editor"))
         #expect(lines[3].contains("\"result\"") && lines[3].contains("practiceCount") && !lines[3].contains("\"error\""))
         #expect(lines[4].contains("\"result\"") && lines[4].contains("prior-session") && lines[4].contains("selfedit-"))
+        #expect(lines[5].contains("-32602") && lines[5].contains("non-negative"))
+        #expect(lines[6].contains("-32602"))
+        #expect(lines[7].contains("-32602") && lines[7].contains("allowed root"))
+        #expect(lines[8].contains("-32602") && lines[8].contains("regular file"))
+        #expect(lines[9].contains("-32602") && lines[9].contains("exceeds"))
+        #expect(lines[10].contains("\"result\"") && !lines[10].contains("\"error\""))
+        #expect(try MCPArguments.double("maxCloudUSD", in: ["maxCloudUSD": 0]) == 0.0)
     }
 
     @Test("SelfEditCommand.prepareHarness wires --practice, --decontaminate, --task repair, and --transcript cleanly")

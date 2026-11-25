@@ -46,7 +46,9 @@ public enum EditValidationError: Error, Sendable, Equatable, CustomStringConvert
         case .invalidClipFactor(let tensor, let factor):
             return "clip factor on '\(tensor)' must be finite and positive, got \(factor)"
         case .invalidSlice(let tensor, let start, let count, let limit):
-            return "invalid slice [\(start)..<\(start + count)] on '\(tensor)'" + (limit.map { " of size \($0)" } ?? "")
+            let (end, overflow) = start.addingReportingOverflow(count)
+            let range = overflow ? "start=\(start), count=\(count)" : "[\(start)..<\(end)]"
+            return "invalid slice \(range) on '\(tensor)'" + (limit.map { " of size \($0)" } ?? "")
         case .invalidRowIndices(let tensor, let reason):
             return "invalid row indices on '\(tensor)': \(reason)"
         case .missingTensor(let key):
