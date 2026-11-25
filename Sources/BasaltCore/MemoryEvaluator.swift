@@ -176,7 +176,9 @@ public actor MemoryEvaluator {
         let required = footprint.required
         let streaming = footprint.streaming.flatMap { $0.required <= budget ? $0 : nil }
         let level = fitLevel(required: required, budget: budget)
-        let tier = level == .tooTight && streaming != nil ? FitLevel.moeTieredStreaming : level
+        let shortContext = footprint.admitsStreaming && contextBudget(
+            budget: budget, weights: footprint.weights, kv: footprint.kv, kvPrecision: nil, kvZones: nil) < ModelFitAnalyzer.residentContextFloor
+        let tier = (level == .tooTight || shortContext) && streaming != nil ? FitLevel.moeTieredStreaming : level
         let admitted = tier == .moeTieredStreaming && footprint.admitsStreaming ? streaming : nil
         let fits = tier.fitsResident || admitted != nil
         var result = MemoryAssessment(
