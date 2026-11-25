@@ -350,4 +350,5 @@
 "QAT Fake-Quant Refinement (Domain STE)" = "QAT Fake-Quant Refinement (Domain STE)";
 "Post-Quantization Quality & Fairness Audit" = "Post-Quantization Quality & Fairness Audit";
 "Merge LoRA Adapter (Optional)" = "Merge LoRA Adapter (Optional)";
+"org/adapter-repo" = "org/adapter-repo";
 "Fuses a PEFT or mlx-lm LoRA repository into the converted weights." = "Fuses a PEFT or mlx-lm LoRA repository into the converted weights.";
