@@ -1,5 +1,6 @@
 import Foundation
 import ArgumentParser
+import BasaltCore
 import BasaltInference
 
 extension ServeCommand {
