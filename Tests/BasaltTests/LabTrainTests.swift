@@ -91,8 +91,9 @@ struct LabTrainTests {
         let pairs = TrainingTask.arithmetic(count: 4, seed: 1)
         let before = await Self.parameterNames(container)
         let run = try await container.performEvaluating(nonSendable: ()) { [request] context, _ in
-            MLXRandom.seed(332)
-            return try MLXInferenceEngine.trainAdapter(pairs, heldOut: Array(pairs.prefix(1)), request: request, directory: directory, context: context)
+            try withRandomState(MLXRandom.RandomState(seed: 332)) {
+                try MLXInferenceEngine.trainAdapter(pairs, heldOut: Array(pairs.prefix(1)), request: request, directory: directory, context: context)
+            }
         }
         #expect(run.losses.count == 20)
         let first = try #require(run.losses.first)

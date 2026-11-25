@@ -181,24 +181,24 @@ struct MTPSidecarTests {
         let drafter = withRandomState(MLXRandom.RandomState(seed: 11)) { GreedyDraftingMTPDrafter(Qwen35MTPDraftModel(configuration)) }
         eval(drafter)
         let prompt = LMInput(tokens: MLXArray([5, 9, 5, 9, 5, 9, 5].map(Int32.init)))
-        let parameters = GenerateParameters(maxTokens: 3, temperature: 0.03)
+        func params(_ seed: UInt64) -> GenerateParameters { GenerateParameters(maxTokens: 3, temperature: 0.03, seed: seed) }
         let runs = 300
         var speculative: [[Int]: Int] = [:]
         var plain: [[Int]: Int] = [:]
         var control: [[Int]: Int] = [:]
         var proposed = 0
         for run in 0 ..< runs {
-            MLXRandom.seed(UInt64(run))
-            var mtp = try MTPSpeculativeTokenIterator(input: prompt, mainModel: target, drafter: drafter, parameters: parameters, blockSize: 2)
-            var tokens: [Int] = []
-            while let token = mtp.next() { tokens.append(token) }
-            proposed += mtp.proposedCount
-            #expect(mtp.passthroughReason == nil)
-            speculative[tokens, default: 0] += 1
-            MLXRandom.seed(UInt64(50_000 + run))
-            plain[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: parameters))), default: 0] += 1
-            MLXRandom.seed(UInt64(90_000 + run))
-            control[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: parameters))), default: 0] += 1
+            let seed = UInt64(run)
+            try withRandomState(MLXRandom.RandomState(seed: seed)) {
+                var mtp = try MTPSpeculativeTokenIterator(input: prompt, mainModel: target, drafter: drafter, parameters: params(seed), blockSize: 2)
+                var tokens: [Int] = []
+                while let token = mtp.next() { tokens.append(token) }
+                proposed += mtp.proposedCount
+                #expect(mtp.passthroughReason == nil)
+                speculative[tokens, default: 0] += 1
+            }
+            plain[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: params(UInt64(50_000 + run))))), default: 0] += 1
+            control[Array(IteratorSequence(try TokenIterator(input: prompt, model: target, parameters: params(UInt64(90_000 + run))))), default: 0] += 1
         }
         #expect(proposed >= runs)
         func distance(_ a: [[Int]: Int], _ b: [[Int]: Int]) -> Double {

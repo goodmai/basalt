@@ -9,10 +9,10 @@ import Testing
 struct SpecTrResidualRaceAndEAGLE3Tests {
     @Test("Fused Metal speculative_verify_ot_residual_race matches CPU reference bit-for-bit at T=0 and T>0 (#228)")
     func gpuAndCPUReferenceExactParity() {
-        MLXRandom.seed(5530)
+        let rng = MLXRandom.RandomState(seed: 5530)
         let (steps, cands, vocab) = (5, 3, 96)
-        let tLogits = MLXRandom.normal([steps + 1, vocab], dtype: .float32)
-        let dLogits = MLXRandom.normal([steps, cands, vocab], dtype: .float32)
+        let tLogits = MLXRandom.normal([steps + 1, vocab], dtype: .float32, key: rng)
+        let dLogits = MLXRandom.normal([steps, cands, vocab], dtype: .float32, key: rng)
 
         var dTokHost = [Int32](repeating: 0, count: steps * cands)
         for s in 0 ..< steps {
@@ -102,12 +102,12 @@ struct SpecTrResidualRaceAndEAGLE3Tests {
 
     @Test("EAGLE-3 3-layer fusion head quantizes cleanly and DiffuCD vanishes below minTimestep")
     func eagle3HeadAndDiffuCDSchedule() {
-        MLXRandom.seed(25030)
-        let head = EAGLE3FusionHead(hiddenSize: 64, vocabSize: 128, tapConfig: .standard(numLayers: 28))
+        let rng = MLXRandom.RandomState(seed: 25030)
+        let head = withRandomState(rng) { EAGLE3FusionHead(hiddenSize: 64, vocabSize: 128, tapConfig: .standard(numLayers: 28)) }
         quantize(model: head, groupSize: 64, bits: 4)
-        let low = MLXRandom.normal([1, 4, 64], dtype: .float32)
-        let mid = MLXRandom.normal([1, 4, 64], dtype: .float32)
-        let high = MLXRandom.normal([1, 4, 64], dtype: .float32)
+        let low = MLXRandom.normal([1, 4, 64], dtype: .float32, key: rng)
+        let mid = MLXRandom.normal([1, 4, 64], dtype: .float32, key: rng)
+        let high = MLXRandom.normal([1, 4, 64], dtype: .float32, key: rng)
         let (topIdx, logits) = head.topKCandidates(low: low, mid: mid, high: high, k: 3)
         eval(topIdx, logits)
         #expect(topIdx.shape == [1, 4, 3])

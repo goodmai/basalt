@@ -140,8 +140,8 @@ struct RetroWave3Tests {
 
     @Test("MACaQQuantizedLinear unrotates dense weights accurately and MACaQNativeLoader rejects corrupt manifests")
     func macaqUnrotatedWeightsAndManifestValidation() throws {
-        MLXRandom.seed(77)
-        let original = MLXRandom.normal([32, 64], dtype: .float32)
+        let rng = MLXRandom.RandomState(seed: 77)
+        let original = MLXRandom.normal([32, 64], dtype: .float32, key: rng)
         let pre = MLXArray.ones([64], dtype: .float32) * 2.0
         let wRot = MACaQMath.rotateBlocks(original / pre.expandedDimensions(axis: 0), blockSize: 32)
         let (wq, scales, biases) = MLX.quantized(wRot.asType(.bfloat16), groupSize: 32, bits: 8, mode: .affine)

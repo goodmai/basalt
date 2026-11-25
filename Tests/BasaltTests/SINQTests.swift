@@ -11,11 +11,11 @@ import Testing
 struct SINQTests {
     @Test("No-overhead SINQ RMSNorm absorption and EAQuant router compensation match exact float32 matmul")
     func algebraicEquivalenceStandardAndGemmaAndRouter() {
-        MLXRandom.seed(548)
-        let x = MLXRandom.normal([4, 64], dtype: .float32)
-        let gamma = MLXRandom.uniform(low: 0.5, high: 1.5, [64], dtype: .float32)
-        let wProj = MLXRandom.normal([32, 64], dtype: .float32) * MLXArray((0 ..< 64).map { Float(1.0 + Double($0 % 8) * 1.5) }).reshaped(1, 64)
-        let wRouter = MLXRandom.normal([8, 64], dtype: .float32)
+        let rng = MLXRandom.RandomState(seed: 548)
+        let x = MLXRandom.normal([4, 64], dtype: .float32, key: rng)
+        let gamma = MLXRandom.uniform(low: 0.5, high: 1.5, [64], dtype: .float32, key: rng)
+        let wProj = MLXRandom.normal([32, 64], dtype: .float32, key: rng) * MLXArray((0 ..< 64).map { Float(1.0 + Double($0 % 8) * 1.5) }).reshaped(1, 64)
+        let wRouter = MLXRandom.normal([8, 64], dtype: .float32, key: rng)
 
         let factors = SINQNormalizer.solve(wProj)
         #expect(factors.imbalanceAfter <= factors.imbalanceBefore + 1e-4)
@@ -48,12 +48,12 @@ struct SINQTests {
 
     @Test("SINQ reduces matrix imbalance and quantization reconstruction MSE over RTN across INT3, INT4, NF4, and MXFP4")
     func sinqReducesQuantizationErrorAcrossFormats() {
-        MLXRandom.seed(2026)
-        let base = MLXRandom.normal([64, 128], dtype: .float32)
+        let rng = MLXRandom.RandomState(seed: 2026)
+        let base = MLXRandom.normal([64, 128], dtype: .float32, key: rng)
         let colSpikes = MLXArray((0 ..< 128).map { $0 % 16 == 0 ? Float(12.0) : Float(1.0) }).reshaped(1, 128)
         let rowSpikes = MLXArray((0 ..< 64).map { $0 % 8 == 0 ? Float(6.0) : Float(1.0) }).reshaped(64, 1)
         let w = base * rowSpikes * colSpikes
-        let x = MLXRandom.normal([16, 128], dtype: .float32)
+        let x = MLXRandom.normal([16, 128], dtype: .float32, key: rng)
         let targetOut = matmul(x, w.T)
 
         let factors = SINQNormalizer.solve(w)

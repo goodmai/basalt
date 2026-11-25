@@ -8,11 +8,11 @@ import Testing
 struct KVarNQJLAndPolarFlashDecodeTests {
     @Test("2-bit KVarN + 1-bit QJL reduces inner-product bias > 10x vs pure 2-bit MSE across 256 random trials (#228)")
     func qjlUnbiasedInnerProductProof() {
-        MLXRandom.seed(5500)
+        let rng = MLXRandom.RandomState(seed: 5500)
         let d = 64
         let t = 64
-        let keys = MLXRandom.normal([t, d], dtype: .float32) * MLXArray((0 ..< d).map { $0 % 8 == 0 ? Float(4.0) : Float(1.0) }).reshaped(1, d)
-        let queries = keys * Float(0.6) + MLXRandom.normal([t, d], dtype: .float32) * Float(0.8)
+        let keys = MLXRandom.normal([t, d], dtype: .float32, key: rng) * MLXArray((0 ..< d).map { $0 % 8 == 0 ? Float(4.0) : Float(1.0) }).reshaped(1, d)
+        let queries = keys * Float(0.6) + MLXRandom.normal([t, d], dtype: .float32, key: rng) * Float(0.8)
         eval(keys, queries)
 
         let keysHost = keys.asArray(Float.self)
@@ -52,11 +52,11 @@ struct KVarNQJLAndPolarFlashDecodeTests {
 
     @Test("Fused kv_fused_flash_decode_kvarn_qjl Metal kernel matches pure CPU online-softmax reference (#228)")
     func kvarnFlashDecodeMetalParity() {
-        MLXRandom.seed(5501)
+        let rng = MLXRandom.RandomState(seed: 5501)
         let (heads, t, d) = (4, 48, 64)
-        let q = MLXRandom.normal([heads, d], dtype: .float32)
-        let k = MLXRandom.normal([t, d], dtype: .float32)
-        let v = MLXRandom.normal([t, d], dtype: .float32)
+        let q = MLXRandom.normal([heads, d], dtype: .float32, key: rng)
+        let k = MLXRandom.normal([t, d], dtype: .float32, key: rng)
+        let v = MLXRandom.normal([t, d], dtype: .float32, key: rng)
         let sJL = KVarNTileCodec.makeJLMatrix(dim: d, seed: 550)
         let vTile = KVarNTileCodec.encodeTile(v, useQJL: false)
         let scale = 1.0 / Float(d).squareRoot()
@@ -88,13 +88,13 @@ struct KVarNQJLAndPolarFlashDecodeTests {
 
     @Test("PolarKeyRows fused Metal scores match dequantized reference without intermediate FP16 key allocation (#228)")
     func polarFusedMiddleScoresParity() {
-        MLXRandom.seed(5502)
+        let rng = MLXRandom.RandomState(seed: 5502)
         for (rotated, headDim) in [(64, 64), (32, 64)] {
-            let baseKeys = MLXRandom.normal([1, 2, 24, headDim], dtype: .float32)
+            let baseKeys = MLXRandom.normal([1, 2, 24, headDim], dtype: .float32, key: rng)
             for dtype in [DType.float32, .float16, .bfloat16] {
                 var rows = PolarKeyRows(rotated: rotated, restBits: 4, groupSize: 32, headDim: headDim)
                 rows.append(baseKeys.asType(dtype))
-                let q = MLXRandom.normal([1, 2, 2, 3, headDim], dtype: .float32).asType(dtype)
+                let q = MLXRandom.normal([1, 2, 2, 3, headDim], dtype: .float32, key: rng).asType(dtype)
                 let fused = rows.scores(q)!.asType(.float32)
                 let deqKeys = rows.dequantizedRows(dtype: dtype)!
                 let ref = matmul(q, expandedDimensions(deqKeys, axis: 2).swappedAxes(-1, -2)).asType(.float32)
@@ -108,8 +108,8 @@ struct KVarNQJLAndPolarFlashDecodeTests {
 
     @Test("ChanMix 4/2-bit sensitive channel retention and ThinKV thought-span segmentation")
     func chanMixAndThinKVSegmentation() {
-        MLXRandom.seed(5503)
-        let base = MLXRandom.normal([32, 64], dtype: .float32)
+        let rng = MLXRandom.RandomState(seed: 5503)
+        let base = MLXRandom.normal([32, 64], dtype: .float32, key: rng)
         let spikes = MLXArray((0 ..< 64).map { $0 < 4 ? Float(6.0) : Float(1.0) }).reshaped(1, 64)
         let keys = base * spikes
         let enc = ChanMixCodec.encode(keys, sensitiveCount: 4)

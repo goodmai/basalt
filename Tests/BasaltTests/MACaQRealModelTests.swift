@@ -175,21 +175,22 @@ enum MACaQE2EHarness {
     ) throws -> Double {
         var timings: [Double] = []
         for round in 0 ..< 4 {
-            MLXRandom.seed(UInt64(5350 + round))
-            let cache = try model.newCache(parameters: nil)
-            var out = model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: cache, state: nil)
-            var state = out.state
-            var tok = sampleToken(out.logits[0, -1], temperature: temperature)
-            eval(tok, cache)
-            let start = ContinuousClock.now
-            for _ in 0 ..< steps {
-                out = model(LMInput.Text(tokens: tok.reshaped(1, 1)), cache: cache, state: state)
-                state = out.state
-                tok = sampleToken(out.logits[0, -1], temperature: temperature)
+            let elapsed = try withRandomState(MLXRandom.RandomState(seed: UInt64(5350 + round))) {
+                let cache = try model.newCache(parameters: nil)
+                var out = model(LMInput.Text(tokens: MLXArray(prompt)[.newAxis]), cache: cache, state: nil)
+                var state = out.state
+                var tok = sampleToken(out.logits[0, -1], temperature: temperature)
                 eval(tok, cache)
+                let start = ContinuousClock.now
+                for _ in 0 ..< steps {
+                    out = model(LMInput.Text(tokens: tok.reshaped(1, 1)), cache: cache, state: state)
+                    state = out.state
+                    tok = sampleToken(out.logits[0, -1], temperature: temperature)
+                    eval(tok, cache)
+                }
+                return ContinuousClock.now - start
             }
             if round >= 1 {
-                let elapsed = ContinuousClock.now - start
                 let secs = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
                 timings.append(Double(steps) / max(secs, 1e-6))
             }

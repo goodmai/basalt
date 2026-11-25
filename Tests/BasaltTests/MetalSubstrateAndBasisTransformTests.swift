@@ -68,12 +68,12 @@ struct MetalSubstrateAndBasisTransformTests {
 
     @Test("MACaQFusedMatmul linear matches pure CPU Hadamard + dequantized reference across dtypes, blocks, modes, row_scale, and W4A4/W4A8 (#228)")
     func macaqFusedLinearMatchesCPUReference() {
-        MLXRandom.seed(547)
+        let rng = MLXRandom.RandomState(seed: 547)
         let (k, nOut) = (64, 16)
-        let wDense = MLXRandom.normal([nOut, k], dtype: .float32)
-        let pre = MLXRandom.uniform(low: 0.6, high: 1.4, [k], dtype: .float32)
-        let rowSc = MLXRandom.uniform(low: 0.75, high: 1.25, [nOut], dtype: .float32)
-        let linBias = MLXRandom.normal([nOut], dtype: .float32) * Float(0.1)
+        let wDense = MLXRandom.normal([nOut, k], dtype: .float32, key: rng)
+        let pre = MLXRandom.uniform(low: 0.6, high: 1.4, [k], dtype: .float32, key: rng)
+        let rowSc = MLXRandom.uniform(low: 0.75, high: 1.25, [nOut], dtype: .float32, key: rng)
+        let linBias = MLXRandom.normal([nOut], dtype: .float32, key: rng) * Float(0.1)
 
         for block in [32, 64] {
             let wRot = MACaQMath.rotateBlocks(wDense / pre.reshaped(1, k), blockSize: block)
@@ -90,7 +90,7 @@ struct MetalSubstrateAndBasisTransformTests {
                     let biasCastHost = biasCast.asType(.float32).asArray(Float.self)
                     let tol: Float = dtype == .bfloat16 ? 2.5e-2 : (dtype == .float16 ? 6e-3 : 5e-4)
                     for rows in [1, 2, 4, 8] {
-                        let xIn = MLXRandom.normal([rows, k], dtype: .float32).asType(dtype)
+                        let xIn = MLXRandom.normal([rows, k], dtype: .float32, key: rng).asType(dtype)
                         let xHost = xIn.asType(.float32).asArray(Float.self)
                         for (hasRS, hasB, actMode) in [(false, false, MACaQActivationMode.fp16), (true, true, .fp16), (false, true, .w4a8), (true, false, .w4a4)] where dtype == .float32 || actMode == .fp16 {
                             let inputs = MACaQFusedLinearInputs(
@@ -114,11 +114,11 @@ struct MetalSubstrateAndBasisTransformTests {
 
     @Test("MACaQFusedMatmul gather MoE matches unfused reference with 1D/2D preScale, and broadcast x (#228)")
     func macaqFusedGatherMoEParity() {
-        MLXRandom.seed(5471)
+        let rng = MLXRandom.RandomState(seed: 5471)
         let (experts, nOut, k) = (4, 16, 64)
         for perExpert in [false, true] {
             for qMode in [QuantizationMode.affine, .mxfp4] {
-                let sw = SwitchLinear(inputDims: k, outputDims: nOut, numExperts: experts, bias: true)
+                let sw = withRandomState(rng) { SwitchLinear(inputDims: k, outputDims: nOut, numExperts: experts, bias: true) }
                 var spec = MACaQLayerSpec(bits: 4, groupSize: 32, mode: qMode, hadamardBlock: 32)
                 spec.perExpertPreScale = perExpert
                 spec.hasBias = true
@@ -128,15 +128,15 @@ struct MetalSubstrateAndBasisTransformTests {
                 var sList: [MLXArray] = []
                 var bList: [MLXArray] = []
                 for _ in 0 ..< experts {
-                    let raw = MLXRandom.normal([nOut, k], dtype: .float16)
+                    let raw = MLXRandom.normal([nOut, k], dtype: .float16, key: rng)
                     let (wq, ws, wb) = MLX.quantized(raw, groupSize: 32, bits: 4, mode: qMode)
                     wList.append(wq)
                     sList.append(ws)
                     if let wb { bList.append(wb) }
                 }
                 let preShape = perExpert ? [experts, k] : [k]
-                let pre = MLXRandom.uniform(low: 0.7, high: 1.3, preShape, dtype: .float16)
-                let biasArr = MLXRandom.normal([experts, nOut], dtype: .float16) * Float(0.05)
+                let pre = MLXRandom.uniform(low: 0.7, high: 1.3, preShape, dtype: .float16, key: rng)
+                let biasArr = MLXRandom.normal([experts, nOut], dtype: .float16, key: rng) * Float(0.05)
                 var updates: [(String, MLXArray)] = [
                     ("weight", stacked(wList, axis: 0)),
                     ("scales", stacked(sList, axis: 0)),
@@ -146,7 +146,7 @@ struct MetalSubstrateAndBasisTransformTests {
                 if !bList.isEmpty { updates.append(("biases", stacked(bList, axis: 0))) }
                 layer.update(parameters: ModuleParameters.unflattened(updates))
 
-                let xBroadcast = MLXRandom.normal([1, 2, 1, 1, k], dtype: .float16)
+                let xBroadcast = MLXRandom.normal([1, 2, 1, 1, k], dtype: .float16, key: rng)
                 let indices = MLXArray([Int32(0), 2, 1, 3], [1, 2, 2])
                 let got = layer(xBroadcast, indices).asType(.float32)
 
@@ -170,12 +170,13 @@ struct MetalSubstrateAndBasisTransformTests {
 
     @Test("MACaQSwitchLinear block64 bias-free MXFP4 matches unfused reference")
     func macaqSwitchBlock64NoBiasParity() {
-        let sw64 = SwitchLinear(inputDims: 128, outputDims: 32, numExperts: 4, bias: false)
+        let rng = MLXRandom.RandomState(seed: 5472)
+        let sw64 = withRandomState(rng) { SwitchLinear(inputDims: 128, outputDims: 32, numExperts: 4, bias: false) }
         var spec64 = MACaQLayerSpec(bits: 4, groupSize: 32, mode: .mxfp4, hadamardBlock: 64)
         spec64.perExpertPreScale = true
         spec64.hasBias = false
         let layer64 = MACaQSwitchLinear(replacing: sw64, spec: spec64)
-        let x64 = MLXRandom.normal([1, 1, 1, 128], dtype: .bfloat16)
+        let x64 = MLXRandom.normal([1, 1, 1, 128], dtype: .bfloat16, key: rng)
         let idx64 = MLXArray([Int32(0), 2], [1, 2])
         let out64 = layer64(x64, idx64).asType(.float32)
         layer64.train(true)
@@ -190,10 +191,10 @@ struct MetalSubstrateAndBasisTransformTests {
 struct FlatQuantAndLIRQuantTests {
     @Test("FlatQuant Kronecker (P1⊗P2) and LIRQuant/ParoQuant Givens Metal kernels match CPU float32 and preserve exact dense matmul (#228)")
     func flatQuantAndLIRQuantParity() {
-        MLXRandom.seed(2410)
+        let rng = MLXRandom.RandomState(seed: 2410)
         let (rows, nOut, k) = (6, 24, 64)
-        let x = MLXRandom.normal([rows, k], dtype: .float32)
-        let lin = Linear(k, nOut, bias: true)
+        let x = MLXRandom.normal([rows, k], dtype: .float32, key: rng)
+        let lin = withRandomState(rng) { Linear(k, nOut, bias: true) }
 
         let fqFactors = FlatQuantCalibrator.calibrateFactors(weight: lin.weight, activations: x, clipQuantile: 0.98)
         let wConj = FlatQuantCalibrator.conjugateWeight(lin.weight, factors: fqFactors)
