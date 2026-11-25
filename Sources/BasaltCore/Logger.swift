@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Synchronization
 
@@ -71,23 +72,15 @@ public struct BasaltLogger: Sendable {
         let filename = (file as NSString).lastPathComponent
         let formatted = "\(dateStr) \(levelStr) [\(module)] \(filename):\(line) - \(message)"
         
-        // Always write to stderr — stdout is reserved for MCP JSON-RPC in stdio mode
         fputs(formatted + "\n", stderr)
-        
-        if let url = BasaltLogger.logFileURL {
-            let logData = (formatted + "\n").data(using: .utf8)
-            if FileManager.default.fileExists(atPath: url.path) {
-                if let fileHandle = try? FileHandle(forWritingTo: url) {
-                    fileHandle.seekToEndOfFile()
-                    if let data = logData {
-                        fileHandle.write(data)
-                    }
-                    fileHandle.closeFile()
-                }
-            } else {
-                do { try logData?.write(to: url) } catch { fputs("[logger] cannot write \(url.path): \(error.localizedDescription)\n", stderr) }
-            }
-        }
+        if let url = BasaltLogger.logFileURL { Self.append(formatted + "\n", to: url.path) }
+    }
+
+    static func append(_ text: String, to path: String) {
+        let descriptor = Darwin.open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { return }
+        defer { _ = Darwin.close(descriptor) }
+        _ = text.withCString { Darwin.write(descriptor, $0, strlen($0)) }
     }
     
     public func trace(_ message: String, file: String = #file, function: String = #function, line: Int = #line) {

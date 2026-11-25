@@ -4,7 +4,6 @@ import SwiftUI
 
 extension ConvertModelSheet {
     func qatAuditSection(_ draft: ConversionDraft) -> some View {
-        let supported = draft.resolvedTarget.supportsPVTune
         return VStack(alignment: .leading, spacing: 8) {
             Toggle(
                 "QAT Fake-Quant Refinement (Domain STE)",
@@ -17,7 +16,7 @@ extension ConvertModelSheet {
                     }
                 )
             )
-            .disabled(!supported)
+            .disabled(true)
             Toggle(
                 "Post-Quantization Quality & Fairness Audit",
                 isOn: Binding(
@@ -29,6 +28,10 @@ extension ConvertModelSheet {
                     }
                 )
             )
+            .disabled(true)
+            Text("Not wired to the converter yet (#616)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)

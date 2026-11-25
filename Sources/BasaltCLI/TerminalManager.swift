@@ -38,15 +38,17 @@ public actor TerminalManager {
         }
     }
     
+    private var gitProbed = false
+
     public func updateInfo(chip: String? = nil, model: String? = nil, debug: String? = nil) {
         if let c = chip { self.chipModel = c }
         if let m = model { self.currentModel = m }
         if let d = debug { self.debugInfo = d }
         
-        Task {
-            await refreshGitAsync()
+        if !gitProbed {
+            gitProbed = true
+            Task { await refreshGitAsync() }
         }
-        
         if isRawMode { refreshLine() }
     }
     

@@ -152,7 +152,7 @@ extension ToolCallRepairer {
         guard body.contains("<arg_key>") else { return nil }
         guard let firstArg = body.range(of: "<arg_key>") else { return nil }
         let name = body[..<firstArg.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.contains("<") else { return nil }
+        guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || "_.-".contains($0) }) else { return nil }
         var arguments: [String: Any] = [:]
         var cursor = firstArg.lowerBound
         while let kOpen = body.range(of: "<arg_key>", range: cursor ..< body.endIndex),
