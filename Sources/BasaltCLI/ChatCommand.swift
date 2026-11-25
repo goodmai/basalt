@@ -190,7 +190,7 @@ struct ChatCommand: AsyncParsableCommand {
             return localPath
         }
         if modelId.contains("/") {
-            let cached = ModelCache.cacheDir(for: modelId)
+            let cached = ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)
             if FileManager.default.fileExists(atPath: cached.path) {
                 return cached.path
             }

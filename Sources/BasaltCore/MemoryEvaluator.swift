@@ -90,7 +90,7 @@ public actor MemoryEvaluator {
                 directory: directURL, modelId: modelId, resources: resources,
                 contextLength: contextLength, kvPrecision: kvPrecision, kvZones: kvZones)
         }
-        let localDir = ModelCache.cacheDir(for: modelId)
+        let localDir = ModelCache.resolve(repoId: modelId) ?? ModelCache.cacheDir(for: modelId)
         if FileManager.default.fileExists(atPath: localDir.path) {
             return evaluate(
                 directory: localDir, modelId: modelId, resources: resources,
