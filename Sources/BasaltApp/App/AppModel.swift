@@ -7,6 +7,11 @@ public typealias ChatStore = Store<ChatState, ChatAction, ChatEffect>
 public typealias MonitorStore = Store<MonitorState, MonitorAction, MonitorEffect>
 public typealias LibraryStore = Store<LibraryState, LibraryAction, LibraryEffect>
 
+@MainActor
+private final class MainActorCallback<Value: Sendable> {
+    var invoke: (@MainActor (Value) -> Void)?
+}
+
 @Observable @MainActor
 public final class AppModel {
     public static let defaultModel = "mlx-community/gemma-4-12B-it-qat-4bit"
@@ -29,6 +34,7 @@ public final class AppModel {
     public let drafts: DraftStore
     @ObservationIgnored let supervisor: EngineSupervisor
     @ObservationIgnored let repository: ConversationRepository
+    @ObservationIgnored let cloudEnvironment: @Sendable () -> [String: String]
     public internal(set) var configuredModel: String
     public var model: String { library.state.models.first(where: \.isLoaded)?.id ?? configuredModel }
     @ObservationIgnored private var listening = false
@@ -36,9 +42,16 @@ public final class AppModel {
 
     @ObservationIgnored public var answered: @MainActor (ConversationSnapshot) -> Void = { _ in }
 
-    public init(launch: HelperLaunch, model: String, storeURL: URL?, environment: EngineEnvironment = .live, drafts: DraftStore = .defaults()) throws {
+    public init(
+        launch: HelperLaunch,
+        model: String,
+        storeURL: URL?,
+        environment: EngineEnvironment = .live,
+        drafts: DraftStore = .defaults(),
+        cloudEnvironment: @escaping @Sendable () -> [String: String] = { CloudKeys.environment(defaults: .standard, keychain: .live()) }
+    ) throws {
         let supervisor = EngineSupervisor(launch: launch, environment: environment)
-        (self.supervisor, self.configuredModel, self.drafts) = (supervisor, model, drafts)
+        (self.supervisor, self.configuredModel, self.drafts, self.cloudEnvironment) = (supervisor, model, drafts, cloudEnvironment)
         repository = ConversationRepository(modelContainer: try ConversationRepository.container(at: storeURL))
         monitor = Store(MonitorState(), reduce: MonitorReducer.reduce, handle: MonitorReducer.handler(
             stats: {
@@ -49,14 +62,24 @@ public final class AppModel {
                 guard let endpoint = await supervisor.endpoint else { return nil }
                 return try await EngineClient.http(endpoint).compose()
             }))
+        let onChosen = MainActorCallback<String>()
         library = Store(LibraryState(pending: UserDefaults.standard.stringArray(forKey: Self.pendingKey) ?? []), reduce: LibraryReducer.reduce, handle: LibraryEffects.handler(
             LibraryEnvironment(
                 client: { await supervisor.endpoint.map { LibraryClient.live($0) } },
                 savePending: { UserDefaults.standard.set($0, forKey: AppModel.pendingKey) },
-                chose: { id in UserDefaults.standard.set(id, forKey: "model") })))
+                chose: { id in
+                    UserDefaults.standard.set(id, forKey: EngineChoice.modelKey)
+                    await supervisor.updateLaunchArguments(["serve", "--model", id])
+                    await MainActor.run { onChosen.invoke?(id) }
+                })))
         let initialCompose = UserDefaults.standard.string(forKey: EngineChoice.composeKey) ?? ""
-        composeProfiles = Self.makeComposeProfilesStore(initialCompose: initialCompose, supervisor: supervisor)
+        composeProfiles = Self.makeComposeProfilesStore(
+            initialCompose: initialCompose,
+            supervisor: supervisor,
+            cloudEnvironment: cloudEnvironment
+        )
         voice = AudioSessionController(engine: { await supervisor.endpoint.map { EngineClient.http($0) } })
+        onChosen.invoke = { [weak self] id in self?.configuredModel = id }
         voice.onSubmitTranscript = { [weak self] text in self?.submitVoiceTranscript(text) }
     }
 
@@ -111,7 +134,7 @@ public final class AppModel {
 
     public func restart() async {
         let current = await supervisor.launch
-        let freshEnv = CloudKeys.environment(defaults: .standard, keychain: .live())
+        let freshEnv = Self.refreshedEnvironment(preserving: current.environment, cloud: cloudEnvironment())
         await supervisor.relaunch(
             HelperLaunch(executable: current.executable, arguments: current.arguments, environment: freshEnv)
         )

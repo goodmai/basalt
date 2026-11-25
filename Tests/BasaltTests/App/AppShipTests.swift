@@ -43,7 +43,10 @@ struct AppShipTests {
     @Test("Every static string in the app's views has a Russian translation")
     func russian() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let table = try #require(NSDictionary(contentsOf: root.appending(path: "Localization/ru.lproj/Localizable.strings")) as? [String: String])
+        let enURL = root.appending(path: "Localization/en.lproj/Localizable.strings")
+        let ruURL = root.appending(path: "Localization/ru.lproj/Localizable.strings")
+        let en = try #require(NSDictionary(contentsOf: enURL) as? [String: String])
+        let table = try #require(NSDictionary(contentsOf: ruURL) as? [String: String])
         let untranslated: Set<String> = ["Basalt", "GPU", "OPENROUTER_API_KEY"]
         let call = #/(?:Text|Button|Label|Toggle|TextField|Section|Tab|LabeledContent|Picker|SecureField|Window|WindowGroup|ContentUnavailableView|Link|DisclosureGroup|String\(localized:|accessibilityLabel\(Text|confirmationDialog)\(\s*"([^"\\]+)"/#
         var missing: [String] = []
@@ -56,5 +59,24 @@ struct AppShipTests {
         }
         #expect(missing.isEmpty, "untranslated: \(missing)")
         #expect(table.values.allSatisfy { !$0.isEmpty } && table.count >= 90)
+        #expect(Set(en.keys) == Set(table.keys))
+        #expect(try Self.duplicateKeys(in: enURL).isEmpty)
+        #expect(try Self.duplicateKeys(in: ruURL).isEmpty)
+        for key in ["All %lld", "Target Budget: %@ bpw", "%lld-bit", "Estimated Size: %@ → %@", "Peak Conversion RAM: %@", "%@ of %@"] {
+            #expect(en[key] != nil && table[key] != nil, "missing interpolated key: \(key)")
+        }
+    }
+
+    private static func duplicateKeys(in url: URL) throws -> [String] {
+        let raw = try String(contentsOf: url, encoding: .utf8)
+        let entry = #/^"((?:[^"\\]|\\.)*)"\s*=\s*"(?:[^"\\]|\\.)*";/#
+        var seen: Set<String> = []
+        var duplicates: [String] = []
+        for line in raw.split(whereSeparator: \.isNewline) {
+            guard let match = String(line).firstMatch(of: entry) else { continue }
+            let key = String(match.1)
+            if !seen.insert(key).inserted { duplicates.append(key) }
+        }
+        return duplicates
     }
 }

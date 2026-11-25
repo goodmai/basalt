@@ -1,8 +1,6 @@
 import Foundation
 
 enum ImageTurnPlanner {
-    static let pngHeader = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-
     static func parseCommand(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
@@ -34,24 +32,25 @@ enum ImageTurnPlanner {
             return nil
         }
         guard let previous = conversation.messages[forkIndex].images.first else { return nil }
-        var refs: [Data] = []
+        var refPaths: [String] = []
         if let beforePath = previous.beforeFilePath {
-            let bytes = (try? Data(contentsOf: URL(fileURLWithPath: beforePath))) ?? pngHeader
-            refs.append(bytes)
+            refPaths.append(beforePath)
         } else if forkIndex > 0 {
-            refs = conversation.messages[forkIndex - 1].attachments.compactMap { item in
+            refPaths = conversation.messages[forkIndex - 1].attachments.compactMap { item in
                 guard item.kind == "image", let path = item.filePath else { return nil }
-                return (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? pngHeader
+                return path
             }
         }
-        return ImageGenerationCall(
+        var call = ImageGenerationCall(
             prompt: previous.prompt,
             model: conversation.model ?? previous.model,
             size: "\(previous.width)x\(previous.height)",
             steps: max(previous.totalSteps, 1),
-            referenceImages: refs,
+            referenceImages: [],
             beforeFilePath: previous.beforeFilePath
         )
+        call.referenceImagePaths = refPaths
+        return call
     }
 }
 
@@ -86,12 +85,15 @@ extension ChatReducer {
         }
         guard !resolvedPrompt.isEmpty else { return [] }
         let before = state.beforeFilePath ?? imageAttachments.first?.sourcePath
-        let call = ImageGenerationCall(
+        let inlineRefs = imageAttachments.compactMap { $0.data.isEmpty ? nil : $0.data }
+        let pathRefs = imageAttachments.compactMap { $0.data.isEmpty ? $0.sourcePath : nil }
+        var call = ImageGenerationCall(
             prompt: resolvedPrompt,
             model: state.conversation.model,
-            referenceImages: imageAttachments.map(\.data),
+            referenceImages: inlineRefs,
             beforeFilePath: before
         )
+        call.referenceImagePaths = pathRefs
         let attached = state.attachments.map {
             MessagePart.attachment(AttachmentPart(name: $0.name, kind: $0.kind, filePath: $0.sourcePath))
         }
@@ -150,7 +152,9 @@ extension ChatReducer {
             return []
         }
     }
+}
 
+extension ChatReducer {
     private static func applyImagePartial(
         _ message: inout MessageSnapshot,
         step: Int,
@@ -189,8 +193,12 @@ extension ChatReducer {
         guard let path = part.filePath, !path.isEmpty else { return }
         let rawName = URL(fileURLWithPath: path).lastPathComponent
         let validName = ChatAttachment.accepts(rawName) ? rawName : "\(rawName.isEmpty ? "reference" : rawName).png"
-        let data = (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? part.previewPNG ?? ImageTurnPlanner.pngHeader
-        guard let attachment = ChatAttachment(name: validName, data: data, sourcePath: path) else { return }
+        let attachment: ChatAttachment? = if let preview = part.previewPNG, !preview.isEmpty {
+            ChatAttachment(name: validName, data: preview, sourcePath: path)
+        } else {
+            ChatAttachment.deferredReference(name: validName, sourcePath: path)
+        }
+        guard let attachment else { return }
         state.attachments.removeAll { $0.sourcePath == path }
         let imageCount = state.attachments.filter { $0.kind == "image" }.count
         if imageCount >= 10, let oldestIdx = state.attachments.firstIndex(where: { $0.kind == "image" }) {

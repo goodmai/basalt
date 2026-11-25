@@ -23,36 +23,76 @@ extension AppModel {
         matchedConversationIDs = Set(ids)
     }
 
-    public func switchEngine(_ arguments: [String]) async {
+    nonisolated static func refreshedEnvironment(
+        preserving current: [String: String],
+        cloud: [String: String]
+    ) -> [String: String] {
+        var merged = cloud
+        for (key, value) in current where key.hasPrefix("BASALT_") && !value.isEmpty && merged[key] == nil {
+            merged[key] = value
+        }
+        return merged
+    }
+
+    public func switchEngine(_ arguments: [String], forceRestart: Bool = false) async {
         if let index = arguments.firstIndex(of: "--model"), arguments.indices.contains(index + 1) {
             configuredModel = arguments[index + 1]
         }
         let current = await supervisor.launch
+        let freshEnv = Self.refreshedEnvironment(preserving: current.environment, cloud: cloudEnvironment())
+        let fallback = HelperLaunch(executable: current.executable, arguments: arguments, environment: freshEnv)
+        if forceRestart || freshEnv != current.environment {
+            await supervisor.relaunch(fallback)
+            syncComposeProfileIfNeeded(arguments)
+            return
+        }
         let isReady = if case .ready = engine.phase { true } else { false }
         switch HotSwitchPlan.plan(from: current.arguments, to: arguments, isReady: isReady) {
         case .noop:
             await supervisor.start()
         case .hotLoadModel(let id):
             if (try? await hotSwitchModel(id)) != nil { return }
-            await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
+            await supervisor.relaunch(fallback)
         case .hotApplyCompose(let path):
-            do {
-                if let bundled = ComposeProfileCatalog.bundledYAML[path] {
-                    _ = try await applyComposeYAML(bundled, filePath: path)
-                } else {
-                    _ = try await applyComposeFile(URL(fileURLWithPath: path))
-                }
-                composeProfiles.send(.syncActive(path))
-                return
-            } catch EngineError.refused {
-                return
-            } catch {
-                composeProfiles.send(.syncActive(path))
-                await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
-            }
+            await hotApplyCompose(path, fallback: fallback)
         case .relaunch:
-            await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: arguments, environment: current.environment))
+            await supervisor.relaunch(fallback)
         }
+    }
+
+    private func hotApplyCompose(_ path: String, fallback: HelperLaunch) async {
+        do {
+            if let bundled = ComposeProfileCatalog.bundledYAML[path] {
+                _ = try await applyComposeYAML(bundled, filePath: path)
+            } else {
+                _ = try await applyComposeFile(URL(fileURLWithPath: path))
+            }
+            composeProfiles.send(.syncActive(path))
+        } catch EngineError.refused {
+            return
+        } catch {
+            composeProfiles.send(.syncActive(path))
+            await supervisor.relaunch(fallback)
+        }
+    }
+
+    private func syncComposeProfileIfNeeded(_ arguments: [String]) {
+        if let index = arguments.firstIndex(of: "--compose"), arguments.indices.contains(index + 1) {
+            composeProfiles.send(.syncActive(arguments[index + 1]))
+        }
+    }
+
+    public func recordLoadedModel(_ id: String) async {
+        configuredModel = id
+        await supervisor.updateLaunchArguments(["serve", "--model", id])
+        UserDefaults.standard.set(id, forKey: EngineChoice.modelKey)
+        if !library.state.models.isEmpty {
+            let updated = library.state.models.map {
+                LibraryModel(id: $0.id, sizeBytes: $0.sizeBytes, isLoaded: $0.id == id)
+            }
+            library.send(.listed(updated))
+        }
+        library.send(.appeared)
     }
 
     @discardableResult
@@ -67,13 +107,12 @@ extension AppModel {
         }
         guard let client = resolved else { throw EngineError.notRunning }
         let loaded = try await client.loadModel(id)
-        configuredModel = loaded
-        await supervisor.updateLaunchArguments(["serve", "--model", loaded])
-        UserDefaults.standard.set(loaded, forKey: EngineChoice.modelKey)
-        library.send(.appeared)
+        await recordLoadedModel(loaded)
         return loaded
     }
+}
 
+extension AppModel {
     @discardableResult
     public func applyComposeFile(_ url: URL, client override: EngineClient? = nil) async throws -> Bool {
         let accessed = url.startAccessingSecurityScopedResource()
@@ -112,8 +151,9 @@ extension AppModel {
         }
         guard let filePath else { return false }
         let current = await supervisor.launch
+        let freshEnv = Self.refreshedEnvironment(preserving: current.environment, cloud: cloudEnvironment())
         UserDefaults.standard.set(filePath, forKey: EngineChoice.composeKey)
-        await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: ["serve", "--compose", filePath], environment: current.environment))
+        await supervisor.relaunch(HelperLaunch(executable: current.executable, arguments: ["serve", "--compose", filePath], environment: freshEnv))
         return false
     }
 

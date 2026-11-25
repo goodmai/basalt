@@ -99,7 +99,7 @@ struct BasaltMacApp: App {
             MenuBarLabel(delegate: delegate)
         }
         .menuBarExtraStyle(.window)
-        Settings { SettingsView(keychain: .live()) { arguments in await delegate.model?.switchEngine(arguments) } }
+        Settings { SettingsView(keychain: .live()) { arguments in await delegate.model?.switchEngine(arguments, forceRestart: true) } }
     }
 
     static func makeModel() -> AppModel? {

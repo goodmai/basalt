@@ -96,6 +96,7 @@ public struct ImageGenerationCall: Sendable, Equatable, Codable {
     public var reuseReferenceKV = true
     public var upscaleFactor: Int?
     public var referenceImages: [Data]
+    public var referenceImagePaths: [String] = []
     public var beforeFilePath: String?
 
     public init(
@@ -115,7 +116,7 @@ public struct ImageGenerationCall: Sendable, Equatable, Codable {
     }
 
     public var endpointPath: String {
-        referenceImages.isEmpty ? "v1/images/generations" : "v1/images/edits"
+        (referenceImages.isEmpty && referenceImagePaths.isEmpty) ? "v1/images/generations" : "v1/images/edits"
     }
 
     public func wireBody() throws -> Data {

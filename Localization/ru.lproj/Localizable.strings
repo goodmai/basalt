@@ -164,14 +164,13 @@
 "Activate" = "Включить";
 "Activate Profile" = "Активировать профиль";
 "Adaptive thinking budgets tuned for multi-step math and logic." = "Адаптивный бюджет размышлений для многошаговой логики и математики.";
-"All 91" = "Все 91";
+"All %lld" = "Все %lld";
 "Belnap" = "Белнап";
 "Bundled Profile" = "Встроенный профиль";
 "CLI Command" = "Команда CLI";
 "Chat" = "Чат";
 "Choose any hardware-tuned multi-model profile on the left." = "Выберите любой аппаратный профиль многомодельной системы слева.";
 "Cloud Cap" = "Лимит облака";
-"Code" = "Код";
 "Coding Agent & MCP" = "Кодинг-агент и MCP";
 "Compose Profiles" = "Профили Compose";
 "Compose Specification (YAML)" = "Спецификация Compose (YAML)";
@@ -186,7 +185,7 @@
 "Epistemic" = "Эпистемика";
 "Epistemic Grounded Research" = "Верифицированный поиск и факты";
 "Estimated Resident RAM" = "Оценка резидентной памяти";
-"Fast" = "Быстро";
+"Fast" = "Быстрый";
 "Fast everyday chat, Apple Vision attachments, and local speech input." = "Быстрый чат на каждый день, вложения через Apple Vision и голосовой ввод.";
 "Filter profiles or models" = "Поиск профилей или моделей";
 "Frontier MoE Engine" = "Флагманский MoE-движок";
@@ -229,7 +228,6 @@
 "Speech" = "Речь";
 "Targets %@ Macs; may exceed this Mac's memory" = "Рассчитан на Mac с %@; может превысить память этого Mac";
 "TeaCache" = "TeaCache";
-"Thinking" = "Мышление";
 "TTS 44.1 kHz" = "TTS 44,1 кГц";
 "Upsample" = "Апсемпл";
 "Vision" = "Зрение";
@@ -270,7 +268,6 @@
 "Estimating output footprint…" = "Оценка размера выходной модели…";
 "PV-Tuning (Teacher KL Code & Scale Refinement)" = "PV-тюнинг (доводка кодов и шкал по KL учителя)";
 "Preset" = "Профиль";
-"Fast" = "Быстрый";
 "Balanced" = "Сбалансированный";
 "Thorough" = "Тщательный";
 "Teacher Model" = "Модель-учитель";
@@ -352,3 +349,8 @@
 "Merge LoRA Adapter (Optional)" = "Влить LoRA-адаптер (необязательно)";
 "org/adapter-repo" = "org/adapter-repo";
 "Fuses a PEFT or mlx-lm LoRA repository into the converted weights." = "Вливает PEFT или mlx-lm LoRA-репозиторий в конвертируемые веса.";
+"Target Budget: %@ bpw" = "Целевой бюджет: %@ бит/вес";
+"%lld-bit" = "%lld бит";
+"Estimated Size: %@ → %@" = "Оценка размера: %@ → %@";
+"Peak Conversion RAM: %@" = "Пиковое ОЗУ конвертации: %@";
+"%@ of %@" = "%@ из %@";

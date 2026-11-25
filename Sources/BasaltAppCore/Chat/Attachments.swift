@@ -21,7 +21,35 @@ public struct ChatAttachment: Sendable, Equatable, Identifiable {
         (self.id, self.name, self.kind, self.format, self.data, self.sourcePath) = (id, name, kind, format, data, sourcePath)
     }
 
+    private init(id: UUID, name: String, kind: String, format: String, data: Data, sourcePath: String?) {
+        (self.id, self.name, self.kind, self.format, self.data, self.sourcePath) = (id, name, kind, format, data, sourcePath)
+    }
+
+    public static func deferredReference(name: String, sourcePath: String, id: UUID = UUID()) -> ChatAttachment? {
+        let format = (name as NSString).pathExtension.lowercased()
+        guard let kind = Self.kinds[format], !sourcePath.isEmpty else { return nil }
+        return ChatAttachment(id: id, name: name, kind: kind, format: format, data: Data(), sourcePath: sourcePath)
+    }
+
     public static func accepts(_ name: String) -> Bool { kinds[(name as NSString).pathExtension.lowercased()] != nil }
+
+    public static func load(from url: URL) -> ChatAttachment? {
+        guard url.isFileURL, accepts(url.lastPathComponent) else { return nil }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let target = url.resolvingSymlinksInPath()
+        guard let values = try? target.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let size = values.fileSize,
+              size > 0, size <= byteLimit else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return ChatAttachment(name: url.lastPathComponent, data: data, sourcePath: url.path)
+    }
+
+    @concurrent
+    public static func loadAsync(from url: URL) async -> ChatAttachment? {
+        load(from: url)
+    }
 }
 
 public struct PipelineCall: Sendable, Equatable {
