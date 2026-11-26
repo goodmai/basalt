@@ -141,6 +141,7 @@ struct ModelCapabilities: Equatable, Sendable {
         let flint = ModelCapabilities(verified: [.speculativeLookup, .batchedDecode, .promptCacheReuse, .kvQuantization, .grammarJumpForward])
         let falconH1 = ModelCapabilities(verified: [.speculativeLookup, .promptCacheReuse, .kvQuantization, .grammarJumpForward])
         let bailingHybrid = ModelCapabilities(verified: [.batchedDecode, .promptCacheReuse, .grammarJumpForward])
+        let rwkv7 = ModelCapabilities(verified: [.promptCacheReuse, .grammarJumpForward])
         let table: [([String], ModelCapabilities)] = [
             (["llama", "qwen3", "qwen3_moe", "mimo", "minimax", "minimax_m1", "minimax-m1", "minimax_m2", "minimax-m2", "hunyuan", "hunyuan_mt", "hunyuan-mt", "hunyuan_v1_dense"], attention),
             (["qwen3_5", "qwen3_5_text", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8", PrismHadamard.modelType], qwen35),
@@ -154,6 +155,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([HuginnModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),
+            ([RWKV7Model.modelType], rwkv7),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
             ([DeepSeekOCR.modelType, DeepSeekOCR2.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),

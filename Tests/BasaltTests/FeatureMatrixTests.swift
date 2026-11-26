@@ -12,11 +12,11 @@ struct FeatureMatrixTests {
 
         func applies(to family: TinyModel.Family) -> Bool {
             switch self {
-            case .lookup: ![.qwen35Moe, .qwen3Next, .lfm2Moe, .sigmoidMoe, .bailingHybrid].contains(family)
+            case .lookup: ![.qwen35Moe, .qwen3Next, .lfm2Moe, .sigmoidMoe, .bailingHybrid, .rwkv7].contains(family)
             case .mtp: [.qwen35, .prism].contains(family)
             case .cacheBlend: [.qwen3, .qwen3HeadDim32].contains(family)
             case .kvZones, .headSplit, .headSplitZoned: [.qwen3HeadDim32, .qwen3Next].contains(family)
-            case .quest: ![.gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .flint, .inkling2Loop, .bailingHybrid].contains(family)
+            case .quest: ![.gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .flint, .inkling2Loop, .bailingHybrid, .rwkv7].contains(family)
             case .kvSharedRow: family == .gemma4KEqV
             }
         }
@@ -118,7 +118,7 @@ struct FeatureMatrixTests {
     }
 
     @Test("Four concurrent requests decoded in one batch each get their solo greedy text, sliding-window families included (#319, #255)",
-          .timeLimit(.minutes(1)), arguments: families.filter { $0 != .inkling2Loop })
+          .timeLimit(.minutes(1)), arguments: families.filter { $0 != .inkling2Loop && $0 != .rwkv7 })
     func batchedDecodeMatchesSolo(family: TinyModel.Family) async throws {
         let expected = try await BatchedRoutingTests.solo(4, family: family)
         let engine = await BatchFixture.engine(try TinyModel.make(family), id: "tiny-\(family)", batchSlots: 4)
