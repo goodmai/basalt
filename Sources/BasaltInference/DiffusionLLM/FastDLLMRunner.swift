@@ -48,6 +48,7 @@ public struct FastDLLMRequest: Equatable, Sendable {
     public var suffixTokens: [Int]
     public var includeTrailingMaskSuffix: Bool
     public var eosTokenId: Int?
+    public var stopTokenIds: Set<Int> = []
 
     public init(
         promptTokens: [Int],
@@ -94,7 +95,7 @@ public enum FastDLLMRunner {
         let promptLength: Int
         let generationEnd: Int
         let usesTrailingSuffix: Bool
-        let eosTokenId: Int?
+        let stopTokenIds: Set<Int>
         var canvas: [Int]
         var finalizedBlockEnds: [Int] = []
         var forwardEvaluations = 0
@@ -118,7 +119,7 @@ public enum FastDLLMRunner {
             return emptyResult(for: request)
         }
         var state = makeInitialState(for: request, maskTokenId: config.maskTokenId)
-        let dualCache = DualBlockKVCache(layerCount: model.layerCount)
+        let dualCache = DualBlockKVCache(layerCount: model.layerCount, bidirectionalPrompt: config.bidirectionalPrompt)
         if config.dualCacheEnabled, state.promptLength > 0 {
             prefillPrompt(model: model, state: &state, dualCache: dualCache)
         }
@@ -157,7 +158,7 @@ public enum FastDLLMRunner {
             promptLength: promptLength,
             generationEnd: promptLength + request.maxNewTokens,
             usesTrailingSuffix: request.includeTrailingMaskSuffix || !request.suffixTokens.isEmpty,
-            eosTokenId: request.suffixTokens.isEmpty ? request.eosTokenId : nil,
+            stopTokenIds: request.suffixTokens.isEmpty ? request.stopTokenIds.union(request.eosTokenId.map { [$0] } ?? []) : [],
             canvas: request.promptTokens + middle + request.suffixTokens
         )
     }
@@ -386,11 +387,11 @@ extension FastDLLMRunner {
     }
 
     fileprivate static func completedEOSCutoff(state: RunState, upTo upperBound: Int, maskTokenId: Int) -> Int? {
-        guard let eos = state.eosTokenId else { return nil }
+        guard !state.stopTokenIds.isEmpty else { return nil }
         for index in state.promptLength ..< upperBound {
             let token = state.canvas[index]
             if token == maskTokenId { return nil }
-            if token == eos { return index + 1 }
+            if state.stopTokenIds.contains(token) { return index + 1 }
         }
         return nil
     }

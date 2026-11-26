@@ -93,6 +93,9 @@ public enum OffscreenSceneRenderer {
         NSAnimationContext.endGrouping()
         CATransaction.commit()
         CATransaction.flush()
+        window.endEditing(for: nil)
+        window.makeFirstResponder(nil)
+        host.layoutSubtreeIfNeeded()
         return try captureBitmap(from: host, spec: spec, appearance: targetAppearance)
     }
 

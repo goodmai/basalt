@@ -252,6 +252,16 @@ struct FastDLLMRunnerParityTests {
         #expect(result.generatedTokens == [19, 12, 15])
     }
 
+    @Test("Generation stops at the first finished stop token from the whole stop set, not only the tokenizer's EOS")
+    func runnerStopsOnAnyStopToken() {
+        let model = SelfCorrectingToyBlockModel(maskTokenId: 31)
+        var request = FastDLLMRequest(promptTokens: [], maxNewTokens: 3, includeTrailingMaskSuffix: false)
+        request.stopTokenIds = [12]
+        let config = BlockDiffusionConfig(blockSize: 3, confidenceThreshold: 0.80, maxStepsPerBlock: 6, maskTokenId: 31, remaskThreshold: 0.35, dualCacheEnabled: false)
+        let generated = FastDLLMRunner.generate(model: model, request: request, config: config).generatedTokens
+        #expect(generated.count == 2 && generated.last == 12, "\(generated)")
+    }
+
     @Test("DualBlockLayerKVCache copy, trim, and reset maintain prefix and suffix tensor lengths")
     func layerCacheLifecycleOperations() {
         let layer = DualBlockLayerKVCache()

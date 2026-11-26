@@ -18,8 +18,11 @@ public final class DualBlockLayerKVCache: KVCache {
     public private(set) var suffixValues: MLXArray?
     public var phase: DualBlockCachePhase = .promptPrefill
     public var customMask: MLXArray?
+    public let bidirectionalPrompt: Bool
 
-    public init() {}
+    public init(bidirectionalPrompt: Bool = false) {
+        self.bidirectionalPrompt = bidirectionalPrompt
+    }
 
     public var maxSize: Int? { nil }
     public var isTrimmable: Bool { true }
@@ -74,7 +77,7 @@ public final class DualBlockLayerKVCache: KVCache {
         }
         switch phase {
         case .promptPrefill:
-            return n <= 1 ? .none : .causal
+            return bidirectionalPrompt || n <= 1 ? .none : .causal
         case .suffixPrefill, .activeBlock, .blockCommit, .uncachedFullSequence:
             return .none
         }
@@ -170,8 +173,8 @@ public final class DualBlockLayerKVCache: KVCache {
 public struct DualBlockKVCache {
     public let layers: [DualBlockLayerKVCache]
 
-    public init(layerCount: Int) {
-        self.layers = (0 ..< max(0, layerCount)).map { _ in DualBlockLayerKVCache() }
+    public init(layerCount: Int, bidirectionalPrompt: Bool = false) {
+        self.layers = (0 ..< max(0, layerCount)).map { _ in DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt) }
     }
 
     public var kvCaches: [any KVCache] { layers }

@@ -37,7 +37,7 @@ struct OuroConfiguration: Decodable, Sendable {
         ropeTheta = try c.decodeIfPresent(Float.self, forKey: .ropeTheta) ?? 1_000_000
         steps = try c.decodeIfPresent(Int.self, forKey: .steps) ?? 4
         tieWordEmbeddings = try c.decodeIfPresent(Bool.self, forKey: .tieWordEmbeddings) ?? false
-        guard steps >= 1, layers >= 1, heads % kvHeads == 0 else {
+        guard steps >= 1, layers >= 1, heads > 0, kvHeads > 0, heads % kvHeads == 0 else {
             throw DecodingError.dataCorruptedError(forKey: .steps, in: c, debugDescription: "ouro needs total_ut_steps ≥ 1, layers ≥ 1 and heads divisible by key-value heads")
         }
     }

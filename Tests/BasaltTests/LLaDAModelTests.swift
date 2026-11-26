@@ -61,6 +61,26 @@ struct LLaDAModelTests {
         #expect(abs(a - b).max().item(Float.self) > 0)
     }
 
+    @Test("Prompt prefill through the dual block cache is bidirectional for LLaDA: its logits equal the uncached full forward, which a causal prefill would not")
+    func promptPrefillIsBidirectional() throws {
+        let model = try Self.model()
+        let full = model(MLXArray(Self.tokens)[.newAxis], cache: nil).asType(.float32)
+        let dual = DualBlockKVCache(layerCount: model.config.layers, bidirectionalPrompt: model.bidirectionalPrompt)
+        dual.preparePromptPrefill()
+        let prefilled = model(MLXArray(Self.tokens)[.newAxis], cache: dual.kvCaches).asType(.float32)
+        #expect(abs(prefilled - full).max().item(Float.self) < 1e-4)
+        let causal = DualBlockKVCache(layerCount: model.config.layers)
+        causal.preparePromptPrefill()
+        #expect(abs(model(MLXArray(Self.tokens)[.newAxis], cache: causal.kvCaches).asType(.float32) - full).max().item(Float.self) > 1e-3)
+    }
+
+    @Test("A config with zero heads or zero key-value heads is refused instead of trapping on a division by zero", arguments: ["\"n_heads\": 0", "\"n_kv_heads\": 0"])
+    func zeroHeadsRefused(override: String) throws {
+        var config = TinyModel.Family.llada.config
+        config = config.replacingOccurrences(of: override.hasPrefix("\"n_heads") ? "\"n_heads\": 4" : "\"n_kv_heads\": 2", with: override)
+        #expect(throws: (any Error).self) { _ = try LLaDAModel(configurationData: Data(config.utf8)) }
+    }
+
     @Test("Fast-dLLM over the model unmasks every requested position, never emits the mask token, and repeats itself exactly")
     func fastDLLMGenerates() throws {
         let model = try Self.model()

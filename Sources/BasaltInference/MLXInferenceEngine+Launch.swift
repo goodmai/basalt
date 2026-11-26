@@ -79,7 +79,8 @@ extension MLXInferenceEngine {
             input: input, params: options.params.reportingPrefill.paced(by: options.pacer).capped(for: context.model, promptTokens: input.text.tokens.dim(-1), scratch: options.prefillScratch), components: options.components, tools: options.tools, context: context, started: .now)
         if let diffusion = options.diffusion, let model = context.model as? any DiffusionLanguageModel {
             return start.uncached(try DiffusionTokenIterator(
-                model: model, input: input, maxTokens: options.params.maxTokens, config: diffusion, eosTokenId: context.tokenizer.eosTokenId))
+                model: model, input: input, maxTokens: options.params.maxTokens, config: diffusion,
+                stopTokenIds: DiffusionTokenIterator.stopTokens(context.configuration, tokenizer: context.tokenizer)))
         }
         if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(
