@@ -34,7 +34,21 @@ struct CentroidCodebook {
         return CentroidCodebook(clusters: clusters, centroids: centers, counts: memberCounts)
     }
 
-    mutating func updateOnline(_ keys: MLXArray, decay: Float = 1.0) {
+    static func fitEMeans(
+        keys: MLXArray,
+        clusters: Int = 8,
+        epochs: Double = 2.5,
+        finalizer: EMeansFinalizer = .slowEMA(speedMultiplier: 0.25),
+        seed: UInt64 = 0
+    ) -> CentroidCodebook {
+        precondition(KVPrecision.supportedCentroidClusters.contains(clusters), "RQ-KV supports 4, 8, or 16 centroids")
+        precondition(keys.ndim == 4 && keys.dim(2) > 0 && keys.dim(3) > 0, "RQ-KV keys require shape [B, H, T, D]")
+        let config = EMeansConfig(clusters: clusters, epochs: epochs, finalizer: finalizer, seed: seed)
+        let (centers, memberCounts) = EMeans.fitBatched(keys, config: config)
+        return CentroidCodebook(clusters: clusters, centroids: centers, counts: memberCounts)
+    }
+
+    mutating func updateOnline(_ keys: MLXArray, decay: Float = 1.0, reviveDeadThreshold: Float? = nil) {
         precondition(decay.isFinite && decay > 0 && decay <= 1, "RQ-KV decay must lie in (0, 1]")
         guard keys.dim(2) > 0 else { return }
         let x = keys.asType(.float32)
@@ -50,6 +64,15 @@ struct CentroidCodebook {
         centroids = which(updated, blended, centroids)
         counts = which(updated, totalCounts, maximum(priorCounts, MLXArray(Float(1e-3))))
         eval(centroids, counts)
+        if let threshold = reviveDeadThreshold, threshold.isFinite && threshold > 0 {
+            var rng = SplitMix64(seed: UInt64(clusters) &* 0x9E37_79B9_7F4A_7C15 ^ UInt64(keys.dim(2)))
+            let revived = EMeans.reviveBatched(
+                centroids: centroids, counts: counts, sums: nil,
+                threshold: threshold, delta: EMeansConfig.defaultRevivalDelta, rng: &rng)
+            centroids = revived.centroids
+            counts = revived.counts
+            eval(centroids, counts)
+        }
     }
 
     private static func seedKMeansPlusPlus(keys x: MLXArray, clusters: Int, seed: UInt64) -> MLXArray {
