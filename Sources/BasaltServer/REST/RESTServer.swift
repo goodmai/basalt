@@ -193,14 +193,14 @@ package struct RESTServer: Sendable {
     }
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
-        let openAI = OpenAIController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody)
+        let openAI = OpenAIController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody, harnessRouting: config.harnessRouting)
         let embedding = EmbeddingsController(engine: embeddings, gate: orchestrator.gate)
         oai.post("/chat/completions", use: openAI.chatCompletions)
         oai.post("/responses", use: openAI.responses)
         oai.post("/generate", use: openAI.generateRaw)
         oai.post("/score", use: openAI.score)
         XrayTokensController(orchestrator: orchestrator).add(to: oai)
-        oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody).messages)
+        oai.post("/messages", use: AnthropicController(orchestrator: orchestrator, modelId: defaultId, zeroCopyBody: config.experimentalZeroCopyBody, harnessRouting: config.harnessRouting).messages)
         oai.post("/embeddings", use: embedding.embeddings)
         oai.post("/rerank", use: embedding.rerank)
         let registry = pipelines ?? PipelineRegistry([ComposeSpec.defaultPipeline: PipelineSystem(decisions: decisions, stages: pipeline)])

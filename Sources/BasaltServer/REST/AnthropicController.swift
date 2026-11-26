@@ -7,12 +7,16 @@ struct AnthropicController: Sendable {
     let orchestrator: any ModelOrchestrating
     let modelId: String
     var zeroCopyBody = false
+    var harnessRouting: HarnessRoutingTable = .empty
 }
 
 extension AnthropicController {
     @Sendable
     func messages(request: Request, context: BasicRequestContext) async throws -> Response {
-        let pipeline = ChatPipeline(orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages", zeroCopyBody: zeroCopyBody) { status, message in
+        let pipeline = ChatPipeline(
+            orchestrator: orchestrator, label: "Anthropic", source: "anthropic", endpoint: "/v1/messages",
+            zeroCopyBody: zeroCopyBody, harnessRouting: harnessRouting
+        ) { status, message in
             ProviderErrorResponse.response(status: status, message: message, shape: .anthropic)
         }
         return try await pipeline.handle(request) { data in

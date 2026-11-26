@@ -20,7 +20,8 @@ extension OpenAIController {
                 chat: chat, maxTokens: dto.maxTokens,
                 sampling: dto.sampling(anti),
                 reasoningEffort: dto.reasoningEffort, tools: tools, thinkingBudget: dto.thinkingBudget,
-                responseFormat: format, model: dto.model, stream: stream), headers: request.headers)
+                responseFormat: format, model: dto.model, stream: stream,
+                enableThinking: dto.enableThinking), headers: request.headers)
             if anti.xrayTrace == true, !stream {
                 try await pipeline.admitStream(prepared.request)
                 let topLP = anti.topLogprobs ?? anti.nProbs ?? 5
@@ -58,6 +59,7 @@ extension OpenAIController {
         let speculativeLookup: Bool?
         let grammarJumpForward: Bool?
         let streamOptions: StreamOptions?
+        let enableThinking: Bool?
 
         struct StreamOptions: Codable, Sendable {
             let includeUsage: Bool?
@@ -81,6 +83,7 @@ extension OpenAIController {
             case thinkingBudget = "thinking_budget"
             case speculativeLookup = "speculative_lookup"
             case grammarJumpForward = "grammar_jump_forward"
+            case enableThinking = "enable_thinking"
         }
 
         func sampling(_ antiRepetition: ChatPipeline.AntiRepetition) -> ChatPipeline.Sampling {

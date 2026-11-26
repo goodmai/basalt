@@ -120,6 +120,12 @@ struct ServeCommand: AsyncParsableCommand {
 
     @Option(name: .customLong("adapter"), help: "Serve a LoRA adapter on the loaded model as name=directory or name=hf:org/repo (a Hugging Face repo, taken from the local cache or, after checking that it holds an adapter, downloaded and verified like a model); an mlx-lm adapter (adapter_config.json and adapters.safetensors) or a PEFT one (adapter_model.safetensors), checked against the model at startup; repeatable. A request picks one with the X-Basalt-Adapter header (unknown name: 400); requests for different adapters take turns, the same adapter runs concurrently") var adapters: [String] = []
 
+    @Option(name: .customLong("harness-adapter"), help: "Auto-route a detected coding harness to a registered adapter as harness=name (claude-code, opencode, pi, hermes); repeatable. Explicit X-Basalt-Adapter overrides the route (none or base forces the base model)")
+    var harnessAdapters: [String] = []
+
+    @Option(name: .customLong("default-adapter"), help: "Fallback registered adapter name used when no X-Basalt-Adapter header or --harness-adapter mapping matches")
+    var defaultAdapter: String?
+
     @Flag(name: .customLong("dry-run"), help: "Perform a dry-run memory feasibility assessment and exit without starting the server")
     var dryRun: Bool = false
 
@@ -180,6 +186,7 @@ struct ServeCommand: AsyncParsableCommand {
         config.maxTokens = maxTokens
         config.logLevel = logLevel
         config.experimentalZeroCopyBody = experimental.zeroCopyBody
+        config.harnessRouting = try harnessRoutingTable()
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
