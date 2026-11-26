@@ -119,6 +119,7 @@ extension MLXInferenceEngine {
         VLMProcessorLoadingRegistry.shared.register(ModelTypeProcessorResolver(processorTypes: [DeepSeekOCR2.modelType: DeepSeekOCRProcessor.ocr2ProcessorType]))
         await registerMuseGlimmerAliases()
         await registerBailingHybridAliases()
+        await registerHyperConnectionAliases()
     }
 
     public static func registerAliases() async {

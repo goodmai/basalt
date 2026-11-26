@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm, mhc
 
         var decodesTokenByToken: Bool { self != .llada }
 
@@ -28,7 +28,7 @@ enum TinyModel {
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm: try multimodalModel(config, decoder: decoder)
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -49,6 +49,7 @@ enum TinyModel {
             if self == .huginn { return try HuginnModel(configurationData: config) }
             if self == .rwkv7 { return try RWKV7Model(configurationData: config) }
             if self == .xlstm { return try XLSTMModel(configurationData: config) }
+            if self == .mhc { return try HyperConnectionModel(configurationData: config) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
             if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
@@ -58,7 +59,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc: 1
             }
         }
 
@@ -200,7 +201,7 @@ enum TinyModel {
                   "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
                  "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
-            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm:
+            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc:
                 extendedConfig
             }
         }
@@ -341,6 +342,13 @@ extension TinyModel.Family {
              "ffn_round_up_to_multiple_of": 16, "chunk_size": 4, "gate_soft_cap": 15.0,
              "output_logit_soft_cap": 30.0, "norm_eps": 1e-6, "eps": 1e-6}
             """
+        case .mhc: """
+            {"model_type": "mhc", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 2,
+             "intermediate_size": 128, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16,
+             "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false,
+             "hc_variant": "mhc", "hc_expansion_rate": 4, "hc_sinkhorn_iterations": 20,
+             "hc_gate_mode": "sigmoid", "hc_collapse_mode": "mean", "hc_dynamic": true, "hc_alpha_init": 0.01}
+            """
         default:
             preconditionFailure("Unexpected TinyModel.Family in extendedConfig: \(self)")
         }
@@ -376,6 +384,7 @@ extension TinyModel.Family {
         case .huginn: 125
         case .rwkv7: 825
         case .xlstm: 843
+        case .mhc: 844
         }
     }
 }
@@ -401,6 +410,8 @@ extension TinyModel {
             (suffixes, scale) = ([".qk_bias"], 0.25)
         case .rwkv7:
             (suffixes, scale) = ([".x_r", ".x_w", ".x_k", ".x_v", ".x_a", ".x_g", ".k_k", ".k_a", ".r_k", ".lora_b.bias"], 0.25)
+        case .mhc:
+            (suffixes, scale) = ([".phi_weight", ".bias_pre", ".bias_post", ".bias_res"], 0.25)
         default:
             return
         }
