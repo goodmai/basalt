@@ -70,7 +70,7 @@ struct FeatureMatrixTests {
     }
 
     static let promptCacheBytes = 1 << 26
-    static let families = TinyModel.Family.allCases.filter { $0 != .qwen3Small }
+    static let families = TinyModel.Family.allCases.filter { $0 != .qwen3Small && $0.decodesTokenByToken }
 
     static var turns: [GenerationRequest] {
         [greedy(Conversation.firstTurn, key: nil, maxTokens: 16), greedy(Conversation.firstTurn, key: "matrix", maxTokens: 16),

@@ -82,7 +82,18 @@ jobs:
         uses: ./.github/actions/mlx-metallib
 
       - name: Run unit tests
-        run: swift test --enable-code-coverage
+        run: |
+          rm -rf "$RUNNER_TEMP/test-attachments" && mkdir -p "$RUNNER_TEMP/test-attachments"
+          swift test --enable-code-coverage --attachments-path "$RUNNER_TEMP/test-attachments"
+
+      - name: Upload test attachments
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: test-attachments-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/test-attachments
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Changed-line coverage
         if: github.event_name == 'pull_request'

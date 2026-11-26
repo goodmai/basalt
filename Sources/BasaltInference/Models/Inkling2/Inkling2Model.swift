@@ -12,6 +12,9 @@ final class Inkling2TextModel: Module {
     @ModuleInfo(key: "final_input") var finalInput: Inkling2Query
     @ModuleInfo(key: "norm") var norm: RMSNorm
     @ModuleInfo(key: "message_input") var messageInput: Inkling2MessageInput?
+    var loopExitThreshold = LoopExit.environmentThreshold
+    private(set) var exitSteps = 0
+    private(set) var exitPasses = 0
 
     init(_ config: Inkling2Configuration) {
         self.config = config
@@ -50,6 +53,8 @@ final class Inkling2TextModel: Module {
         if let loop = config.loop {
             let prelude = run(0 ..< loop.coreStart, embedded, nil, bank: nil)
             (hidden, blocks) = prelude
+            let exit = loopExitCaches(tokens, cache: cache, plain: capturing.isEmpty && probe == nil)
+            var previous: MLXArray?
             for pass in 0 ..< loop.numPasses {
                 var bank: (blocks: MLXArray, partial: MLXArray)?
                 if pass > 0, let current = blocks {
@@ -58,7 +63,16 @@ final class Inkling2TextModel: Module {
                     (hidden, blocks) = prelude
                 }
                 (hidden, blocks) = run(loop.coreStart ..< loop.coreEnd, hidden, blocks, bank: bank)
+                if exit != nil { exitPasses += 1 }
+                if let exit, let threshold = loopExitThreshold, let last = previous, pass + 1 < loop.numPasses,
+                   Inkling2LoopExit.relativeChange(from: last, to: hidden) < threshold {
+                    Inkling2LoopExit.fillSkippedPasses(exit, loop: loop, lastPass: pass)
+                    visit = loop.coreStart + loop.numPasses * (loop.coreEnd - loop.coreStart)
+                    break
+                }
+                previous = hidden
             }
+            if exit != nil { exitSteps += 1 }
             (hidden, blocks) = run(loop.coreEnd ..< config.layers, hidden, blocks, bank: nil)
         } else {
             (hidden, blocks) = run(0 ..< config.layers, embedded, nil, bank: nil)
@@ -67,6 +81,11 @@ final class Inkling2TextModel: Module {
         let final = norm(readout).asType(embedded.dtype)
         if capturing.contains(visit) { captured.append(final) }
         return (final, captured)
+    }
+
+    private func loopExitCaches(_ tokens: MLXArray, cache: [KVCache]?, plain: Bool) -> [KVCache]? {
+        guard loopExitThreshold != nil, plain, tokens.dim(-1) == 1, let cache, Inkling2LoopExit.copyable(cache) else { return nil }
+        return cache
     }
 }
 

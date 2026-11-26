@@ -84,6 +84,8 @@ extension MLXInferenceEngine {
                 try NemotronLightningModel(configurationData: data)
             }
         }
+        await registry.registerModelType(LLaDAModel.modelType) { data in try LLaDAModel(configurationData: data) }
+        await registry.registerModelType(OuroModel.modelType) { data in try OuroModel(configurationData: data) }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
@@ -118,6 +120,19 @@ extension MLXInferenceEngine {
     public static func registerAliases() async {
         await aliasRegistration.value
     }
+
+    public static func loadableModelTypes(among candidates: [String]) async -> [String] {
+        await registerAliases()
+        var loadable: [String] = []
+        for type in candidates {
+            if await LLMTypeRegistry.shared.contains(type) {
+                loadable.append(type)
+            } else if await VLMTypeRegistry.shared.contains(type) {
+                loadable.append(type)
+            }
+        }
+        return loadable
+    }
 }
 
 extension MLXInferenceEngine {
@@ -143,6 +158,7 @@ extension MLXInferenceEngine {
         }
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
         try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
+        try ModelCapabilities.refuseDiffusionWithoutFlag(dllm: configuration.dllm, modelType: modelType, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }

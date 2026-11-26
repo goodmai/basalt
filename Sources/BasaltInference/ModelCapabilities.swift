@@ -79,6 +79,15 @@ struct ModelCapabilities: Equatable, Sendable {
         modelType.flatMap { families[$0.lowercased()] }
     }
 
+    static let diffusionModelTypes: Set<String> = [LLaDAModel.modelType]
+
+    static func refuseDiffusionWithoutFlag(dllm: Bool, modelType: String?, path: String) throws(BasaltError) {
+        guard !dllm, let modelType, diffusionModelTypes.contains(modelType.lowercased()) else { return }
+        throw .modelConfigurationInvalid(
+            path: path,
+            reason: "model_type '\(modelType)' is a masked-diffusion language model and cannot decode token by token; serve it with --experimental-dllm (#819)")
+    }
+
     static func refuseUnverifiedKVBits(_ precision: KVPrecision?, modelType: String?, path: String) throws(BasaltError) {
         guard precision != nil, of(modelType: modelType)?.allows(.kvQuantization) != true else { return }
         if modelType?.lowercased() == BailingHybridModel.modelType {
@@ -115,6 +124,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["gemma3", "gemma3_text"], gemma3),
             (["gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_text"], gemma4),
             ([FlintModel.modelType], flint),
+            ([OuroModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),

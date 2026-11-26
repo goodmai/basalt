@@ -95,6 +95,7 @@ extension ServeCommand {
         configuration.smallMKernel = experimental.smallMKernel
         configuration.q3Kernel = experimental.q3Kernel
         configuration.kvSharedRow = experimental.kvSharedRow
+        configuration.dllm = experimental.dllm
         return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
     }
 

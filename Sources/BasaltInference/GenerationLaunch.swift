@@ -88,6 +88,7 @@ struct LaunchOptions {
     var pacer: PrefillPacer?
     var kEqVRow: KEqVRowLayout?
     var prefillScratch: PrefillAttentionScratch?
+    var diffusion: BlockDiffusionConfig?
 }
 
 struct MTPRequest {
