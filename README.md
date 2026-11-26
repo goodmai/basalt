@@ -7,11 +7,11 @@
 [English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
-[![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
+[![Release v0.13.0](https://img.shields.io/badge/release-v0.13.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.13.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
 [![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-[![Models on HF](https://img.shields.io/badge/%F0%9F%A4%97%20Models-goodmai%20%2855%2B%29-black.svg)](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc)
+[![Models on HF](https://img.shields.io/badge/%F0%9F%A4%97%20Models-goodmai%20%2865%2B%29-black.svg)](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc)
 [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6%20Run%20with%20Basalt-1--click-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?lang=en)
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2027%2B%20%C2%B7%20Apple%20Silicon-black.svg)](docs/install.md#requirements)
@@ -33,7 +33,7 @@
 | [`lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly`](https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly) | hybrid linear/full attention, dense | [golden](Tests/BasaltTests/Fixtures/golden/lukaskremla--Qwen3.8-27B-3bit-MLX-TextOnly.json) |
 | [`LiquidAI/LFM2.5-24B-A2B-MLX-4bit`](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-MLX-4bit) | hybrid conv + attention, MoE | [golden](Tests/BasaltTests/Fixtures/golden/LiquidAI--LFM2.5-24B-A2B-MLX-4bit.json) |
 
-### One-click launch from [`huggingface.co/goodmai`](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc) (55+ verified models)
+### One-click launch from [`huggingface.co/goodmai`](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc) (65+ verified models)
 
 Every model card under [`goodmai`](https://huggingface.co/goodmai) carries a **Run with Basalt** button ([`goodmai-run-with-basalt.static.hf.space`](https://goodmai-run-with-basalt.static.hf.space/?lang=en)) that opens `Basalt.app` via `basalt://run?model=...` or prints the exact `basalt serve` / `basalt compose` CLI command:
 
@@ -53,6 +53,15 @@ Every model card under [`goodmai`](https://huggingface.co/goodmai) carries a **R
 | [`goodmai/DeepSeek-OCR-2-8bit`](https://huggingface.co/goodmai/DeepSeek-OCR-2-8bit) | Vision-encoder OCR with official 768 tiling (`/v1/pipeline`) | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?model=goodmai%2FDeepSeek-OCR-2-8bit&role=ocr&lang=en) |
 | [`goodmai/OpenJev-Flash-9B-MLX-4bit`](https://huggingface.co/goodmai/OpenJev-Flash-9B-MLX-4bit) | 9B local System One decider (98.9% acc, −77% LLM tokens) | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?model=goodmai%2FOpenJev-Flash-9B-MLX-4bit&role=decide&lang=en) |
 | [`24gb-voice-zonos`](docs/compose.md#bundled-hardware-tiered-profiles-526) | Recommended 24 GB Compose stack (Chat + ZONOS3 + Kokoro ANE) | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?profile=24gb-voice-zonos&lang=en) |
+
+### What's new in v0.13.0 ([changelog](CHANGELOG.md))
+
+- **Inkling 2 Mini.** The looped MoE is served end to end, with tool calls and prompt-cache reuse across agent turns. `--mtp` with the checkpoint's DSpark head takes decode from 28.0 to 49.8 tok/s on code (M4 Pro, 24 GB), and a 37.5K-token prompt peaks at 14.5 GB with 0 swap ([#650](https://github.com/goodmai/basalt/issues/650)).
+- **NVFP4 from any source.** `models convert --to nvfp4` works from any checkpoint. NVIDIA ModelOpt NVFP4 imports losslessly, on its own at `models download` and `serve`. A MoE with too little KV room streams its experts instead of hitting a Metal OOM ([#677](https://github.com/goodmai/basalt/issues/677)).
+- **New architectures and KV.** Qwen3-Coder-Next with streamed experts ([#642](https://github.com/goodmai/basalt/issues/642)), BailingHybrid / Ling-3.0 ([#672](https://github.com/goodmai/basalt/issues/672)), and an experimental Gemma 4 K=V shared-row KV cache that needs 1.40–1.53× less KV memory at 32K–128K ([#645](https://github.com/goodmai/basalt/issues/645)).
+- **Adapters and context.** PEFT LoRA adapters load from a directory or the Hub and fuse into exported checkpoints ([#675](https://github.com/goodmai/basalt/issues/675)). `--rope-yarn` extends the context of Qwen 3.5–3.8 ([#729](https://github.com/goodmai/basalt/issues/729)).
+- **Translation and self-rewriting.** `basalt:translation` benchmarks (chrF++, COMET, MetricX-24) with TranslateGemma-4 profiles, and experimental self-rewriting on copy-on-write weights (`basalt selfedit`, [#676](https://github.com/goodmai/basalt/issues/676)).
+- **Hardening.** A two-agent defect hunt fixed 64 findings across the REST/MCP perimeter, cloud budgets, scoring, conversion, caches and the Mac app ([#809](https://github.com/goodmai/basalt/pull/809), [#810](https://github.com/goodmai/basalt/pull/810), [#811](https://github.com/goodmai/basalt/pull/811)).
 
 ---
 
@@ -79,10 +88,10 @@ Details: [REST API](docs/rest-api.md) · [integrations](docs/integrations.md) ·
 
 Details: [training commands](docs/commands.md) · [self-training, distillation and the quality gate](docs/research-tools.md#self-training-train_experts)
 
-## Compose: declarative `basalt.yaml v2.2`, business governance & 84 hardware profiles
+## Compose: declarative `basalt.yaml v2.2`, business governance & 117 hardware profiles
 
 - **docker-compose, for models (`basalt.yaml v2.2`).** Local and cloud models, RAM deduplication planner, specialist profiles, `resident` / `on-demand` / `sequential` memory modes, `BusinessOrchestrator` 5-component routing, `LANTERN` semantic caching, `HITL` approval gate (`/v1/mcp/approvals`), and `LAAS-CNRS` neuro-symbolic knowledge core (`SymbolicKnowledgeGraph`) — in one declarative file ([#607](https://github.com/goodmai/basalt/pull/607), [#625](https://github.com/goodmai/basalt/pull/625), [#626](https://github.com/goodmai/basalt/pull/626)).
-- **84 built-in profiles for every Mac (`16 GB` to `256 GB`).** Seven unified-memory tiers (`16gb`, `24gb`, `32-36gb`, `48gb`, `64gb`, `128gb`, `256gb`) × 12 workload archetypes launch in one command (`basalt compose up 24gb-voice-zonos`, [#528](https://github.com/goodmai/basalt/pull/528)).
+- **117 built-in profiles for every Mac (`16 GB` to `256 GB`).** Nine unified-memory tiers (`16gb`, `24gb`, `32-36gb`, `48gb`, `64gb`, `96gb`, `128gb`, `192gb`, `256gb`) × 13 workload archetypes launch in one command (`basalt compose up 24gb-voice-zonos`, [#528](https://github.com/goodmai/basalt/pull/528)).
 - **Refuses what will not fit, changes live.** `basalt compose plan` sizes models from the Hub before download and refuses overflows; `compose diff` / `compose up` hot-reload diffs cleanly; `compose bench` runs declarative benchmark suites and exports leaderboard bundles ([#505](https://github.com/goodmai/basalt/pull/505)).
 - **Local judges, calibrated routing & cloud budgets.** `OpenJev-Flash-9B-4bit` reaches 98.9% triage accuracy while cutting downstream LLM tokens by 77% ([#465](https://github.com/goodmai/basalt/pull/465)), temperature-scaled `CalibratedRouterGate` + `Gemini Decision 1` route hard queries cleanly within daily USD caps ([#418](https://github.com/goodmai/basalt/pull/418), [#622](https://github.com/goodmai/basalt/pull/622)), and perceived document/audio text never leaves your Mac by default.
 
@@ -142,7 +151,7 @@ Stream a 37.7 GB MoE model on a 24 GB Mac, or run a full multi-model compose sys
 basalt serve --model goodmai/Qwen3.6-35B-A3B-8bit --expert-streaming --rest
 
 basalt compose plan 24gb-voice-zonos
-basalt compose up 24gb-voice-zonos          # 84 profiles across 16–256 GB Macs
+basalt compose up 24gb-voice-zonos          # 117 profiles across 16–256 GB Macs
 ```
 
 The Mac app, from a checkout (registers `basalt://` 1-click links automatically on first open):
