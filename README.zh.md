@@ -6,6 +6,8 @@
 
 [English](README.md) · [Русский](README.ru.md) · **中文** · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
+📖 **专著：**[神经网络架构的演进（1958–2027）](docs/monograph/evo.zh.md)，作者 Aleksei Boklag，提供联合国六种官方语言版本（[全部](docs/monograph/README.md)）· **习题集：** basalt 已能运行的内容，清单见 [#816](https://github.com/goodmai/basalt/issues/816)
+
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.13.0](https://img.shields.io/badge/release-v0.13.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.13.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
