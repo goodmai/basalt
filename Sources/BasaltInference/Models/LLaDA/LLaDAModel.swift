@@ -6,6 +6,7 @@ import MLXNN
 
 public protocol DiffusionLanguageModel: LanguageModel {
     var maskTokenId: Int { get }
+    var bidirectionalPrompt: Bool { get }
 }
 
 struct LLaDAConfiguration: Decodable, Sendable {
@@ -36,7 +37,7 @@ struct LLaDAConfiguration: Decodable, Sendable {
         rmsNormEps = try c.decodeIfPresent(Float.self, forKey: .rmsNormEps) ?? 1e-5
         ropeTheta = try c.decodeIfPresent(Float.self, forKey: .ropeTheta) ?? 500_000
         maskTokenId = try c.decode(Int.self, forKey: .maskTokenId)
-        guard heads % kvHeads == 0, hiddenSize % heads == 0, (0 ..< vocabularySize).contains(maskTokenId) else {
+        guard heads > 0, kvHeads > 0, heads % kvHeads == 0, hiddenSize % heads == 0, (0 ..< vocabularySize).contains(maskTokenId) else {
             throw DecodingError.dataCorruptedError(forKey: .maskTokenId, in: c, debugDescription: "llada needs heads divisible by key-value heads and d_model, and a mask token inside the vocabulary")
         }
     }
@@ -102,6 +103,7 @@ public final class LLaDAModel: Module, LLMModel, DiffusionLanguageModel {
     public static let modelType = "llada"
     public let vocabularySize: Int
     public let maskTokenId: Int
+    public var bidirectionalPrompt: Bool { true }
     let config: LLaDAConfiguration
     @ModuleInfo(key: "model") var model: LLaDAInner
 

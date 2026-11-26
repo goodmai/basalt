@@ -18,6 +18,7 @@ public struct BlockDiffusionConfig: Equatable, Sendable {
     public var dualCacheEnabled: Bool
     public var factorParallelUnmasking: Float?
     public var top2MarginThreshold: Float?
+    public var bidirectionalPrompt = false
 
     public init(
         blockSize: Int = 32,
