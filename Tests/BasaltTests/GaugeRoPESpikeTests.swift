@@ -32,7 +32,7 @@ struct GaugeRoPESpikeTests {
         let scale = 1 / Float(Self.headDim).squareRoot()
         let output = { (kv: GaugeRoPEKV) in
             GaugeRoPEArms.attend(
-                queries: queries, keys: GaugeRoPEArms.rope(kv.keys, rotaryDims: Self.rotaryDims, base: 10_000),
+                queries: queries, keys: GaugeRoPERotary.apply(kv.keys, rotaryDims: Self.rotaryDims, base: 10_000),
                 values: kv.values, scale: scale)
         }
         return GaugeRoPEArms.relativeError([output(approx)], [output(exact)])
@@ -41,10 +41,10 @@ struct GaugeRoPESpikeTests {
     @Test("Carrier indexing check: per-frequency encode commutes with RoPE at offsets 0...4096 (true for any per-frequency matrix, so it checks indexing, not quality)")
     func carrierIndexingCommutesWithRoPE() {
         let keys = MLXRandom.normal([64, 4, 64], dtype: .float32, key: MLXRandom.key(6470))
-        let carrier = GaugeRoPECarrier.calibrate(preRopeKeys: keys, rotaryDims: 64, carrierHeads: 2)
+        let carrier = GaugeRoPECarrier.calibrate(keys: keys, rotaryDims: 64, carrierHeads: 2)
         for offset in [0, 17, 512, 4096] {
-            let rotThenEncode = carrier.encode(GaugeRoPEArms.rope(keys, rotaryDims: 64, base: 10_000, offset: offset))
-            let encodeThenRot = GaugeRoPEArms.rope(carrier.encode(keys), rotaryDims: 64, base: 10_000, offset: offset)
+            let rotThenEncode = carrier.encode(GaugeRoPERotary.apply(keys, rotaryDims: 64, base: 10_000, offset: offset))
+            let encodeThenRot = GaugeRoPERotary.apply(carrier.encode(keys), rotaryDims: 64, base: 10_000, offset: offset)
             eval(rotThenEncode, encodeThenRot)
             let maxDiff = abs(rotThenEncode - encodeThenRot).max().item(Float.self)
             #expect(maxDiff < 1e-4, "offset=\(offset) maxDiff=\(maxDiff)")
@@ -54,10 +54,10 @@ struct GaugeRoPESpikeTests {
     @Test("Spike RoPE helper matches MLXNN.RoPE (traditional false, partial dims, base 1e7) and its inverse restores the input")
     func ropeHelperMatchesStockRoPE() {
         let x = MLXRandom.normal([32, 4, 64], dtype: .float32, key: MLXRandom.key(6473))
-        let ours = GaugeRoPEArms.rope(x, rotaryDims: 16, base: 10_000_000, offset: 5)
+        let ours = GaugeRoPERotary.apply(x, rotaryDims: 16, base: 10_000_000, offset: 5)
         let stock = MLXNN.RoPE(dimensions: 16, traditional: false, base: 10_000_000)(x.transposed(1, 0, 2), offset: 5)
             .transposed(1, 0, 2)
-        let back = GaugeRoPEArms.rope(ours, rotaryDims: 16, base: 10_000_000, offset: 5, inverse: true)
+        let back = GaugeRoPERotary.apply(ours, rotaryDims: 16, base: 10_000_000, offset: 5, inverse: true)
         eval(ours, stock, back)
         #expect(abs(ours - stock).max().item(Float.self) < 1e-4)
         #expect(abs(back - x).max().item(Float.self) < 1e-4)
@@ -73,7 +73,7 @@ struct GaugeRoPESpikeTests {
         let rope = GaugeRoPERealModelTests.RopeConfig(base: 1_000_000, partialFactor: 0.25, proportional: true)
         let order = try #require(rope.order(headDim: 64))
         let expected = take(stock(x.transposed(1, 0, 2), offset: 7).transposed(1, 0, 2), order, axis: -1)
-        let ours = GaugeRoPEArms.rope(
+        let ours = GaugeRoPERotary.apply(
             take(x, order, axis: -1), rotaryDims: rope.rotaryDims(headDim: 64), base: rope.effectiveBase(headDim: 64), offset: 7)
         eval(expected, ours)
         #expect(rope.rotaryDims(headDim: 64) == 16)

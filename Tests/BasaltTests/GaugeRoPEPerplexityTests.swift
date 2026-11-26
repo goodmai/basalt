@@ -84,9 +84,9 @@ struct GaugeRoPEPPLPlan {
         let (rotary, base) = (rope.rotaryDims(headDim: headDim), rope.effectiveBase(headDim: headDim))
         return { keys, values, offset in
             let k = order.map { take(keys, $0, axis: -1) } ?? keys
-            let pre = GaugeRoPEArms.rope(k, rotaryDims: rotary, base: base, offset: offset, inverse: true)
+            let pre = GaugeRoPERotary.apply(k, rotaryDims: rotary, base: base, offset: offset, inverse: true)
             let hat = reconstruct(pre, values)
-            let post = GaugeRoPEArms.rope(hat.keys, rotaryDims: rotary, base: base, offset: offset)
+            let post = GaugeRoPERotary.apply(hat.keys, rotaryDims: rotary, base: base, offset: offset)
             return GaugeRoPEKV(keys: inverse.map { take(post, $0, axis: -1) } ?? post, values: hat.values)
         }
     }

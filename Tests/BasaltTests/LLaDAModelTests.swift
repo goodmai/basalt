@@ -51,6 +51,16 @@ struct LLaDAModelTests {
         #expect(argMax(logits, axis: -1).asArray(Int32.self) == argMax(reference, axis: -1).asArray(Int32.self))
     }
 
+    @Test("hiddenStates then projectLogits equals the full forward, and projecting a slice of positions equals slicing the logits, so Fast-dLLM can skip lm_head on discarded positions")
+    func hiddenAndProjectionSplit() throws {
+        let model = try Self.model()
+        let input = MLXArray(Self.tokens)[.newAxis]
+        let hidden = model.hiddenStates(input, cache: nil)
+        let full = model(input, cache: nil)
+        #expect(abs(model.projectLogits(hidden) - full).max().item(Float.self) == 0)
+        #expect(abs(model.projectLogits(hidden[0..., 2 ..< 5, 0...]) - full[0..., 2 ..< 5, 0...]).max().item(Float.self) < 1e-5)
+    }
+
     @Test("Attention is bidirectional: changing the last token changes the logits at the first position")
     func bidirectional() throws {
         let model = try Self.model()

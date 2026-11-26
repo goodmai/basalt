@@ -63,7 +63,7 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     @Option(
         name: .customLong("experimental-loop-exit"),
-        help: "Experimental (#820): end a one-token decode step of a looped model early and fill the skipped passes' caches from the last pass. Ouro exits once its trained exit gate's cumulative probability reaches this fraction (0-1). Inkling 2 exits after a core pass whose residual changed by less than this fraction from the previous pass; its released checkpoints were not trained to exit, so there it trades quality for speed"
+        help: "Experimental (#820): end a one-token decode step of a looped model early and fill the skipped passes' caches from the last pass. Ouro exits once its trained exit gate's cumulative probability reaches this fraction (0-1). Inkling 2 exits after a core pass whose residual changed by less than this fraction from the previous pass; its released checkpoints were not trained to exit, so there it trades quality for speed. Huginn-0125 exits after a core step whose latent state changed by less than this fraction of its norm"
     )
     var loopExit: Float?
 
