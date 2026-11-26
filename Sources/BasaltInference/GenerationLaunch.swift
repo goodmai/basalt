@@ -30,8 +30,8 @@ enum FreshCache: Equatable {
         if let precision = options.kvPrecision, precision.isKVarN, !kvBitsSet { return .kvarn(useQJL: precision.useQJL) }
         if options.kvPrecision?.isGaugeRoPE == true, !kvBitsSet, let layout = options.gaugeRoPE { return .gaugeRoPE(layout) }
         if !kvBitsSet, let questTopK = options.questTopK { return .quest(topK: questTopK) }
-        if !kvBitsSet, options.attentionBackend != .standard {
-            let mode: SageMXKVCache.Mode = options.attentionBackend == .sagemx ? .sagemx : .moba(topBlocks: options.mobaTopK)
+        if !kvBitsSet,
+           let mode = SageMXKVCache.Mode.from(backend: options.attentionBackend, topBlocks: options.mobaTopK, nsaWindow: options.nsaWindow) {
             return .sageMX(mode)
         }
         if let zones = options.kvZones, let precision = options.kvPrecision { return .zoned(zones, precision) }
@@ -83,6 +83,7 @@ struct LaunchOptions {
     var questTopK: Int?
     var attentionBackend: AttentionBackend = .standard
     var mobaTopK = 8
+    var nsaWindow = 256
     var kvPrecision: KVPrecision?
     var mtp = false
     var mtpBlockSize: Int?

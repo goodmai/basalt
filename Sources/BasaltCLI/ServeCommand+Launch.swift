@@ -86,7 +86,7 @@ extension ServeCommand {
         (configuration.kvPrecision, configuration.kvZones) = (kvCache.bits?.fixedPrecision, kvCache.zones)
         (configuration.kvHeadSplit, configuration.questTopK) = (kvCache.headSplit, kvCache.questTopK)
         configuration.ropeYarn = kvCache.ropeYarn
-        (configuration.attentionBackend, configuration.mobaTopK) = (kvCache.attentionBackend, kvCache.mobaTopK)
+        (configuration.attentionBackend, configuration.mobaTopK, configuration.nsaWindow) = (kvCache.attentionBackend, kvCache.mobaTopK, kvCache.nsaWindow)
         configuration.batchSlots = maxConcurrent >= 2 ? batchSlots : 1
         configuration.wiresWorkingSet = wiredLimit
         configuration.expertStreaming = expertStreaming.setting

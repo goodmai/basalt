@@ -459,7 +459,7 @@ extension MLXInferenceEngine {
         if let questTopK = configuration.questTopK {
             logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
         } else if configuration.attentionBackend != .standard {
-            logger.info("Attention backend: \(configuration.attentionBackend.rawValue) (mobaTopK=\(configuration.mobaTopK)) enabled on full-attention layers")
+            logger.info("Attention backend: \(configuration.attentionBackend.rawValue)\(configuration.attentionBackendLogDetail) enabled on full-attention layers")
         } else if let prec = configuration.kvPrecision, prec.isKVarN {
             logger.info("KV cache: \(prec) 2-bit tile compression enabled on full-attention layers")
         }

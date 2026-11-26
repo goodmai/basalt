@@ -5,6 +5,7 @@ public enum AttentionBackend: String, Sendable, Codable, CaseIterable, Equatable
     case standard
     case sagemx
     case moba
+    case nsa
 }
 
 public struct KVPrecision: Sendable, Hashable, CustomStringConvertible {
