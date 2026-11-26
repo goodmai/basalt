@@ -91,7 +91,7 @@ Sinkhorn の定理により、行方向と列方向の交互スケーリング�
 |---|---|---|---|
 | **SVD-LLM** & **SVD-LLM V2** — X. Wang et al. | ICLR 2025 · [arXiv:2403.07378](https://arxiv.org/abs/2403.07378) · [arXiv:2503.12340](https://arxiv.org/abs/2503.12340) | コレスキー白色化 $X X^\top = S S^\top$ と $W S = U \Sigma V^\top$ の SVD により、活性化出力ノルム $\|X W^\top - X W_r^\top\|_F^2 = \sum_{i > r} \sigma_i^2$ における厳密な Eckart–Young–Mirsky 最適性を獲得 | `InputWhitenedSVD` (`#552`) |
 | **SAES-SVD** & **HiSVD** | [arXiv:2509.11177](https://arxiv.org/abs/2509.11177) · ICLR 2026 | 切り詰められたレイヤーを跨ぐ逐次累積活性化ドリフト補償、および特異エネルギー曲率に基づくグローバルランク割り当て | `InputWhitenedSVD` (`#552`) |
-| **OBR** (*Optimal Brain Restoration*), **MoE-SVD** & **MAEP** | [arXiv:2606.09080](https://arxiv.org/abs/2606.09080) · ICLR 2026 | 枝刈りと量子化を統合的に調停する閉形式ラグランジュ・ヘッセ誤差補償 $\Delta W^* = -E H^{-1} C^\top (C H^{-1} C^\top)^{-1}$、MoE エキスパート間の共有基底 $U_{\text{shared}}$、およびモダリティ認識型エキスパート保護 | `OBRCompensator`, `SharedBasisSwitchLinear`, `MAEPAllocator` (`#552`) |
+| **OBR** (*Optimal Brain Restoration*), **MoE-SVD** & **MAEP** | [arXiv:2606.09080](https://arxiv.org/abs/2606.09080) · ICLR 2026 | 枝刈りと量子化を統合的に調停する閉形式ラグランジュ・ヘッセ誤差補償 $\Delta W^* = -E H^{-1} C^\top (C H^{-1} C^\top)^{-1}$、MoE エキスパート間の共有基底 $U_{\text{shared}}$、およびモダリティ認識型エキスパート保護 | `OptimalBrainRestoration`, `SharedBasisSwitchLinear`, `MAEPExpertScorer` (`#552`) |
 
 ---
 
@@ -102,7 +102,7 @@ Sinkhorn の定理により、行方向と列方向の交互スケーリング�
 | **SpecTr** (*Optimal Transport Multi-Draft Speculation*) & **Gumbel-Coupled Verification** — Z. Sun, A. T. Suresh et al. | NeurIPS 2023 / 2024 · [arXiv:2310.15141](https://arxiv.org/abs/2310.15141) · [arXiv:2408.07978](https://arxiv.org/abs/2408.07978) | $k$ 個の候補ドラフトに対する最適輸送カップリングにより、厳密な目標分布 $p_{\text{target}}(x)$ (`TV = 0`) を完全に保存したまま採択率を最大化 | `SpecTrAndResidualRaceMetal` (`#160`, `#553`) |
 | **Residual Race** & **UniVer** | [arXiv:2611.00506](https://arxiv.org/abs/2611.00506) · ICLR 2026 | ホストラウンドトリップなしに単一の `simdgroup` パス内で残差密度 $r(v) = \max(0, p(v) - q_{\text{acc}}(v))$ 上の並列レースを実行 | `SpecTrAndResidualRaceMetal` (`#553`) |
 | **EAGLE-3** (*Y. Li et al.*), **Token Recycling** (*X. Luo et al.*) & **Load-Aware Dynamic Trees** (*Y. Chung & T. Shin*) | NeurIPS 2025 / ACL / *J. KIISE* 53(10), 2026 · [arXiv:2503.01840](https://arxiv.org/abs/2503.01840) · [arXiv:2408.08696](https://arxiv.org/abs/2408.08696) | 多層（`low / mid / high`）特徴量融合ドラフトヘッド（`fc_fuse`）、プロンプトルックアップ隣接ドラフト再利用、およびサーマル／負荷適応型の木深さ制御 | `EAGLE3FusionHead`, `TokenRecycling`, `SmallMQuantizedLinear` (`#173`, `#208`, `#553`, `#563`) |
-| **DiffuCD**: *Contrastive Decoding for Diffusion LLMs* | [arXiv:2610.40613](https://arxiv.org/abs/2610.40613) | ブロック拡散／マスクド LLM における反復崩壊を排除する時間ステップ減衰ロジット対比 $\ell_t = (1 + \alpha(t))\ell_{\text{cond}} - \alpha(t)\ell_{\text{amateur}}$ | `DiffuCDProcessor` (`#553`) |
+| **DiffuCD**: *Contrastive Decoding for Diffusion LLMs* | [arXiv:2610.40613](https://arxiv.org/abs/2610.40613) | ブロック拡散／マスクド LLM における反復崩壊を排除する時間ステップ減衰ロジット対比 $\ell_t = (1 + \alpha(t))\ell_{\text{cond}} - \alpha(t)\ell_{\text{amateur}}$ | `DiffuCDScheduler` (`#553`) |
 
 ---
 

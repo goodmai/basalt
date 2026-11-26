@@ -91,7 +91,7 @@ Basalt 站在全球开放科学共同体的肩膀之上。Basalt 中的每一个
 |---|---|---|---|
 | **SVD-LLM** 与 **SVD-LLM V2** — X. Wang 等 | ICLR 2025 · [arXiv:2403.07378](https://arxiv.org/abs/2403.07378) · [arXiv:2503.12340](https://arxiv.org/abs/2503.12340) | Cholesky 白化 $X X^\top = S S^\top$ 结合 $W S = U \Sigma V^\top$ 的奇异值分解，在激活输出范数下实现精确的 Eckart–Young–Mirsky 最优性：$\|X W^\top - X W_r^\top\|_F^2 = \sum_{i > r} \sigma_i^2$ | `InputWhitenedSVD` (`#552`) |
 | **SAES-SVD** 与 **HiSVD** | [arXiv:2509.11177](https://arxiv.org/abs/2509.11177) · ICLR 2026 | 跨截断层的顺序累积激活漂移补偿与基于奇异能量曲率的全局秩分配 | `InputWhitenedSVD` (`#552`) |
-| **OBR**（*Optimal Brain Restoration*）、**MoE-SVD** 与 **MAEP** | [arXiv:2606.09080](https://arxiv.org/abs/2606.09080) · ICLR 2026 | 闭式拉格朗日 Hessian 误差补偿 $\Delta W^* = -E H^{-1} C^\top (C H^{-1} C^\top)^{-1}$，联合统一剪枝与量化；跨 MoE 专家的共享基 $U_{\text{shared}}$；模态感知的专家保护机制 | `OBRCompensator`, `SharedBasisSwitchLinear`, `MAEPAllocator` (`#552`) |
+| **OBR**（*Optimal Brain Restoration*）、**MoE-SVD** 与 **MAEP** | [arXiv:2606.09080](https://arxiv.org/abs/2606.09080) · ICLR 2026 | 闭式拉格朗日 Hessian 误差补偿 $\Delta W^* = -E H^{-1} C^\top (C H^{-1} C^\top)^{-1}$，联合统一剪枝与量化；跨 MoE 专家的共享基 $U_{\text{shared}}$；模态感知的专家保护机制 | `OptimalBrainRestoration`, `SharedBasisSwitchLinear`, `MAEPExpertScorer` (`#552`) |
 
 ---
 
@@ -102,7 +102,7 @@ Basalt 站在全球开放科学共同体的肩膀之上。Basalt 中的每一个
 | **SpecTr**（*最优传输多草稿投机解码*）与 **Gumbel 耦合验证** — Z. Sun, A. T. Suresh 等 | NeurIPS 2023 / 2024 · [arXiv:2310.15141](https://arxiv.org/abs/2310.15141) · [arXiv:2408.07978](https://arxiv.org/abs/2408.07978) | 在 $k$ 个候选草稿上构建最优传输耦合，在严格保持精确目标分布 $p_{\text{target}}(x)$（`TV = 0`）的前提下最大化接受率 | `SpecTrAndResidualRaceMetal` (`#160`, `#553`) |
 | **Residual Race** 与 **UniVer** | [arXiv:2611.00506](https://arxiv.org/abs/2611.00506) · ICLR 2026 | 在单次 `simdgroup` 遍历中对残差密度 $r(v) = \max(0, p(v) - q_{\text{acc}}(v))$ 执行并行竞速，无需主机往返通信 | `SpecTrAndResidualRaceMetal` (`#553`) |
 | **EAGLE-3**（*Y. Li 等*）、**Token Recycling**（*X. Luo 等*）与 **负载感知动态树**（*Y. Chung & T. Shin*） | NeurIPS 2025 / ACL / *J. KIISE* 53(10), 2026 · [arXiv:2503.01840](https://arxiv.org/abs/2503.01840) · [arXiv:2408.08696](https://arxiv.org/abs/2408.08696) | 多层（`low / mid / high`）特征融合草稿头（`fc_fuse`）、基于提示词查表的邻接草稿回收以及热/负载自适应树深 | `EAGLE3FusionHead`, `TokenRecycling`, `SmallMQuantizedLinear` (`#173`, `#208`, `#553`, `#563`) |
-| **DiffuCD**: *Contrastive Decoding for Diffusion LLMs* | [arXiv:2610.40613](https://arxiv.org/abs/2610.40613) | 按时间步衰减的 logit 对比 $\ell_t = (1 + \alpha(t))\ell_{\text{cond}} - \alpha(t)\ell_{\text{amateur}}$，消除块扩散 / 掩码 LLM 中的重复坍塌 | `DiffuCDProcessor` (`#553`) |
+| **DiffuCD**: *Contrastive Decoding for Diffusion LLMs* | [arXiv:2610.40613](https://arxiv.org/abs/2610.40613) | 按时间步衰减的 logit 对比 $\ell_t = (1 + \alpha(t))\ell_{\text{cond}} - \alpha(t)\ell_{\text{amateur}}$，消除块扩散 / 掩码 LLM 中的重复坍塌 | `DiffuCDScheduler` (`#553`) |
 
 ---
 

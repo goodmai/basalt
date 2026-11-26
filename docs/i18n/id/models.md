@@ -26,7 +26,7 @@ M4 Pro, 24 GB, release build (`620641c` / `82a99d4`), November 2026 (`--reasonin
 | `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` | 35B MoE (`A3B`, 120 `MACaQSwitchLinear` layers) | 14.64 GB | 64.0–74.7 (68.7 at 8k) | **3/3 warmup, 1/5 rungs**, `probe_ppl = 1.46`, single-pass switch WHT (`#628`) |
 | `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE (`A4B`, QAT 4-bit) | 14.92 GB | 56.0–63.4 | **3/3 warmup, 4/5 rungs** (`pump` ✅, `lunar 5/6`) |
 | `goodmai/gemma-4-12B-it-qat-4bit` | 12B dense QAT 4-bit | 10.51 GB | 18.8–22.2 | **3/3 warmup, 4/5 rungs** (`lunar` ✅ 6/6) |
-| Video / Speech / Music (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | Phased 24 GB UMA Video Studio, duplex Mimi/SNAC audio & 4-stage image/music | ≤ 18 GB phased | 3D-VAE + STA Metal kernel | Verified in `#542`, `#604`, `#605`, `#608`–`#611` |
+| Video / Image / Duplex Speech / Music (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | **Scaffold** (seed acak tetap, pemuatan tensor parsial; belum terverifikasi bobot nyata) | — | — | Hanya scaffold pipeline & kernel Metal; bobot nyata dilacak di [#824](https://github.com/goodmai/basalt/issues/824), [#826](https://github.com/goodmai/basalt/issues/826) |
 
 ### Measured for 0.11
 
@@ -36,8 +36,8 @@ M4 Pro, 24 GB, release build, November 2026.
 |---|---|---|---|---|
 | `Recursive/Flint-40B-A2.5B` (`flint-oQ3e`) | 40B-A2.5B hybrid sliding/full MoE (`512` routed, top-10 + 1 shared) | 17.61 GB | 67.02 tok/s decode · 273.5 tok/s prefill | native `oQ3e` (`groupSize = 32`) loader (#518, #522), 0 swap on 24 GB |
 | `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + 32-codebook FSQ multi-head DAC TTS (`44.1 kHz`) | 2.24 GB | RTF 0.228–0.263 (3.8–4.4× RT) | 43 languages, 27 voices, cross-lingual `embedding` + CFG `1.5` (#525, #527) |
-| `hexgrad/Kokoro-82M` | 82M neural TTS (ANE + MLX) | ~0.35 GB | sub-80 ms TTFA | sentence-streaming fallback stage in `pipeline.speak` (#493, #513) |
-| `Tongyi-MAI/Z-Image-Turbo` | DiT image synthesis | ~6.4 GB | 4–8 steps (`1024×1024`) | `pipeline.imagine` with TeaCache & shared text encoder (#517, #519) |
+| `hexgrad/Kokoro-82M` (serta `Qwen3-TTS`, `CosyVoice 3`, `Chatterbox`, `Pocket TTS`) | **Scaffold** (seed acak tetap, pemuatan tensor parsial) | — | — | Belum terverifikasi bobot nyata; Kokoro/CosyVoice 3/F5-TTS di [#821](https://github.com/goodmai/basalt/issues/821) (TTS bobot nyata saat ini: `Zyphra/ZONOS3-Mini-hf`) |
+| `Tongyi-MAI/Z-Image-Turbo` (serta `FLUX` / `Iris-3B` / `SANA-1.5`) | **Scaffold** (hash-embedding + pemuatan parsial DiT) | — | — | Belum terverifikasi bobot nyata; Z-Image-Turbo & FLUX DiT di [#824](https://github.com/goodmai/basalt/issues/824) |
 | `Ricursive/Ripple-65B-4bit` | 65B gated-attention sparse MoE (`128` experts, top-8) | ~35 GB (64 GB+ resident, or SSD streaming) | architecture verified | NoPE / partial RoPE (#520, #522) |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + Latently-Routed MoE (`lr_moe`) | ~17 GB (4-bit) | architecture verified | interleaved GQA + Mamba-2 (#521, #522) |
 | `meta-models/Muse-Glimmer-30B` (`mlx-community/Muse-Glimmer-30B-4bit`) | 30B hybrid SWA (`2048`) + NoPE full attention + ViT-G/14 VLM | ~18.1 GB (4-bit) · ~19.8 GB (`oQ4e`) | architecture & HF shards verified | Onyx `to=self` reasoning + ATEM tool calls + GGUF de-centered norm import (#533) |
