@@ -232,7 +232,7 @@ extension MLXInferenceEngine {
         (options.kEqVRow, options.gaugeRoPE) = (plan.kEqVRow, modelFacts.gaugeRoPE)
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         (options.pacer, options.prefillScratch) = (prefillPacer, modelFacts.prefillScratch)
-        options.diffusion = configuration.dllm ? BlockDiffusionConfig() : nil
+        options.diffusion = configuration.dllm ? BlockDiffusionConfig.live() : nil
     }
 
     func launching(_ input: LMInput, _ prompt: CachedPrompt, options: LaunchOptions, container: ModelContainer) async throws -> GenerationLaunch {

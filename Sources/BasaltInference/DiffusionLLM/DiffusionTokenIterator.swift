@@ -4,25 +4,32 @@ import MLXLMCommon
 
 struct DiffusionTokenIterator: TokenIteratorProtocol {
     let model: any DiffusionLanguageModel
-    let adapter: LanguageModelBlockAdapter
-    let promptTokens: [Int]
     let maxTokens: Int?
-    let config: BlockDiffusionConfig
     let stopTokenIds: Set<Int>
+    private var session: FastDLLMSession<LanguageModelBlockAdapter>
+    private var pendingBlock: [Int] = []
+    private var pendingCursor = 0
+    private var startedPrefill = false
+    private var finished = false
     private(set) var tokenCount = 0
     private(set) var promptPrefillTime: TimeInterval = 0
-    private var generated: [Int]?
 
     init(model: any DiffusionLanguageModel, input: LMInput, maxTokens: Int?, config: BlockDiffusionConfig, stopTokenIds: Set<Int>) throws {
         self.model = model
-        adapter = try LanguageModelBlockAdapter(model)
-        promptTokens = input.text.tokens.reshaped(-1).asArray(Int32.self).map(Int.init)
         self.maxTokens = maxTokens
-        var config = config
-        config.maskTokenId = model.maskTokenId
-        config.bidirectionalPrompt = model.bidirectionalPrompt
-        self.config = config
         self.stopTokenIds = stopTokenIds
+        let adapter = try LanguageModelBlockAdapter(model)
+        let promptTokens = input.text.tokens.reshaped(-1).asArray(Int32.self).map(Int.init)
+        var resolved = config
+        resolved.maskTokenId = model.maskTokenId
+        resolved.bidirectionalPrompt = model.bidirectionalPrompt
+        var request = FastDLLMRequest(
+            promptTokens: promptTokens,
+            maxNewTokens: maxTokens ?? Self.defaultMaxTokens,
+            includeTrailingMaskSuffix: !resolved.prefixCacheOnly
+        )
+        request.stopTokenIds = stopTokenIds
+        self.session = FastDLLMSession(model: adapter, request: request, config: resolved)
     }
 
     var state: LMOutput.State? { nil }
@@ -30,26 +37,44 @@ struct DiffusionTokenIterator: TokenIteratorProtocol {
     var evaluatedModel: (any LanguageModel)? { model }
 
     mutating func next() -> Int? {
-        if generated == nil {
+        guard !finished else { return nil }
+        if !startedPrefill {
+            startedPrefill = true
             let started = ContinuousClock.now
-            var request = FastDLLMRequest(promptTokens: promptTokens, maxNewTokens: maxTokens ?? Self.defaultMaxTokens)
-            request.stopTokenIds = stopTokenIds
-            generated = model.evaluating { FastDLLMRunner.generate(model: adapter, request: request, config: config).generatedTokens }
+            model.evaluating { session.prefillIfNeeded() }
             promptPrefillTime = (ContinuousClock.now - started).inSeconds
         }
-        guard let generated, tokenCount < generated.count else { return nil }
-        defer { tokenCount += 1 }
-        return generated[tokenCount]
+        while pendingCursor >= pendingBlock.count {
+            guard let block = model.evaluating({ session.nextBlock() }) else {
+                finished = true
+                return nil
+            }
+            pendingBlock = block
+            pendingCursor = 0
+            if block.isEmpty && session.isFinished {
+                finished = true
+                return nil
+            }
+        }
+        let token = pendingBlock[pendingCursor]
+        pendingCursor += 1
+        if stopTokenIds.contains(token) {
+            finished = true
+            return nil
+        }
+        tokenCount += 1
+        return token
     }
 
     mutating func discardGeneratedToken() {}
 
     static let defaultMaxTokens = 256
 
-    static func stopTokens(_ configuration: ModelConfiguration, tokenizer: any Tokenizer) -> Set<Int> {
+    static func stopTokens(_ configuration: ModelConfiguration, tokenizer: any Tokenizer, extra: [String] = []) -> Set<Int> {
         var stops = configuration.eosTokenIds
         if let eos = tokenizer.eosTokenId { stops.insert(eos) }
         for token in configuration.extraEOSTokens { if let id = tokenizer.convertTokenToId(token) { stops.insert(id) } }
+        for token in extra { if let id = tokenizer.convertTokenToId(token) { stops.insert(id) } }
         return stops
     }
 }

@@ -143,7 +143,9 @@ final class SmallMQuantizedLinear: QuantizedLinear {
     static let logger = BasaltLogger(module: "SmallMQuantizedLinear")
 
     static func installIfEnabled(in model: Module, enabled: Bool = false) {
-        guard enabled || SmallMQuantizedMatmul.enabled else { return }
+        let diffusionAuto = model is any DiffusionLanguageModel
+            && ProcessInfo.processInfo.environment["BASALT_DISABLE_SMALLM_KERNEL"] != "1"
+        guard enabled || SmallMQuantizedMatmul.enabled || diffusionAuto else { return }
         logger.info("Experimental small-M kernel (#208): \(install(in: model)) 4-bit affine linear layers run 2-16 rows through it, the rest stay on stock quantizedMatmul")
     }
 

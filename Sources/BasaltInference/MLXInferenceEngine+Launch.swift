@@ -80,7 +80,7 @@ extension MLXInferenceEngine {
         if let diffusion = options.diffusion, let model = context.model as? any DiffusionLanguageModel {
             return start.uncached(try DiffusionTokenIterator(
                 model: model, input: input, maxTokens: options.params.maxTokens, config: diffusion,
-                stopTokenIds: DiffusionTokenIterator.stopTokens(context.configuration, tokenizer: context.tokenizer)))
+                stopTokenIds: DiffusionTokenIterator.stopTokens(context.configuration, tokenizer: context.tokenizer, extra: model.additionalStopTokens)))
         }
         if options.mtp, let drafter = context.mtpDrafter, !carriesMoreThanTokens(input) {
             return try start.mtp(

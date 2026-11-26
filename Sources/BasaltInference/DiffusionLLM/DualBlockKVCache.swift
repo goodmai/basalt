@@ -10,23 +10,38 @@ public enum DualBlockCachePhase: Equatable, Sendable {
     case uncachedFullSequence
 }
 
-public final class DualBlockLayerKVCache: KVCache {
+public final class DualBlockLayerKVCache: KVCacheAttentionProtocol {
+    static let allocationStep = 256
+
     public private(set) var offset: Int = 0
-    public private(set) var prefixKeys: MLXArray?
-    public private(set) var prefixValues: MLXArray?
+    private var prefixKeyBuffer: MLXArray?
+    private var prefixValueBuffer: MLXArray?
     public private(set) var suffixKeys: MLXArray?
     public private(set) var suffixValues: MLXArray?
     public var phase: DualBlockCachePhase = .promptPrefill
     public var customMask: MLXArray?
     public let bidirectionalPrompt: Bool
+    package private(set) var kernelInvocations = 0
+    package private(set) var fallbackInvocations = 0
 
     public init(bidirectionalPrompt: Bool = false) {
         self.bidirectionalPrompt = bidirectionalPrompt
     }
 
+    public var prefixKeys: MLXArray? {
+        guard offset > 0, let buffer = prefixKeyBuffer else { return nil }
+        return buffer[.ellipsis, ..<offset, 0...]
+    }
+
+    public var prefixValues: MLXArray? {
+        guard offset > 0, let buffer = prefixValueBuffer else { return nil }
+        return buffer[.ellipsis, ..<offset, 0...]
+    }
+
+    public var requiresAttentionThroughCache: Bool { true }
     public var maxSize: Int? { nil }
     public var isTrimmable: Bool { true }
-    public var prefixLength: Int { prefixKeys?.dim(2) ?? 0 }
+    public var prefixLength: Int { offset }
     public var suffixLength: Int { suffixKeys?.dim(2) ?? 0 }
 
     public var ropeOffset: RoPEOffset {
@@ -51,12 +66,12 @@ public final class DualBlockLayerKVCache: KVCache {
         }
         set {
             if newValue.isEmpty {
-                prefixKeys = nil
-                prefixValues = nil
+                prefixKeyBuffer = nil
+                prefixValueBuffer = nil
                 offset = 0
             } else if newValue.count >= 2 {
-                prefixKeys = newValue[0]
-                prefixValues = newValue[1]
+                prefixKeyBuffer = newValue[0]
+                prefixValueBuffer = newValue[1]
                 offset = newValue[0].dim(2)
             }
         }
@@ -103,25 +118,20 @@ public final class DualBlockLayerKVCache: KVCache {
 
     @discardableResult
     public func trim(_ n: Int) -> Int {
-        guard n > 0, let curK = prefixKeys, let curV = prefixValues else { return 0 }
-        let current = curK.dim(2)
-        let removed = min(current, n)
-        let remaining = current - removed
-        if remaining == 0 {
-            prefixKeys = nil
-            prefixValues = nil
-        } else {
-            prefixKeys = curK[.ellipsis, ..<remaining, 0...]
-            prefixValues = curV[.ellipsis, ..<remaining, 0...]
+        guard n > 0, offset > 0 else { return 0 }
+        let removed = min(offset, n)
+        offset -= removed
+        if offset == 0 {
+            prefixKeyBuffer = nil
+            prefixValueBuffer = nil
         }
-        offset = remaining
         return removed
     }
 
     public func copy() -> any KVCache {
-        let clone = DualBlockLayerKVCache()
-        clone.prefixKeys = prefixKeys
-        clone.prefixValues = prefixValues
+        let clone = DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt)
+        clone.prefixKeyBuffer = prefixKeys
+        clone.prefixValueBuffer = prefixValues
         clone.suffixKeys = suffixKeys
         clone.suffixValues = suffixValues
         clone.phase = phase
@@ -135,30 +145,100 @@ public final class DualBlockLayerKVCache: KVCache {
         suffixValues = nil
     }
 
+    public func advanceSuffix(by count: Int) {
+        guard count > 0, let curK = suffixKeys, let curV = suffixValues else { return }
+        if count >= curK.dim(2) {
+            clearSuffix()
+        } else {
+            suffixKeys = curK[.ellipsis, count..., 0...]
+            suffixValues = curV[.ellipsis, count..., 0...]
+        }
+    }
+
     public func reset() {
-        prefixKeys = nil
-        prefixValues = nil
+        prefixKeyBuffer = nil
+        prefixValueBuffer = nil
         suffixKeys = nil
         suffixValues = nil
         customMask = nil
         phase = .promptPrefill
         offset = 0
     }
+}
+
+extension DualBlockLayerKVCache {
+    public func updateAndAttend(
+        queries: MLXArray,
+        keys: MLXArray,
+        values: MLXArray,
+        scale: Float,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
+        switch phase {
+        case .activeBlock:
+            let segments = DualBlockFlashAttentionKernel.Segments(
+                prefixKeys: prefixKeys, prefixValues: prefixValues,
+                activeKeys: keys, activeValues: values,
+                suffixKeys: suffixKeys, suffixValues: suffixValues
+            )
+            if customMask == nil,
+               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask)
+            {
+                kernelInvocations += 1
+                return DualBlockFlashAttentionKernel.attention(queries: queries, segments: segments, scale: scale)
+            }
+        case .suffixPrefill:
+            suffixKeys = keys
+            suffixValues = values
+            let segments = DualBlockFlashAttentionKernel.Segments(
+                prefixKeys: prefixKeys, prefixValues: prefixValues,
+                activeKeys: keys, activeValues: values,
+                suffixKeys: nil, suffixValues: nil
+            )
+            if customMask == nil,
+               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask)
+            {
+                kernelInvocations += 1
+                return DualBlockFlashAttentionKernel.attention(queries: queries, segments: segments, scale: scale)
+            }
+            fallbackInvocations += 1
+            let mergedK = prefixKeys.map { concatenated([$0, keys], axis: 2) } ?? keys
+            let mergedV = prefixValues.map { concatenated([$0, values], axis: 2) } ?? values
+            return MLXFast.scaledDotProductAttention(
+                queries: queries, keys: mergedK, values: mergedV, scale: scale, mask: mask)
+        case .promptPrefill, .blockCommit, .uncachedFullSequence:
+            break
+        }
+        fallbackInvocations += 1
+        let (allK, allV) = update(keys: keys, values: values)
+        return MLXFast.scaledDotProductAttention(
+            queries: queries, keys: allK, values: allV, scale: scale, mask: mask)
+    }
 
     private func appendToPrefix(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
-        let nextKeys: MLXArray
-        let nextValues: MLXArray
-        if let curK = prefixKeys, let curV = prefixValues {
-            nextKeys = concatenated([curK, keys], axis: 2)
-            nextValues = concatenated([curV, values], axis: 2)
-        } else {
-            nextKeys = keys
-            nextValues = values
+        let added = keys.dim(2)
+        guard added > 0 else {
+            return (prefixKeys ?? keys, prefixValues ?? values)
         }
-        prefixKeys = nextKeys
-        prefixValues = nextValues
-        offset = nextKeys.dim(2)
-        return (nextKeys, nextValues)
+        let prev = offset
+        let next = prev + added
+        let step = Self.allocationStep
+        if prefixKeyBuffer == nil || next > (prefixKeyBuffer?.dim(2) ?? 0) {
+            let (b, kvHeads, kDim, vDim) = (keys.dim(0), keys.dim(1), keys.dim(3), values.dim(3))
+            let grow = ((next + step - 1) / step) * step
+            let newK = MLXArray.zeros([b, kvHeads, grow, kDim], dtype: keys.dtype)
+            let newV = MLXArray.zeros([b, kvHeads, grow, vDim], dtype: values.dtype)
+            if prev > 0, let curK = prefixKeyBuffer, let curV = prefixValueBuffer {
+                newK[.ellipsis, ..<prev, 0...] = curK[.ellipsis, ..<prev, 0...]
+                newV[.ellipsis, ..<prev, 0...] = curV[.ellipsis, ..<prev, 0...]
+            }
+            prefixKeyBuffer = newK
+            prefixValueBuffer = newV
+        }
+        prefixKeyBuffer?[.ellipsis, prev ..< next, 0...] = keys
+        prefixValueBuffer?[.ellipsis, prev ..< next, 0...] = values
+        offset = next
+        return (prefixKeys ?? keys, prefixValues ?? values)
     }
 
     private func mergeActive(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
@@ -181,6 +261,7 @@ public struct DualBlockKVCache {
     public var prefixLength: Int { layers.first?.prefixLength ?? 0 }
     public var suffixLength: Int { layers.first?.suffixLength ?? 0 }
     public var hasSuffixCache: Bool { suffixLength > 0 }
+    package var totalKernelInvocations: Int { layers.reduce(0) { $0 + $1.kernelInvocations } }
 
     public func preparePromptPrefill() {
         for layer in layers {
@@ -212,6 +293,10 @@ public struct DualBlockKVCache {
 
     public func clearSuffix() {
         for layer in layers { layer.clearSuffix() }
+    }
+
+    public func advanceSuffix(by count: Int) {
+        for layer in layers { layer.advanceSuffix(by: count) }
     }
 
     public func reset() {
