@@ -233,6 +233,9 @@ extension ModelProbe {
 extension MLXInferenceEngine {
     func probe(_ container: ModelContainer, directory: URL, modelPath: String) async throws(BasaltError) {
         guard configuration.probesModel else { return }
+        guard await !container.perform({ $0.model is ParakeetModel }) else {
+            return ModelProbe.logger.info("Model probe skipped: Parakeet TDT has no language-model head to probe")
+        }
         let started = ContinuousClock.now
         let probe: ModelProbe
         do {
