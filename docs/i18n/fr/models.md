@@ -24,7 +24,7 @@ M4 Pro, 24 Go, compilation release (`620641c` / `82a99d4`), novembre 2026 (`--re
 | `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` | 35B MoE (`A3B`, 120 couches `MACaQSwitchLinear`) | 14.64 GB | 64.0–74.7 (68.7 à 8k) | **3/3 préchauffage, 1/5 échelons**, `probe_ppl = 1.46`, switch WHT en passe unique (`#628`) |
 | `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE (`A4B`, QAT 4-bit) | 14.92 GB | 56.0–63.4 | **3/3 préchauffage, 4/5 échelons** (`pump` ✅, `lunar 5/6`) |
 | `goodmai/gemma-4-12B-it-qat-4bit` | 12B dense QAT 4-bit | 10.51 GB | 18.8–22.2 | **3/3 préchauffage, 4/5 échelons** (`lunar` ✅ 6/6) |
-| Vidéo / Parole / Musique (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | Video Studio phasé pour UMA 24 Go, audio duplex Mimi/SNAC et image/musique en 4 étapes | ≤ 18 GB phasé | 3D-VAE + noyau Metal STA | Vérifié dans `#542`, `#604`, `#605`, `#608`–`#611` |
+| Vidéo / Image / Voix duplex / Musique (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | **Échafaudage (scaffold)** (graine fixe, chargement partiel ; non vérifié sur vrais poids) | — | — | Échafaudage pipeline et noyaux Metal uniquement ; vrais poids suivis dans [#824](https://github.com/goodmai/basalt/issues/824), [#826](https://github.com/goodmai/basalt/issues/826) |
 
 ### Mesuré pour 0.11
 
@@ -34,8 +34,8 @@ M4 Pro, 24 Go, compilation release, novembre 2026.
 |---|---|---|---|---|
 | `Recursive/Flint-40B-A2.5B` (`flint-oQ3e`) | 40B-A2.5B MoE hybride sliding/full (`512` routés, top-10 + 1 partagé) | 17.61 GB | 67.02 tok/s décodage · 273.5 tok/s préfill | chargeur natif `oQ3e` (`groupSize = 32`) (#518, #522), 0 swap sur 24 Go |
 | `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + TTS DAC multi-têtes FSQ à 32 codebooks (`44.1 kHz`) | 2.24 GB | RTF 0.228–0.263 (3.8–4.4× TR) | 43 langues, 27 voix, `embedding` interlingue + CFG `1.5` (#525, #527) |
-| `hexgrad/Kokoro-82M` | 82M TTS neuronal (ANE + MLX) | ~0.35 GB | TTFA inférieur à 80 ms | étage de repli en streaming par phrase dans `pipeline.speak` (#493, #513) |
-| `Tongyi-MAI/Z-Image-Turbo` | Synthèse d'images DiT | ~6.4 GB | 4–8 étapes (`1024×1024`) | `pipeline.imagine` avec TeaCache et encodeur de texte partagé (#517, #519) |
+| `hexgrad/Kokoro-82M` (ainsi que `Qwen3-TTS`, `CosyVoice 3`, `Chatterbox`, `Pocket TTS`) | **Échafaudage (scaffold)** (graine fixe, chargement partiel) | — | — | Non vérifié sur vrais poids ; Kokoro/CosyVoice 3/F5-TTS réels dans [#821](https://github.com/goodmai/basalt/issues/821) (TTS réel aujourd'hui : `Zyphra/ZONOS3-Mini-hf`) |
+| `Tongyi-MAI/Z-Image-Turbo` (ainsi que `FLUX` / `Iris-3B` / `SANA-1.5`) | **Échafaudage (scaffold)** (embeddings hash + chargement partiel DiT) | — | — | Non vérifié sur vrais poids ; Z-Image-Turbo et FLUX DiT réels dans [#824](https://github.com/goodmai/basalt/issues/824) |
 | `Ricursive/Ripple-65B-4bit` | 65B MoE clairsemé à attention à portes (`128` experts, top-8) | ~35 GB (résident sur 64 Go+, ou streaming SSD) | architecture vérifiée | NoPE / RoPE partiel (#520, #522) |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + MoE à routage latent (`lr_moe`) | ~17 GB (4-bit) | architecture vérifiée | GQA entrelacé + Mamba-2 (#521, #522) |
 | `meta-models/Muse-Glimmer-30B` (`mlx-community/Muse-Glimmer-30B-4bit`) | 30B hybride SWA (`2048`) + attention complète NoPE + VLM ViT-G/14 | ~18.1 GB (4-bit) · ~19.8 GB (`oQ4e`) | architecture et shards HF vérifiés | raisonnement Onyx `to=self` + appels d'outils ATEM + import de normes décentrées GGUF (#533) |

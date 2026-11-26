@@ -24,7 +24,7 @@ basalt models download goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native
 | `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` | 35B MoE（`A3B`，120 个 `MACaQSwitchLinear` 层） | 14.64 GB | 64.0–74.7（8k 上下文为 68.7） | **热身 3/3，阶梯 1/5**，`probe_ppl = 1.46`，单遍 switch WHT（`#628`） |
 | `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE（`A4B`，QAT 4-bit） | 14.92 GB | 56.0–63.4 | **热身 3/3，阶梯 4/5**（`pump` ✅，`lunar 5/6`） |
 | `goodmai/gemma-4-12B-it-qat-4bit` | 12B 稠密 QAT 4-bit | 10.51 GB | 18.8–22.2 | **热身 3/3，阶梯 4/5**（`lunar` ✅ 6/6） |
-| 视频 / 语音 / 音乐（`LTX-2.5 AV-DiT`、`Kandinsky 6.0`、`LingBot-Video`、`Wan 2.2`、`LFM2.5-Audio`、`FLUX.3`、`SeedVR2`、`ACE-Step 1.5`） | 分阶段 24 GB UMA 视频工作室、双工 Mimi/SNAC 音频与四阶段图像/音乐管线 | ≤ 18 GB（分阶段） | 3D-VAE + STA Metal 内核 | 已于 `#542`、`#604`、`#605`、`#608`–`#611` 验证 |
+| 视频 / 图像 / 全双工语音 / 音乐（`LTX-2.5 AV-DiT`、`Kandinsky 6.0`、`LingBot-Video`、`Wan 2.2`、`LFM2.5-Audio`、`FLUX.3`、`SeedVR2`、`ACE-Step 1.5`） | **脚手架（Scaffold）**（固定随机种子、部分张量匹配；尚未在真实权重上验证） | — | — | 仅为管线与 Metal 内核脚手架；真实权重实现见 [#824](https://github.com/goodmai/basalt/issues/824)、[#826](https://github.com/goodmai/basalt/issues/826) |
 
 ### 0.11 版本实测
 
@@ -34,8 +34,8 @@ basalt models download goodmai/Qwen3.8-27B-GSQ-RCO-IQ3_S-Basalt-Native
 |---|---|---|---|---|
 | `Recursive/Flint-40B-A2.5B`（`flint-oQ3e`） | 40B-A2.5B 混合滑动窗口/全注意力 MoE（`512` 路由专家，top-10 + 1 共享专家） | 17.61 GB | 67.02 tok/s 解码 · 273.5 tok/s 预填充 | 原生 `oQ3e`（`groupSize = 32`）加载器（#518, #522），在 24 GB 上 0 swap |
 | `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + 32 码本 FSQ 多头 DAC TTS（`44.1 kHz`） | 2.24 GB | RTF 0.228–0.263（3.8–4.4× 实时速度） | 支持 43 种语言、27 种音色、跨语言 `embedding` + CFG `1.5`（#525, #527） |
-| `hexgrad/Kokoro-82M` | 82M 神经 TTS（ANE + MLX） | ~0.35 GB | 首字音频延迟（TTFA）低于 80 ms | 用作 `pipeline.speak` 中的按句流式回退阶段（#493, #513） |
-| `Tongyi-MAI/Z-Image-Turbo` | DiT 图像合成 | ~6.4 GB | 4–8 步（`1024×1024`） | 集成于 `pipeline.imagine`，支持 TeaCache 与共享文本编码器（#517, #519） |
+| `hexgrad/Kokoro-82M`（及 `Qwen3-TTS`、`CosyVoice 3`、`Chatterbox`、`Pocket TTS`） | **脚手架（Scaffold）**（固定随机种子、部分张量匹配） | — | — | 尚未在真实权重上验证；真实权重 Kokoro/CosyVoice 3/F5-TTS 见 [#821](https://github.com/goodmai/basalt/issues/821)（当前真实权重 TTS 请用 `Zyphra/ZONOS3-Mini-hf`） |
+| `Tongyi-MAI/Z-Image-Turbo`（及 `FLUX` / `Iris-3B` / `SANA-1.5`） | **脚手架（Scaffold）**（哈希嵌入 + 部分 DiT 张量匹配） | — | — | 尚未在真实权重上验证；真实权重 Z-Image-Turbo 与 FLUX 级 DiT 见 [#824](https://github.com/goodmai/basalt/issues/824) |
 | `Ricursive/Ripple-65B-4bit` | 65B 门控注意力稀疏 MoE（`128` 专家，top-8） | ~35 GB（64 GB+ 常驻，或 SSD 流式加载） | 架构已验证 | NoPE / 部分 RoPE（#520, #522） |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + 潜空间路由 MoE（`lr_moe`） | ~17 GB（4-bit） | 架构已验证 | 交错 GQA + Mamba-2（#521, #522） |
 | `meta-models/Muse-Glimmer-30B`（`mlx-community/Muse-Glimmer-30B-4bit`） | 30B 混合 SWA（`2048`）+ NoPE 全注意力 + ViT-G/14 VLM | ~18.1 GB（4-bit）· ~19.8 GB（`oQ4e`） | 架构与 HF 分片已验证 | Onyx `to=self` 推理 + ATEM 工具调用 + GGUF 去中心化归一化导入（#533） |

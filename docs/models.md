@@ -4,6 +4,8 @@
 
 ## Verified Models
 
+> **Backend status (`#828`):** Real-weight tests and measurements cover LLMs/VLMs (tables below), embeddings/rerank, `DeepSeek-OCR-2`, `Nemotron Transcribe` / Apple `SpeechAnalyzer`, and `Zyphra/ZONOS3-Mini-hf` neural TTS. Image/video generators (`LTX-2.5`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `FLUX`, `Z-Image-Turbo`, `SeedVR2`, `ACE-Step 1.5`) and other TTS/duplex backends (`Kokoro-82M`, `Qwen3-TTS`, `CosyVoice 3`, `Chatterbox`, `Pocket TTS`, `LFM2.5-Audio`) currently ship as **scaffolds** (fixed random seed, partial weight loading) — real-weight implementations are tracked in [#824](https://github.com/goodmai/basalt/issues/824), [#821](https://github.com/goodmai/basalt/issues/821), [#818](https://github.com/goodmai/basalt/issues/818) and [#826](https://github.com/goodmai/basalt/issues/826).
+
 Models are downloaded from HuggingFace and cached in `~/.cache/huggingface/hub/`. Over 42 verified chat, MoE, QTIP, PV-Tuned, GSQ-RCO, OCR, neural TTS, embedding, rerank and System One decision checkpoints are published with one-click **Run with Basalt** ([`goodmai-run-with-basalt.static.hf.space`](https://goodmai-run-with-basalt.static.hf.space/?lang=en) → `basalt://run?model=...`) buttons in the [`goodmai` Hugging Face collection](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc).
 
 ```bash
@@ -25,7 +27,7 @@ M4 Pro, 24 GB, release build (`620641c` / `82a99d4`), November 2026 (`--reasonin
 | `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE (`A4B`, QAT 4-bit) | 14.92 GB | 56.0–63.4 | **3/3 warmup, 4/5 rungs** (`pump` ✅, `lunar 5/6`) |
 | `mlx-community/Inkling-2-Mini-oQ3e-mtp` | Inkling 2 Mini: looped MoE (48 visits), relative-bias attention, DSpark drafter (oQ3e) | 11.6 GB (14.5 GB peak at 37.5K tokens, swap 0) | 27.4–27.7; `--mtp` 48.2 on code at T 0, 39.1 at T 0.7, even on prose | **3/3 warmup, 3/5 rungs**, 32K passkey 5/5 (`reasoning_effort: none` still reasons for 119–314 tokens, so give it ≥ 512); prefill ≈ 330 tok/s at 4K, ≈ 155 tok/s at 32K until K1 (#650); measured on `0c3e247` |
 | `goodmai/gemma-4-12B-it-qat-4bit` | 12B dense QAT 4-bit | 10.51 GB | 18.8–22.2 | **3/3 warmup, 4/5 rungs** (`lunar` ✅ 6/6) |
-| Video / Speech / Music (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | Phased 24 GB UMA Video Studio, duplex Mimi/SNAC audio & 4-stage image/music | ≤ 18 GB phased | 3D-VAE + STA Metal kernel | Verified in `#542`, `#604`, `#605`, `#608`–`#611` |
+| Video / Image / Duplex Speech / Music (`LTX-2.5 AV-DiT`, `Kandinsky 6.0`, `LingBot-Video`, `Wan 2.2`, `LFM2.5-Audio`, `FLUX.3`, `SeedVR2`, `ACE-Step 1.5`) | **Scaffold** (fixed random seed, partial tensor match; not real-weight verified) | — | — | Pipeline & Metal-kernel scaffolding only; real-weight work tracked in [#824](https://github.com/goodmai/basalt/issues/824), [#826](https://github.com/goodmai/basalt/issues/826) |
 
 ### Measured for 0.11
 
@@ -35,8 +37,8 @@ M4 Pro, 24 GB, release build, November 2026.
 |---|---|---|---|---|
 | `Recursive/Flint-40B-A2.5B` (`flint-oQ3e`) | 40B-A2.5B hybrid sliding/full MoE (`512` routed, top-10 + 1 shared) | 17.61 GB | 67.02 tok/s decode · 273.5 tok/s prefill | native `oQ3e` (`groupSize = 32`) loader (#518, #522), 0 swap on 24 GB |
 | `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + 32-codebook FSQ multi-head DAC TTS (`44.1 kHz`) | 2.24 GB | RTF 0.228–0.263 (3.8–4.4× RT) | 43 languages, 27 voices, cross-lingual `embedding` + CFG `1.5` (#525, #527) |
-| `hexgrad/Kokoro-82M` | 82M neural TTS (ANE + MLX) | ~0.35 GB | sub-80 ms TTFA | sentence-streaming fallback stage in `pipeline.speak` (#493, #513) |
-| `Tongyi-MAI/Z-Image-Turbo` | DiT image synthesis | ~6.4 GB | 4–8 steps (`1024×1024`) | `pipeline.imagine` with TeaCache & shared text encoder (#517, #519) |
+| `hexgrad/Kokoro-82M` (and `Qwen3-TTS`, `CosyVoice 3`, `Chatterbox`, `Pocket TTS`) | **Scaffold** (fixed random seed, partial tensor match) | — | — | Not real-weight verified yet; real-weight Kokoro/CosyVoice 3/F5-TTS tracked in [#821](https://github.com/goodmai/basalt/issues/821) (use `Zyphra/ZONOS3-Mini-hf` for real-weight TTS today) |
+| `Tongyi-MAI/Z-Image-Turbo` (and `FLUX` / `Iris-3B` / `SANA-1.5`) | **Scaffold** (hash-embedding + partial DiT weight match) | — | — | Not real-weight verified yet; real-weight Z-Image-Turbo & FLUX-class DiT tracked in [#824](https://github.com/goodmai/basalt/issues/824) |
 | `Ricursive/Ripple-65B-4bit` | 65B gated-attention sparse MoE (`128` experts, top-8) | ~35 GB (64 GB+ resident, or SSD streaming) | architecture verified | NoPE / partial RoPE (#520, #522) |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + Latently-Routed MoE (`lr_moe`) | ~17 GB (4-bit) | architecture verified | interleaved GQA + Mamba-2 (#521, #522) |
 | `meta-models/Muse-Glimmer-30B` (`mlx-community/Muse-Glimmer-30B-4bit`) | 30B hybrid SWA (`2048`) + NoPE full attention + ViT-G/14 VLM | ~18.1 GB (4-bit) · ~19.8 GB (`oQ4e`) | architecture & HF shards verified | Onyx `to=self` reasoning + ATEM tool calls + GGUF de-centered norm import (#533) |

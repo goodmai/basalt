@@ -24,7 +24,7 @@ M4 Pro、24 GB、release ビルド（`620641c` / `82a99d4`）、2026 年 11 月�
 | `goodmai/Ornith-1.5-35B-A3B-MACaQ-3bit-MLX` | 35B MoE（`A3B`、120 個の `MACaQSwitchLinear` 層） | 14.64 GB | 64.0–74.7（8k 時 68.7） | **warmup 3/3、1/5 段**、`probe_ppl = 1.46`、シングルパス・スイッチ WHT（`#628`） |
 | `goodmai/gemma-4-26B-A4B-it-qat-4bit` | 26B MoE（`A4B`、QAT 4-bit） | 14.92 GB | 56.0–63.4 | **warmup 3/3、4/5 段**（`pump` ✅、`lunar 5/6`） |
 | `goodmai/gemma-4-12B-it-qat-4bit` | 12B dense QAT 4-bit | 10.51 GB | 18.8–22.2 | **warmup 3/3、4/5 段**（`lunar` ✅ 6/6） |
-| 動画 / 音声 / 音楽（`LTX-2.5 AV-DiT`、`Kandinsky 6.0`、`LingBot-Video`、`Wan 2.2`、`LFM2.5-Audio`、`FLUX.3`、`SeedVR2`、`ACE-Step 1.5`） | フェーズ分割 24 GB UMA Video Studio、全二重 Mimi/SNAC 音声 & 4 段階画像/音楽 | フェーズ分割時 ≤ 18 GB | 3D-VAE + STA Metal カーネル | `#542`、`#604`、`#605`、`#608`–`#611` で検証済み |
+| 動画 / 画像 / 全二重音声 / 音楽（`LTX-2.5 AV-DiT`、`Kandinsky 6.0`、`LingBot-Video`、`Wan 2.2`、`LFM2.5-Audio`、`FLUX.3`、`SeedVR2`、`ACE-Step 1.5`） | **スキャフォールド（Scaffold）**（固定シード・部分テンソル一致；実ウェイト未検証） | — | — | パイプラインと Metal カーネルのスキャフォールドのみ；実ウェイト対応は [#824](https://github.com/goodmai/basalt/issues/824)、[#826](https://github.com/goodmai/basalt/issues/826) |
 
 ### 0.11 向け実測値
 
@@ -34,8 +34,8 @@ M4 Pro、24 GB、release ビルド、2026 年 11 月。
 |---|---|---|---|---|
 | `Recursive/Flint-40B-A2.5B`（`flint-oQ3e`） | 40B-A2.5B ハイブリッド スライディング/フル MoE（`512` ルーティング、top-10 + 共有 1） | 17.61 GB | 67.02 tok/s デコード · 273.5 tok/s プリフィル | ネイティブ `oQ3e`（`groupSize = 32`）ローダ（#518, #522）、24 GB 上でスワップ 0 |
 | `Zyphra/ZONOS3-Mini-hf` | 1.6B Llama + 32 コードブック FSQ マルチヘッド DAC TTS（`44.1 kHz`） | 2.24 GB | RTF 0.228–0.263（実時間の 3.8–4.4×） | 43 言語、27 話者、クロスリンガル `embedding` + CFG `1.5`（#525, #527） |
-| `hexgrad/Kokoro-82M` | 82M ニューラル TTS（ANE + MLX） | 約 0.35 GB | TTFA 80 ms 未満 | `pipeline.speak` における文ストリーミング用フォールバック段（#493, #513） |
-| `Tongyi-MAI/Z-Image-Turbo` | DiT 画像合成 | 約 6.4 GB | 4–8 ステップ（`1024×1024`） | TeaCache と共有テキストエンコーダを備えた `pipeline.imagine`（#517, #519） |
+| `hexgrad/Kokoro-82M`（および `Qwen3-TTS`、`CosyVoice 3`、`Chatterbox`、`Pocket TTS`） | **スキャフォールド（Scaffold）**（固定シード・部分テンソル一致） | — | — | 実ウェイト未検証；実ウェイト Kokoro/CosyVoice 3/F5-TTS は [#821](https://github.com/goodmai/basalt/issues/821)（現在の実ウェイト TTS は `Zyphra/ZONOS3-Mini-hf`） |
+| `Tongyi-MAI/Z-Image-Turbo`（および `FLUX` / `Iris-3B` / `SANA-1.5`） | **スキャフォールド（Scaffold）**（ハッシュ埋め込み + 部分 DiT 一致） | — | — | 実ウェイト未検証；実ウェイト Z-Image-Turbo / FLUX DiT は [#824](https://github.com/goodmai/basalt/issues/824) |
 | `Ricursive/Ripple-65B-4bit` | 65B ゲーテッドアテンション スパース MoE（`128` エキスパート、top-8） | 約 35 GB（64 GB+ 常駐、または SSD ストリーミング） | アーキテクチャ検証済み | NoPE / 部分 RoPE（#520, #522） |
 | `nvidia/Nemotron-3.5-Lightning-30B-A3B` | 30B-A3B Mamba-2 + 潜在ルーティング MoE（`lr_moe`） | 約 17 GB（4-bit） | アーキテクチャ検証済み | インターリーブ GQA + Mamba-2（#521, #522） |
 | `meta-models/Muse-Glimmer-30B`（`mlx-community/Muse-Glimmer-30B-4bit`） | 30B ハイブリッド SWA（`2048`）+ NoPE フルアテンション + ViT-G/14 VLM | 約 18.1 GB（4-bit）· 約 19.8 GB（`oQ4e`） | アーキテクチャと HF シャード検証済み | Onyx `to=self` 推論 + ATEM ツール呼び出し + GGUF 脱中心化ノルム取り込み（#533） |
