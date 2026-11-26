@@ -70,7 +70,8 @@ struct ModelCapabilities: Equatable, Sendable {
     func allows(_ feature: Feature) -> Bool { verified.contains(feature) }
 
     func kvBits(_ precision: KVPrecision?) -> Int? {
-        allows(.kvQuantization) && precision?.turbo != true && precision?.isKVarN != true ? precision?.uniform.keyBits : nil
+        allows(.kvQuantization) && precision?.turbo != true && precision?.isKVarN != true && precision?.isGaugeRoPE != true
+            ? precision?.uniform.keyBits : nil
     }
 
     func kvScheme(_ precision: KVPrecision?) -> String? { allows(.kvQuantization) ? precision?.scheme : nil }
@@ -98,6 +99,31 @@ struct ModelCapabilities: Equatable, Sendable {
         throw .modelConfigurationInvalid(
             path: path,
             reason: "model_type '\(modelType ?? "none")' has no verified quantized KV cache, so --kv-bits cannot apply; serve it without --kv-bits or with --kv-bits auto")
+    }
+
+    static let gaugeRoPEModelTypes: Set<String> = [
+        "qwen3_5", "qwen3_5_text", "qwen3_6", "qwen3.6", "qwen3_8", "qwen3.8",
+        "qwen3_5_moe", "qwen3_5_moe_text", "qwen3_6_moe", "qwen3_8_moe", "qwen3.8_moe",
+    ]
+
+    static func gaugeRoPELayout(
+        _ precision: KVPrecision?, config: [String: Any]?, ropeYarn: Double?, path: String
+    ) throws(BasaltError) -> GaugeRoPELayout? {
+        guard precision?.isGaugeRoPE == true else { return nil }
+        let modelType = (config?["model_type"] as? String)?.lowercased() ?? "none"
+        guard gaugeRoPEModelTypes.contains(modelType) else {
+            let why = modelType.hasPrefix("gemma4")
+                ? "Gemma 4 rotates only part of each global-layer head with proportional RoPE (p-RoPE) and attends over the whole cache itself, so the per-frequency latent basis does not apply"
+                : "the per-frequency latent basis is verified only on Qwen 3.5, 3.6 and 3.8 (qwen3_5)"
+            throw .modelConfigurationInvalid(
+                path: path, reason: "model_type '\(modelType)' cannot serve --kv-bits gaugerope (experimental, #647): \(why); serve it without --kv-bits gaugerope")
+        }
+        guard ropeYarn == nil, let layout = config.flatMap(GaugeRoPELayout.init(config:)) else {
+            throw .modelConfigurationInvalid(
+                path: path,
+                reason: "--kv-bits gaugerope inverts plain RoPE (rope_type default with rope_theta) to build its position-independent code, and this checkpoint's RoPE is \(ropeYarn == nil ? "not plain" : "staged with --rope-yarn"); serve it without --kv-bits gaugerope (#647)")
+        }
+        return layout
     }
 
     static func unverifiedWarning(modelType: String?) -> String {

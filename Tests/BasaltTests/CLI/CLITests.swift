@@ -58,6 +58,17 @@ struct CLITests {
         #expect(KVPrecision.k8v4.uniform == .q8)
     }
 
+    @Test("--kv-bits gaugerope parses on serve and models check as the experimental GaugeRoPE format and refuses --kv-zones (#647)")
+    func kvBitsGaugeRoPE() throws {
+        #expect(try ServeCommand.parse(["--kv-bits", "gaugerope"]).kvBits == .fixed(.gaugeRoPE))
+        #expect(try CheckSubcommand.parse(["m", "--kv-bits", "gaugerope"]).kvBits == .fixed(.gaugeRoPE))
+        #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "gaugerope", "--kv-zones"]) }
+        #expect(KVPrecision(argument: "gaugerope")?.isGaugeRoPE == true)
+        #expect(KVPrecision.gaugeRoPE.description == "gaugerope")
+        #expect(!KVPrecision.gaugeRoPE.isUniformAffine && !KVPrecision.q4.isGaugeRoPE)
+        #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .gaugeRoPE, zones: false) == nil)
+    }
+
     @Test("--experimental-kv-shared-row parses and refuses --kv-bits, --quest-top-k, --attention-backend and --kv-head-split (#645)")
     func kvSharedRowFlag() throws {
         #expect(try ServeCommand.parse(["--experimental-kv-shared-row"]).experimental.kvSharedRow)
@@ -77,7 +88,7 @@ struct CLITests {
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4"]) }
         #expect(throws: (any Error).self) { _ = try CheckSubcommand.parse(["m", "--kv-bits", "k8v4"]) }
         #expect(throws: (any Error).self) { _ = try ServeCommand.parse(["--kv-bits", "k8v4h"]) }
-        #expect(KVPrecision.accepted == "2, 3, 4, 5, 6, 8, k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4, kvarn, kvarn-qjl")
+        #expect(KVPrecision.accepted == "2, 3, 4, 5, 6, 8, k8v4, k8v4h, turbo3, turbo4, turbo8v4, polar4, kvarn, kvarn-qjl, gaugerope")
         #expect(KVPrecision.flagConflict(kvBitsSet: false, fixed: nil, zones: true) != nil)
         #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .k8v4h, zones: false) != nil)
         #expect(KVPrecision.flagConflict(kvBitsSet: true, fixed: .k8v4, zones: true) == nil)

@@ -159,6 +159,7 @@ extension MLXInferenceEngine {
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
         try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
         try ModelCapabilities.refuseDiffusionWithoutFlag(dllm: configuration.dllm, modelType: modelType, path: modelPath)
+        let gaugeRoPE = try ModelCapabilities.gaugeRoPELayout(configuration.kvPrecision, config: ModelCache.config(at: directory), ropeYarn: configuration.ropeYarn, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
@@ -190,7 +191,7 @@ extension MLXInferenceEngine {
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
                 transcribesAudio: transcribes, prefillScratch: prefillScratch(at: directory),
-                ropeStatus: rope.status)
+                ropeStatus: rope.status, gaugeRoPE: gaugeRoPE)
             guard attach(loaded, facts: facts, epoch: epoch, warming: true) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await warmUp(loaded, directory: directory, epoch: epoch)

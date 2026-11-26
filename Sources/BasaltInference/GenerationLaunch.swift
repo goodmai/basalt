@@ -8,6 +8,7 @@ enum FreshCache: Equatable {
     case quest(topK: Int)
     case sageMX(SageMXKVCache.Mode)
     case kvarn(useQJL: Bool)
+    case gaugeRoPE(GaugeRoPELayout)
     case zoned(KVZones, KVPrecision)
     case evicting(KVZones)
     case kEqVRow(KEqVRowLayout)
@@ -27,6 +28,7 @@ enum FreshCache: Equatable {
         let zoning = options.kvZones.flatMap { zones in options.kvPrecision.map { HeadSplitKVCache.Zoning(zones: zones, precision: $0) } }
         if let headMask = options.kvHeadMask, !kvBitsSet || zoning != nil { return .headSplit(headMask, zoning) }
         if let precision = options.kvPrecision, precision.isKVarN, !kvBitsSet { return .kvarn(useQJL: precision.useQJL) }
+        if options.kvPrecision?.isGaugeRoPE == true, !kvBitsSet, let layout = options.gaugeRoPE { return .gaugeRoPE(layout) }
         if !kvBitsSet, let questTopK = options.questTopK { return .quest(topK: questTopK) }
         if !kvBitsSet, options.attentionBackend != .standard {
             let mode: SageMXKVCache.Mode = options.attentionBackend == .sagemx ? .sagemx : .moba(topBlocks: options.mobaTopK)
@@ -87,6 +89,7 @@ struct LaunchOptions {
     var mtpPrefix: MTPPrefix?
     var pacer: PrefillPacer?
     var kEqVRow: KEqVRowLayout?
+    var gaugeRoPE: GaugeRoPELayout?
     var prefillScratch: PrefillAttentionScratch?
     var diffusion: BlockDiffusionConfig?
 }
@@ -161,6 +164,11 @@ struct GenerationLauncher {
             var exact = params
             (exact.kvBits, exact.kvScheme) = (nil, nil)
             let cache = KVarNKVCache.replacingFullAttention(try model.newCache(parameters: exact), useQJL: useQJL)
+            return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
+        case .gaugeRoPE(let layout):
+            var exact = params
+            (exact.kvBits, exact.kvScheme) = (nil, nil)
+            let cache = GaugeRoPEKVCache.replacingFullAttention(try model.newCache(parameters: exact), layout: layout)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .zoned(let zones, let precision):
             var exact = params
