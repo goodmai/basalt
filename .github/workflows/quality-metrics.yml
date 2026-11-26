@@ -1,0 +1,82 @@
+name: Quality Metrics
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  fast-check:
+    name: Fast quality metrics & hygiene
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install curl, jq and python3 for OSV scan
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq python3
+      - name: Checker self-test
+        run: swift scripts/check_quality_metrics_test.swift
+      - name: Concurrency hatches check
+        run: swift scripts/check_concurrency_hatches.swift
+      - name: OSV dependency scan
+        id: osv
+        run: |
+          if ./scripts/security_audit.sh --osv-only; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+      - name: Compute quality metrics & enforce fast gates
+        env:
+          OSV_OK: ${{ steps.osv.outputs.ok }}
+        run: |
+          FLAGS=""
+          if [ "$OSV_OK" = "true" ]; then FLAGS="--osv-ok"; fi
+          swift scripts/check_quality_metrics.swift $FLAGS --write-badges /tmp/basalt-badges | tee /tmp/basalt-metrics.txt
+          {
+            echo "### Basalt Fast-Check Quality Metrics"
+            echo '```'
+            cat /tmp/basalt-metrics.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-badges:
+    name: Publish live README badges
+    needs: fast-check
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: quality-metrics-badges
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install curl, jq and python3 for OSV scan
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq python3
+      - name: Generate badge JSON endpoints
+        run: |
+          ./scripts/security_audit.sh --osv-only
+          swift scripts/check_quality_metrics.swift --osv-ok --write-badges /tmp/basalt-badges
+      - name: Push orphan badges branch
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          work=$(mktemp -d)
+          cp /tmp/basalt-badges/*.json "$work/"
+          cd "$work"
+          git init -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add *.json
+          git commit -m "chore(badges): update quality metrics for ${{ github.sha }}"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push --force origin HEAD:refs/heads/badges

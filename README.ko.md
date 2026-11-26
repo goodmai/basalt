@@ -22,6 +22,15 @@
 [![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](docs/i18n/ko/benchmarks.md#benchmarks)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/i18n/ko/benchmarks.md#benchmarks)
 
+[![Quality Metrics](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml)
+[![Concurrency Hatches](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/concurrency-hatches.json)](scripts/concurrency-hatches.allow)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/swift-testing.json)](Tests/BasaltTests)
+[![Files ≤600 LOC](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/file-size.json)](scripts/check_size_limits.swift)
+[![Crash Traps](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/crash-traps.json)](scripts/check_quality_metrics.swift)
+[![L10n EN/RU](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/l10n-parity.json)](Localization)
+[![Supply Chain](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/supply-chain.json)](.github/workflows/quality-metrics.yml)
+[![Golden Logits](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/golden-logits.json)](Tests/BasaltTests/Fixtures/ReferenceLogits)
+
 <p align="center"><img src="images/models-hive.svg" alt="Open models basalt runs: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
 <p align="center"><sub>Apple Silicon에서 오픈 웨이트 모델을 실행합니다. 여기서 로짓 검증 완료: Gemma 4, Qwen3.8, LFM2.5(아래 표 참조); <a href="https://huggingface.co/goodmai">huggingface.co/goodmai</a>에서 측정 및 패키징: Ornith, Bonsai, Qwen3.6-35B-A3B, DeepSeek-OCR-2, OpenJev, Laya(<a href="docs/i18n/ko/models.md#verified-models">모델 표</a> 참조); gpt-oss 및 Llama는 MLX 호환. 로고는 각 소유자의 상표이며 호환성 표시 목적으로만 사용됩니다. Anthropic 모델은 클로즈드 웨이트이므로 포함되지 않으며, Claude Code가 로컬 모델과 통신할 수 있도록 Anthropic <i>API</i>를 지원합니다.</sub></p>
 

@@ -22,6 +22,15 @@
 [![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](docs/i18n/zh/benchmarks.md#benchmarks)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/i18n/zh/benchmarks.md#benchmarks)
 
+[![Quality Metrics](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml)
+[![Concurrency Hatches](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/concurrency-hatches.json)](scripts/concurrency-hatches.allow)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/swift-testing.json)](Tests/BasaltTests)
+[![Files ≤600 LOC](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/file-size.json)](scripts/check_size_limits.swift)
+[![Crash Traps](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/crash-traps.json)](scripts/check_quality_metrics.swift)
+[![L10n EN/RU](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/l10n-parity.json)](Localization)
+[![Supply Chain](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/supply-chain.json)](.github/workflows/quality-metrics.yml)
+[![Golden Logits](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/golden-logits.json)](Tests/BasaltTests/Fixtures/ReferenceLogits)
+
 <p align="center"><img src="images/models-hive.svg" alt="Open models basalt runs: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
 <p align="center"><sub>在 Apple Silicon 上运行开源权重模型。此处已通过 logit 验证的有：Gemma 4、Qwen3.8 与 LFM2.5（见下表）；已在 <a href="https://huggingface.co/goodmai">huggingface.co/goodmai</a> 完成实测并打包的有：Ornith、Bonsai、Qwen3.6-35B-A3B、DeepSeek-OCR-2、OpenJev 与 Laya（见<a href="docs/i18n/zh/models.md#verified-models">模型列表</a>）；gpt-oss 与 Llama 兼容 MLX。各徽标均为其各自所有者的商标，仅用于说明兼容性。Anthropic 模型为闭源权重，因此不在上述模型簇中；但支持 Anthropic <i>API</i>，以便让 Claude Code 直接对接本地模型。</sub></p>
 

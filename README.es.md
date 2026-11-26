@@ -22,6 +22,15 @@
 [![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](docs/i18n/es/benchmarks.md#benchmarks)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/i18n/es/benchmarks.md#benchmarks)
 
+[![Quality Metrics](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml)
+[![Concurrency Hatches](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/concurrency-hatches.json)](scripts/concurrency-hatches.allow)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/swift-testing.json)](Tests/BasaltTests)
+[![Files ≤600 LOC](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/file-size.json)](scripts/check_size_limits.swift)
+[![Crash Traps](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/crash-traps.json)](scripts/check_quality_metrics.swift)
+[![L10n EN/RU](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/l10n-parity.json)](Localization)
+[![Supply Chain](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/supply-chain.json)](.github/workflows/quality-metrics.yml)
+[![Golden Logits](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/golden-logits.json)](Tests/BasaltTests/Fixtures/ReferenceLogits)
+
 <p align="center"><img src="images/models-hive.svg" alt="Modelos abiertos que ejecuta basalt: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
 <p align="center"><sub>Ejecuta modelos de pesos abiertos en Apple Silicon. Verificados por logits aquí: Gemma 4, Qwen3.8 y LFM2.5 (la tabla siguiente); medidos y empaquetados en <a href="https://huggingface.co/goodmai">huggingface.co/goodmai</a>: Ornith, Bonsai, Qwen3.6-35B-A3B, DeepSeek-OCR-2, OpenJev y Laya (consulta <a href="docs/i18n/es/models.md#verified-models">la tabla de modelos</a>); gpt-oss y Llama son compatibles con MLX. Los logotipos son marcas comerciales de sus propietarios y se muestran únicamente para indicar compatibilidad. Los modelos de Anthropic son de pesos cerrados, por lo que no están en la colmena; la <i>API</i> de Anthropic es compatible para que Claude Code pueda comunicarse con un modelo local.</sub></p>
 

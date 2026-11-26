@@ -22,6 +22,15 @@
 [![Ladder](https://img.shields.io/badge/ladder-6%20tasks-black.svg)](docs/i18n/ru/benchmarks.md#benchmarks)
 [![ARC-AGI](https://img.shields.io/badge/ARC--AGI-pass%402-black.svg)](docs/i18n/ru/benchmarks.md#benchmarks)
 
+[![Quality Metrics](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/quality-metrics.yml)
+[![Concurrency Hatches](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/concurrency-hatches.json)](scripts/concurrency-hatches.allow)
+[![Tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/swift-testing.json)](Tests/BasaltTests)
+[![Files ≤600 LOC](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/file-size.json)](scripts/check_size_limits.swift)
+[![Crash Traps](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/crash-traps.json)](scripts/check_quality_metrics.swift)
+[![L10n EN/RU](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/l10n-parity.json)](Localization)
+[![Supply Chain](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/supply-chain.json)](.github/workflows/quality-metrics.yml)
+[![Golden Logits](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/goodmai/basalt/badges/golden-logits.json)](Tests/BasaltTests/Fixtures/ReferenceLogits)
+
 <p align="center"><img src="images/models-hive.svg" alt="Открытые модели, которые запускает basalt: Qwen, Gemma, Ornith, gpt-oss, DeepSeek, Llama" width="240"></p>
 <p align="center"><sub>Запускает модели с открытыми весами на Apple Silicon. Проверены по эталонным логитам: Gemma 4, Qwen3.8 и LFM2.5 (таблица ниже); измерены и собраны в <a href="https://huggingface.co/goodmai">huggingface.co/goodmai</a>: Ornith, Bonsai, Qwen3.6-35B-A3B, DeepSeek-OCR-2, OpenJev и Laya (см. <a href="docs/i18n/ru/models.md#verified-models">таблицу моделей</a>); gpt-oss и Llama совместимы с MLX. Логотипы являются товарными знаками их владельцев и приведены только для указания совместимости. Модели Anthropic имеют закрытые веса, поэтому их нет в этом списке; <i>API</i> Anthropic поддерживается, чтобы Claude Code мог работать с локальной моделью.</sub></p>
 
