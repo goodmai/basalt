@@ -487,11 +487,12 @@ struct DFlashSpeculativeTests {
         #expect(fullAccept.cacheTrimCount == 0)
     }
 
-    @Test("ServeCommand keeps --experimental-dllm and --experimental-dflash off by default and refuses them until the engine reads them, instead of silently decoding on the standard path")
+    @Test("ServeCommand keeps --experimental-dllm and --experimental-dflash off by default, accepts --experimental-dllm now that the engine reads it (#819), and still refuses the unwired --experimental-dflash")
     func experimentalFlagsParseAndValidate() throws {
         let defaults = try ServeCommand.parse([])
         #expect(!defaults.experimental.dllm && !defaults.experimental.dflash)
-        for flags in [["--experimental-dllm"], ["--experimental-dflash"], ["--experimental-dllm", "--experimental-dflash"]] {
+        #expect(try ServeCommand.parse(["--experimental-dllm"]).experimental.dllm)
+        for flags in [["--experimental-dflash"], ["--experimental-dllm", "--experimental-dflash"]] {
             #expect(throws: (any Error).self, "\(flags)") { _ = try ServeCommand.parse(flags) }
         }
     }

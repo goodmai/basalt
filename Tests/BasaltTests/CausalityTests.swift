@@ -7,7 +7,7 @@ import MLXLMCommon
 @Suite("Every tiny family is causal with and without a cache: changing the last token leaves earlier logits untouched")
 struct CausalityTests {
     @Test("Earlier logits are bit-identical when only the last token changes, and a prefix gives the same logits as the full sequence",
-          arguments: TinyModel.Family.allCases.filter { $0 != .prism })
+          arguments: TinyModel.Family.allCases.filter { $0 != .prism && $0.decodesTokenByToken })
     func causal(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         let a = MLXArray([Int32(5), 9, 13, 17, 21, 25, 29, 33]).reshaped(1, 8)

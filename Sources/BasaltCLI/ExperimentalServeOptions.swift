@@ -63,7 +63,7 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     @Flag(
         name: .customLong("experimental-dllm"),
-        help: "Decode discrete diffusion language models (Dream, DiffuCoder, LLaDA) with Fast-dLLM DualBlockKVCache and confidence-threshold parallel unmasking (#574). Off by default until real-model throughput and quality are measured"
+        help: "Experimental (#819): decode masked-diffusion language models (model_type llada) with Fast-dLLM: blocks of 32 tokens unmasked in parallel above 0.9 confidence over a dual prompt/suffix KV cache. Such models are refused without this flag; other models decode as usual"
     )
     var dllm = false
 
@@ -82,8 +82,8 @@ struct ExperimentalServeOptions: ParsableArguments {
         if dllm, dflash {
             throw ValidationError("--experimental-dllm and --experimental-dflash cannot be combined: Fast-dLLM decodes a diffusion language model directly while DFlash drafts for an autoregressive target")
         }
-        if dllm || dflash {
-            throw ValidationError("\(dllm ? "--experimental-dllm" : "--experimental-dflash") is not wired to the engine yet (#574): generation would run on the standard decode path")
+        if dflash {
+            throw ValidationError("--experimental-dflash is not wired to the engine yet (#574): generation would run on the standard decode path")
         }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")
