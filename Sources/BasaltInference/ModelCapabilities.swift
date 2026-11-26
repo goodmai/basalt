@@ -125,6 +125,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (["gemma4", "gemma4_text", "gemma4_unified", "gemma4_unified_text"], gemma4),
             ([FlintModel.modelType], flint),
             ([OuroModel.modelType], flint),
+            ([HuginnModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),

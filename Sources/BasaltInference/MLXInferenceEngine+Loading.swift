@@ -86,6 +86,7 @@ extension MLXInferenceEngine {
         }
         await registry.registerModelType(LLaDAModel.modelType) { data in try LLaDAModel(configurationData: data) }
         await registry.registerModelType(OuroModel.modelType) { data in try OuroModel(configurationData: data) }
+        await registry.registerModelType(HuginnModel.modelType) { data in try HuginnModel(configurationData: data) }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
