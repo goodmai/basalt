@@ -99,4 +99,13 @@ writeFile(badTest, "Tests/CoreTests/LegacyTests.swift", "class Legacy: XCTestCas
 let r5 = runChecker([badTest.path])
 assertCheck(r5.status != 0 && r5.output.contains("XCTestCase") && r5.output.contains("MLXRandom.seed"), "legacy XCTest & global seed should fail: \(r5.output)")
 
-print("check_quality_metrics_test: all 5 cases passed.")
+let boundary = makeCleanFixture()
+defer { try? FileManager.default.removeItem(at: boundary) }
+writeFile(boundary, "Sources/Core/Exact600.swift", String(repeating: "let _ = 1\n", count: 600))
+let r6a = runChecker([boundary.path, "--max-crash-traps", "0"])
+assertCheck(r6a.status == 0, "600-line file with trailing newline must pass (matches check_size_limits.swift): \(r6a.output)")
+writeFile(boundary, "Sources/Core/Over600.swift", String(repeating: "let _ = 1\n", count: 601))
+let r6b = runChecker([boundary.path, "--max-crash-traps", "0"])
+assertCheck(r6b.status != 0 && r6b.output.contains("Over600.swift (601)"), "601-line file must fail: \(r6b.output)")
+
+print("check_quality_metrics_test: all 6 cases passed.")
