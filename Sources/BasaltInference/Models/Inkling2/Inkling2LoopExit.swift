@@ -15,15 +15,18 @@ enum Inkling2LoopExit {
 
     static func fillSkippedPasses(_ cache: [KVCache], loop: Inkling2Configuration.Loop, lastPass: Int) {
         let core = loop.coreEnd - loop.coreStart
+        var written: [MLXArray] = []
         for skipped in (lastPass + 1) ..< loop.numPasses {
             for layer in 0 ..< core {
                 let source = loop.coreStart + lastPass * core + layer
                 let target = loop.coreStart + skipped * core + layer
-                LoopExit.copyLastPosition(from: cache[2 * source], to: cache[2 * target])
+                written += LoopExit.copyLastPosition(from: cache[2 * source], to: cache[2 * target])
                 if let from = cache[2 * source + 1] as? ConvolutionStatesCache, let to = cache[2 * target + 1] as? ConvolutionStatesCache {
                     to.commit(states: from.state, windows: nil, count: 1)
+                    written += to.state
                 }
             }
         }
+        eval(written)
     }
 }

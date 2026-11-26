@@ -195,11 +195,13 @@ final class HuginnTransformer: Module {
     }
 
     private func fillSkippedSteps(_ cache: [KVCache], after step: Int) {
+        var written: [MLXArray] = []
         for skipped in (step + 1) ..< config.steps {
             for layer in 0 ..< config.coreLayers {
-                LoopExit.copyLastPosition(from: cache[coreCacheIndex(step: step, layer: layer)], to: cache[coreCacheIndex(step: skipped, layer: layer)])
+                written += LoopExit.copyLastPosition(from: cache[coreCacheIndex(step: step, layer: layer)], to: cache[coreCacheIndex(step: skipped, layer: layer)])
             }
         }
+        eval(written)
     }
 }
 

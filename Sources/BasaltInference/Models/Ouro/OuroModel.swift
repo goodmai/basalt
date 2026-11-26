@@ -158,11 +158,13 @@ final class OuroInner: Module {
     }
 
     private func fillSkippedSteps(_ cache: [KVCache], after step: Int) {
+        var written: [MLXArray] = []
         for skipped in (step + 1) ..< config.steps {
             for layer in 0 ..< layers.count {
-                LoopExit.copyLastPosition(from: cache[step * layers.count + layer], to: cache[skipped * layers.count + layer])
+                written += LoopExit.copyLastPosition(from: cache[step * layers.count + layer], to: cache[skipped * layers.count + layer])
             }
         }
+        eval(written)
     }
 }
 
