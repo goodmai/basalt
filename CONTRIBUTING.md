@@ -161,6 +161,7 @@ Measure more than one model family. A claim about speed or quality names the mod
 - A test that guards against nondeterminism (sampling parity, speculative exactness, concurrency) runs with repetitions (ST-0024: `swift test --maximum-repetitions 10 --repeat-until fail --filter <SuiteName>`) before it is trusted.
 - Behaviour changes come with a test that fails without the change; the changed-line coverage step (see Coverage) checks the tests run it.
 - No new concurrency hatch outside `scripts/concurrency-hatches.allow`, and no stale line left in it.
+- Fast-check quality metrics (`swift scripts/check_quality_metrics.swift`, CI: `.github/workflows/quality-metrics.yml`) pass on Ubuntu: 0 `XCTestCase` / global `MLXRandom.seed(`, all `Sources/` files ≤ 600 lines (matching `check_size_limits.swift`'s newline count), 1:1 EN/RU `Localizable.strings` parity, 40-char SHA-pinned external GitHub Actions + OSV scan, and the `Sources/` crash-trap ratchet (`fatalError(`, `try!`, `as!` ≤ `maxCrashTraps` in `scripts/check_quality_metrics.swift`; lower the default when removing a site, or raise `--max-crash-traps` in `.github/workflows/quality-metrics.yml` only with a written reason in the PR).
 - Claims that need a real model (speed, output quality) are marked as unverified in the PR unless they were measured; measured ones name the models and link the runner's log (see Real-model runs).
 
 ## Documentation translations

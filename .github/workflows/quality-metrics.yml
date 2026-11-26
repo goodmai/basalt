@@ -12,7 +12,7 @@ jobs:
   fast-check:
     name: Fast quality metrics & hygiene
     runs-on: ubuntu-latest
-    container: swift:6.1-noble
+    container: swift:6.1-noble@sha256:6d5517e79420e85f3269422c4cc64c61a75ba5b1489565eea72f01f5be504780
     timeout-minutes: 10
     permissions:
       contents: read
@@ -55,12 +55,14 @@ jobs:
       group: quality-metrics-badges
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    container: swift:6.1-noble
+    container: swift:6.1-noble@sha256:6d5517e79420e85f3269422c4cc64c61a75ba5b1489565eea72f01f5be504780
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
       - name: Install curl, jq and python3 for OSV scan
         run: apt-get update -qq && apt-get install -y -qq --no-install-recommends curl jq python3
       - name: Generate badge JSON endpoints
@@ -70,13 +72,17 @@ jobs:
       - name: Push orphan badges branch
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          work=$(mktemp -d)
-          cp /tmp/basalt-badges/*.json "$work/"
-          cd "$work"
-          git init -b badges
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add *.json
-          git commit -m "chore(badges): update quality metrics for ${{ github.sha }}"
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
-          git push --force origin HEAD:refs/heads/badges
+          tmp_index=$(mktemp)
+          rm -f "$tmp_index"
+          trap 'rm -f "$tmp_index"' EXIT
+          for f in /tmp/basalt-badges/*.json; do
+            blob=$(git hash-object -w "$f")
+            GIT_INDEX_FILE="$tmp_index" git update-index --add --cacheinfo 100644 "$blob" "$(basename "$f")"
+          done
+          tree=$(GIT_INDEX_FILE="$tmp_index" git write-tree)
+          commit=$(GIT_AUTHOR_NAME="github-actions[bot]" \
+            GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com" \
+            GIT_COMMITTER_NAME="github-actions[bot]" \
+            GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com" \
+            git commit-tree "$tree" -m "chore(badges): update quality metrics for ${{ github.sha }}")
+          git push --force origin "$commit:refs/heads/badges"

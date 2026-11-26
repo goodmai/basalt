@@ -219,8 +219,9 @@ func scanSources(root: URL, maxFileLines: Int) -> SourceStats {
     for url in urls {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
         let lines = text.components(separatedBy: .newlines)
+        let lineCount = text.filter { $0 == "\n" }.count
         let rel = url.path.replacingOccurrences(of: root.path + "/", with: "")
-        if lines.count > maxFileLines { overLimit.append("\(rel) (\(lines.count))") }
+        if lineCount > maxFileLines { overLimit.append("\(rel) (\(lineCount))") }
         loc += lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
         let code = stripSwiftCommentsAndStrings(text)
         fatalCount += regexCount(#"\bfatalError\s*\("#, in: code)
@@ -423,7 +424,7 @@ func validate(_ m: QualityMetrics, _ opts: Options) -> [String] {
     if !m.source.overLimit.isEmpty { failures.append("Sources files > \(opts.maxFileLines) lines: \(m.source.overLimit.joined(separator: ", "))") }
     if !m.test.xctestSites.isEmpty { failures.append("Legacy XCTestCase found: \(m.test.xctestSites.joined(separator: ", "))") }
     if !m.test.globalSeedSites.isEmpty { failures.append("Global MLXRandom.seed found in Tests: \(m.test.globalSeedSites.joined(separator: ", "))") }
-    if m.crashTraps > opts.maxCrashTraps { failures.append("Crash traps in Sources grew to \(m.crashTraps) (ceiling \(opts.maxCrashTraps): fatalError=\(m.source.fatalErrorCount), try!=\(m.source.tryBangCount), as!=\(m.source.asBangCount))") }
+    if m.crashTraps > opts.maxCrashTraps { failures.append("Crash traps in Sources grew to \(m.crashTraps) (ceiling \(opts.maxCrashTraps): fatalError=\(m.source.fatalErrorCount), try!=\(m.source.tryBangCount), as!=\(m.source.asBangCount); see CONTRIBUTING.md for --max-crash-traps)") }
     for issue in m.l10nIssues { failures.append("L10n parity: \(issue)") }
     if !m.unpinnedActions.isEmpty { failures.append("Unpinned external GitHub Actions: \(m.unpinnedActions.joined(separator: ", "))") }
     return failures
