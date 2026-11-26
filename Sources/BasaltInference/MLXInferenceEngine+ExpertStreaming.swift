@@ -20,6 +20,10 @@ extension MLXInferenceEngine {
     }
 
     func loadContainer(from directory: URL) async throws -> ModelContainer {
+        if let parakeet = try await ParakeetLoader.loadContainer(from: directory) {
+            logger.info("Parakeet TDT speech recognition: \(directory.lastPathComponent) (NeMo config without model_type) serves /v1/audio/transcriptions only")
+            return parakeet
+        }
         if let macaq = try await MACaQNativeLoader.loadContainer(from: directory, tokenizerLoader: DefaultTokenizerLoader()) {
             logger.info("Experimental MACaQ native weights: \(directory.lastPathComponent) runs fused Hadamard + channel-balanced low-bit decode on basalt's Metal kernels")
             return macaq

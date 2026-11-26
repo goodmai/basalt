@@ -6,7 +6,7 @@ enum WhisperAudio {
     static let fftSize = 400
     static let hopLength = 160
 
-    static func melFilters(count: Int) -> MLXArray {
+    static func melFilters(count: Int, fftSize: Int = WhisperAudio.fftSize) -> MLXArray {
         let bins = fftSize / 2 + 1
         let nyquist = Double(sampleRate) / 2
         let top = hertzToMel(nyquist)
