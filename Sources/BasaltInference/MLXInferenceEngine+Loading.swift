@@ -84,6 +84,7 @@ extension MLXInferenceEngine {
                 try NemotronLightningModel(configurationData: data)
             }
         }
+        await registry.registerModelType(OuroModel.modelType) { data in try OuroModel(configurationData: data) }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
