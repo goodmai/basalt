@@ -4,6 +4,7 @@ import MLXLLM
 import MLXLMCommon
 import Testing
 @testable import BasaltCLI
+@testable import BasaltCloud
 @testable import BasaltCore
 @testable import BasaltInference
 
@@ -456,5 +457,86 @@ extension SelfRewritingP3RunnerTests {
         #expect(toolErrors.count == 1)
         let parsed = try JSONSerialization.jsonObject(with: Data(toolErrors[0].content.utf8)) as? [String: String]
         #expect(parsed?["error"] != nil)
+    }
+}
+
+extension SelfRewritingP3RunnerTests {
+    @Test("EditEditorTurn.parseJSON normalizes multi-key actions, plain-string zero-arg actions, and Gemma 4 channel thought blocks (#770)")
+    func parseJSONNormalizesLiveModelActionShapes() throws {
+        let multiKey = """
+            {"rationale":"extra keys","action":{"inspectTensor":{"name":"w.weight"},"describeModel":{}}}
+            """
+        #expect(try EditEditorTurn.parseJSON(from: multiKey).action == .inspectTensor(name: "w.weight"))
+
+        let plainString = "{\"rationale\":\"revert\",\"action\":\"undoLastEdit\"}"
+        #expect(try EditEditorTurn.parseJSON(from: plainString).action == .undoLastEdit)
+
+        let gemmaChannel = "<|channel>thought\nchecking {\"bad\":1}<channel|>{\"rationale\":\"ok\",\"action\":{\"describeModel\":{}}}"
+        #expect(try EditEditorTurn.parseJSON(from: gemmaChannel).action == .describeModel)
+    }
+
+    @Test("SelfRewritePromptFormatter windows long transcripts and GeminiCloudEditor includes practice problemIds (#770)")
+    func promptWindowingAndCloudPracticeIds() throws {
+        let entries = (0 ..< 24).map { idx in
+            EditSessionTranscriptEntry(turnIndex: idx, role: idx.isMultiple(of: 2) ? "editor" : "tool", content: "entry-\(idx)")
+        }
+        let prompt = SelfRewritePromptFormatter.formatSinglePrompt(
+            entries: entries,
+            budget: try SelfRewriteBudget(),
+            practiceIds: ["m01", "m02"]
+        )
+        #expect(prompt.contains("entry-0") && prompt.contains("entry-1"))
+        #expect(prompt.contains("8 earlier transcript entries omitted"))
+        #expect(!prompt.contains("entry-5"))
+        #expect(prompt.contains("entry-10") && prompt.contains("entry-23"))
+
+        let messages = GeminiCloudEditor.buildMessages(
+            entries: [EditSessionTranscriptEntry(turnIndex: 0, role: "tool", content: String(repeating: "a", count: 9000))],
+            budget: try SelfRewriteBudget(),
+            practiceIds: ["m01", "m02"]
+        )
+        #expect(messages.first?.role == "system")
+        #expect(messages.first?.content.contains("Available practice problemIds: m01, m02") == true)
+        #expect(messages.last?.content.contains("truncated 9000 chars") == true)
+    }
+
+    @Test("SelfRewriteSessionDriver deduplicates repeated read actions (including non-consecutive A-B-A cycles) until a weight mutation, and exposes samples on practice only (#770, #676)")
+    func repeatDedupAndPracticeSampleDiagnostics() async throws {
+        actor RecordingEditor: EditSessionEditor {
+            let editorLabel = "recording"
+            let turns: [EditEditorTurn]
+            var step = 0
+            var seenTranscript: [EditSessionTranscriptEntry] = []
+            init(_ turns: [EditEditorTurn]) { self.turns = turns }
+            func nextTurn(transcript: [EditSessionTranscriptEntry], remainingBudget: SelfRewriteBudget) async throws -> EditEditorTurn {
+                seenTranscript = transcript
+                defer { step += 1 }
+                return turns[min(step, turns.count - 1)]
+            }
+        }
+        let tensor = Self.textOProj + ".weight"
+        let editor = RecordingEditor([
+            EditEditorTurn(rationale: "inspect 1", action: .inspectTensor(name: tensor)),
+            EditEditorTurn(rationale: "describe", action: .describeModel),
+            EditEditorTurn(rationale: "inspect A-B-A repeat", action: .inspectTensor(name: tensor)),
+            EditEditorTurn(rationale: "clip", action: .applyEdit(EditProgram(ops: [.clip(tensor: tensor, factor: 1.5)]))),
+            EditEditorTurn(rationale: "inspect post-edit", action: .inspectTensor(name: tensor)),
+            EditEditorTurn(rationale: "practice", action: .pairedPractice(problemIds: ["pr-1"], seeds: [7])),
+            EditEditorTurn(rationale: "reserved", action: .pairedReserved(seeds: [7])),
+            EditEditorTurn(rationale: "done", action: .withdraw(rationale: "verified")),
+        ])
+        let model = try TinyModel.make(.gemma4)
+        let config = SelfRewriteSessionConfig(sessionId: "sess-dedup", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 16))
+        let result = try await SelfRewriteSessionDriver.run(
+            config: config, split: Self.makeSplit(), evalSpec: Self.makeSpec(), editor: editor, original: model
+        )
+        #expect(result.phase == .withdrawn(rationale: "verified") && result.turnCount == 8)
+
+        let toolObs = await editor.seenTranscript.filter { $0.role == "tool" }.map(\.content)
+        #expect(toolObs.count == 7)
+        #expect(toolObs[2].contains("repeated identical action"))
+        #expect(toolObs[4].contains("\"name\":\"\(tensor)\""))
+        #expect(toolObs[5].contains("\"samples\"") && toolObs[5].contains("\"problemId\":\"pr-1\""))
+        #expect(toolObs[6].contains("\"base_accuracy\"") && !toolObs[6].contains("\"samples\""))
     }
 }

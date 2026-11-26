@@ -35,12 +35,14 @@ public actor GeminiCloudEditor: EditSessionEditor {
     private let apiClient: CloudAPIClient
     private let cloudGate: CloudGate?
     private let privateStrings: Set<String>
+    private let practiceIds: [String]
     private var sessionSpentUSD: Double = 0
 
     public init(
         config: GeminiCloudEditorConfig,
         cloudGate: CloudGate? = nil,
         privateStrings: Set<String> = [],
+        practiceIds: [String] = [],
         configuration: URLSessionConfiguration = .default
     ) throws {
         guard config.allowCloudEditor else {
@@ -53,6 +55,7 @@ public actor GeminiCloudEditor: EditSessionEditor {
         self.config = config
         self.cloudGate = cloudGate
         self.privateStrings = privateStrings
+        self.practiceIds = practiceIds
         let apiConfig = CloudAPIConfig(
             apiKey: config.apiKey,
             baseURL: config.baseURL,
@@ -73,7 +76,7 @@ public actor GeminiCloudEditor: EditSessionEditor {
             throw SelfRewriteBudgetError.cloudCostBudgetExceeded(requested: 0.01, remaining: 0)
         }
         let cleanEntries = try CloudPrivacyFence.sanitizeAndValidate(transcript, privateStrings: privateStrings)
-        let messages = Self.buildMessages(entries: cleanEntries, budget: remainingBudget)
+        let messages = Self.buildMessages(entries: cleanEntries, budget: remainingBudget, practiceIds: practiceIds)
         var chatRequest = OpenRouterClient.ChatRequest(
             model: config.model,
             messages: messages,
@@ -130,15 +133,31 @@ public actor GeminiCloudEditor: EditSessionEditor {
         return inputUSD + outputUSD
     }
 
-    private static func buildMessages(
+    static func buildMessages(
         entries: [EditSessionTranscriptEntry],
-        budget: SelfRewriteBudget
+        budget: SelfRewriteBudget,
+        practiceIds: [String] = []
     ) -> [OpenRouterClient.ChatRequest.Message] {
-        let system = SelfRewritePromptFormatter.systemPrompt(budget: budget)
+        var system = SelfRewritePromptFormatter.systemPrompt(budget: budget)
+        if !practiceIds.isEmpty {
+            system += "\nAvailable practice problemIds: \(practiceIds.joined(separator: ", "))"
+        }
         var messages = [OpenRouterClient.ChatRequest.Message(role: "system", content: system)]
-        for entry in entries {
+        let windowed: [EditSessionTranscriptEntry]
+        if entries.count <= SelfRewritePromptFormatter.maxPromptEntries {
+            windowed = entries
+        } else {
+            let head = Array(entries.prefix(2))
+            let tail = Array(entries.suffix(SelfRewritePromptFormatter.maxPromptEntries - 2))
+            let dropped = entries.count - SelfRewritePromptFormatter.maxPromptEntries
+            windowed = head + [EditSessionTranscriptEntry(turnIndex: -1, role: "tool", content: "[... \(dropped) earlier transcript entries omitted ...]")] + tail
+        }
+        for entry in windowed {
             let role = entry.role == "editor" ? "assistant" : "user"
-            messages.append(OpenRouterClient.ChatRequest.Message(role: role, content: entry.content))
+            let content = entry.role == "tool"
+                ? SelfRewritePromptFormatter.compactObservation(entry.content, limit: 6000)
+                : entry.content
+            messages.append(OpenRouterClient.ChatRequest.Message(role: role, content: content))
         }
         if entries.isEmpty {
             messages.append(OpenRouterClient.ChatRequest.Message(role: "user", content: "Begin session. Inspect model topology or tensor stats first."))

@@ -168,6 +168,35 @@ public enum SelfRewriteSessionDriver {
         (try? encodeJSON(["error": message])) ?? "{\"error\":\"action rejected\"}"
     }
 
+    private static func isIdempotentAction(_ action: EditSessionAction) -> Bool {
+        switch action {
+        case .describeModel, .inspectTensor, .measureRoundTrip, .summarizeMoERouter, .pairedPractice:
+            return true
+        case .registerSVD, .applyEdit, .undoLastEdit, .pairedReserved, .submit, .withdraw:
+            return false
+        }
+    }
+
+    private static func isWeightMutation(_ action: EditSessionAction) -> Bool {
+        switch action {
+        case .applyEdit, .undoLastEdit: true
+        default: false
+        }
+    }
+
+    private static func recordActionFailure(
+        _ error: any Error,
+        consecutiveErrors: inout Int,
+        state: inout SessionRunState
+    ) throws {
+        consecutiveErrors += 1
+        guard !state.core.phase.isTerminal, isRecoverableActionError(error), consecutiveErrors < maxConsecutiveErrors else {
+            throw error
+        }
+        let extra = error is TensorRegistryError ? " (registered keys: \(state.registry.keys))" : ""
+        state.core.appendObservation(errorObservation("action rejected: \(error)\(extra)"))
+    }
+
     private static func runLoop(
         state: inout SessionRunState,
         copy: inout WeightCopy,
@@ -175,6 +204,7 @@ public enum SelfRewriteSessionDriver {
     ) async throws -> LoopSummary {
         var summary = LoopSummary()
         var consecutiveErrors = 0
+        var completedIdempotentActions: [EditSessionAction] = []
         while !state.core.phase.isTerminal {
             try Task.checkCancellation()
             if state.core.budget.isExhausted {
@@ -197,9 +227,18 @@ public enum SelfRewriteSessionDriver {
             } catch is SelfRewriteBudgetError {
                 break
             }
+            if isIdempotentAction(turn.action), completedIdempotentActions.contains(turn.action) {
+                state.core.appendObservation(errorObservation("repeated identical action with unchanged weights; inspect a different tensor, apply or undo an edit, or submit/withdraw"))
+                continue
+            }
             do {
                 let outcome = try executeAction(turn.action, epoch: epoch, state: &state, copy: &copy)
                 consecutiveErrors = 0
+                if isIdempotentAction(turn.action) {
+                    completedIdempotentActions.append(turn.action)
+                } else if isWeightMutation(turn.action) {
+                    completedIdempotentActions.removeAll(keepingCapacity: true)
+                }
                 if let program = outcome.submitted {
                     summary.submittedProgram = program
                     summary.savedURL = outcome.savedURL
@@ -208,12 +247,7 @@ public enum SelfRewriteSessionDriver {
                 state.core.markExhausted(reason: budgetError.description)
                 break
             } catch {
-                consecutiveErrors += 1
-                guard !state.core.phase.isTerminal, isRecoverableActionError(error), consecutiveErrors < maxConsecutiveErrors else {
-                    throw error
-                }
-                let extra = error is TensorRegistryError ? " (registered keys: \(state.registry.keys))" : ""
-                state.core.appendObservation(errorObservation("action rejected: \(error)\(extra)"))
+                try recordActionFailure(error, consecutiveErrors: &consecutiveErrors, state: &state)
             }
         }
         return summary
@@ -310,7 +344,7 @@ extension SelfRewriteSessionDriver {
                 problems: batch, original: state.original, copy: copy, spec: spec, budget: &state.core.budget
             )
             _ = state.core.completePractice(summary: outcome.summary, expectedEpoch: epoch)
-            state.core.appendObservation(try encodeJSON(outcome.summary))
+            state.core.appendObservation(try encodePracticeObservation(outcome))
             return ActionOutcome()
         case .pairedReserved(let seeds):
             let spec = overriddenSpec(state.evalSpec, seeds: seeds)
@@ -373,6 +407,68 @@ extension SelfRewriteSessionDriver {
             budgetCost: spec.config.budgetCost
         )
         return PairedEvaluationSpec(encode: spec.encode, decode: spec.decode, grader: spec.grader, config: updated)
+    }
+
+    struct PracticeSampleObservation: Encodable {
+        let problemId: String
+        let basePassed: Bool
+        let baseExtracted: String?
+        let baseDetail: String?
+        let editedPassed: Bool
+        let editedExtracted: String?
+        let editedDetail: String?
+    }
+
+    struct PracticeObservationPayload: Encodable {
+        let problemCount: Int
+        let baseAccuracy: Double
+        let editedAccuracy: Double
+        let delta: Double
+        let standardError: Double
+        let wrongToRight: Int
+        let rightToWrong: Int
+        let samples: [PracticeSampleObservation]
+
+        enum CodingKeys: String, CodingKey {
+            case problemCount = "problem_count"
+            case baseAccuracy = "base_accuracy"
+            case editedAccuracy = "edited_accuracy"
+            case delta
+            case standardError = "standard_error"
+            case wrongToRight = "wrong_to_right"
+            case rightToWrong = "right_to_wrong"
+            case samples
+        }
+    }
+
+    private static func truncatedField(_ value: String?, limit: Int = 160) -> String? {
+        guard let value else { return nil }
+        return value.count > limit ? String(value.prefix(limit)) + "..." : value
+    }
+
+    static func encodePracticeObservation(_ outcome: PairedPracticeOutcome) throws -> String {
+        let s = outcome.summary
+        let details = outcome.samples.map {
+            PracticeSampleObservation(
+                problemId: $0.problemId,
+                basePassed: $0.baseGrade.passed,
+                baseExtracted: truncatedField($0.baseGrade.extractedAnswer),
+                baseDetail: truncatedField($0.baseGrade.detail),
+                editedPassed: $0.editedGrade.passed,
+                editedExtracted: truncatedField($0.editedGrade.extractedAnswer),
+                editedDetail: truncatedField($0.editedGrade.detail)
+            )
+        }
+        return try encodeJSON(PracticeObservationPayload(
+            problemCount: s.problemCount,
+            baseAccuracy: s.baseAccuracy,
+            editedAccuracy: s.editedAccuracy,
+            delta: s.delta,
+            standardError: s.standardError,
+            wrongToRight: s.wrongToRight,
+            rightToWrong: s.rightToWrong,
+            samples: details
+        ))
     }
 
     static func encodeJSON<T: Encodable>(_ value: T) throws -> String {

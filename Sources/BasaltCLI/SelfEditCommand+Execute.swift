@@ -30,6 +30,7 @@ extension SelfEditCommand {
     func buildEditor(
         spec: SelfEditEditorSpec,
         privateStrings: Set<String>,
+        practiceIds: [String] = [],
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> (any EditSessionEditor)? {
         switch spec {
@@ -49,10 +50,15 @@ extension SelfEditCommand {
                 baseURL: baseURL,
                 allowCloudEditor: allowCloudEditor,
                 maxSessionUSD: maxCloudUsd,
-                maxTokensPerTurn: max(256, maxEditorTokens)
+                maxTokensPerTurn: max(4096, maxEditorTokens)
             )
             let gate = CloudGate(limits: [modelName: maxCloudUsd], storage: nil)
-            return try GeminiCloudEditor(config: cloudConfig, cloudGate: gate, privateStrings: privateStrings)
+            return try GeminiCloudEditor(
+                config: cloudConfig,
+                cloudGate: gate,
+                privateStrings: privateStrings,
+                practiceIds: practiceIds
+            )
         }
     }
 
@@ -95,6 +101,7 @@ extension SelfEditCommand {
         let externalEditor = try buildEditor(
             spec: prepared.editorSpec,
             privateStrings: prepared.split.reservedFenceStrings(),
+            practiceIds: prepared.split.practice.map(\.id),
             environment: environment
         )
         return (liveConfig, selectedGrader, externalEditor)

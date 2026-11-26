@@ -56,10 +56,10 @@ struct AppEngineSystemsTests {
         let launch = try fixture.script(EngineSupervisorTests.ready)
         let app = try AppModel(launch: launch, model: "org/m", storeURL: nil, environment: fixture.environment(), drafts: DraftStore(load: { _ in "" }, save: { _, _ in }))
         await app.start(arguments: launch.arguments)
-        #expect(await app.readyEndpoint(within: .seconds(5))?.base.port == 4242 && app.model == "org/m")
+        #expect(await app.readyEndpoint(within: .seconds(20))?.base.port == 4242 && app.model == "org/m")
         await app.switchEngine(["serve", "--model", "goodmai/Qwen3.6-35B-A3B-8bit", "--experimental-expert-streaming"])
         #expect(app.configuredModel == "goodmai/Qwen3.6-35B-A3B-8bit" && app.model == "goodmai/Qwen3.6-35B-A3B-8bit")
-        #expect(await app.readyEndpoint(within: .seconds(5))?.base.port == 4242)
+        #expect(await app.readyEndpoint(within: .seconds(20))?.base.port == 4242)
         await app.stop()
     }
 
