@@ -165,7 +165,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([HuginnModel.modelType], flint),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),
-            ([RWKV7Model.modelType], rwkv7),
+            ([RWKV7Model.modelType, XLSTMModel.modelType], rwkv7),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
             ([DeepSeekOCR.modelType, DeepSeekOCR2.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),

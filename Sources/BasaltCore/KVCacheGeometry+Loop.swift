@@ -34,4 +34,49 @@ extension KVCacheGeometry {
         let channels = 2 * kvHeads * headDim + 2 * hidden
         return Int64(visits * (kernel - 1) * channels) * Int64(activationBytes)
     }
+
+    init(recurrentFixedStateBytes bytes: Int64) {
+        elementsPerToken = 0
+        keyElementsPerToken = 0
+        windowedElementsPerToken = 0
+        window = 0
+        fixedStateBytes = bytes
+        quantizedGroupSize = Self.defaultQuantizedGroupSize
+        isFromConfig = true
+    }
+
+    static func xlstmGeometry(_ c: [String: Any]) -> KVCacheGeometry? {
+        guard (c["model_type"] as? String)?.lowercased() == "xlstm",
+              let dims = xlstmDimensions(c) else { return nil }
+        let slstmCount = Set((c["slstm_at"] as? [Int] ?? []).filter { (0 ..< dims.layers).contains($0) }).count
+        let mlstmCount = dims.layers - slstmCount
+        let qkHead = Int64(dims.qkDim / dims.heads)
+        let vHead = Int64(dims.vDim / dims.heads)
+        let mlstmLayer = Int64(dims.heads) * (qkHead * vHead + qkHead + 1) * Int64(recurrentStateBytes)
+        let slstmLayer = Int64(4 * dims.hidden) * Int64(recurrentStateBytes)
+        return KVCacheGeometry(recurrentFixedStateBytes: Int64(mlstmCount) * mlstmLayer + Int64(slstmCount) * slstmLayer)
+    }
+
+    private static func xlstmDimensions(_ c: [String: Any]) -> (layers: Int, hidden: Int, heads: Int, qkDim: Int, vDim: Int)? {
+        guard let layers = intField(c, "num_blocks", "num_hidden_layers"),
+              let hidden = intField(c, "embedding_dim", "hidden_size"),
+              let heads = intField(c, "num_heads", "num_attention_heads") else { return nil }
+        let qkFactor = doubleField(c["qk_dim_factor"]) ?? 0.5
+        let vFactor = doubleField(c["v_dim_factor"]) ?? 1.0
+        guard qkFactor.isFinite && qkFactor > 0 && vFactor.isFinite && vFactor > 0 else { return nil }
+        let (qkDim, vDim) = (Int(Double(hidden) * qkFactor), Int(Double(hidden) * vFactor))
+        guard qkDim >= heads && vDim >= heads && qkDim.isMultiple(of: heads) && vDim.isMultiple(of: heads) else { return nil }
+        return (layers, hidden, heads, qkDim, vDim)
+    }
+
+    private static func intField(_ c: [String: Any], _ first: String, _ second: String) -> Int? {
+        guard let value = (c[first] as? Int) ?? (c[second] as? Int), (1 ... Self.maxDimension).contains(value) else { return nil }
+        return value
+    }
+
+    private static func doubleField(_ raw: Any?) -> Double? {
+        if let value = raw as? Double { return value }
+        if let value = raw as? Int { return Double(value) }
+        return (raw as? NSNumber)?.doubleValue
+    }
 }
