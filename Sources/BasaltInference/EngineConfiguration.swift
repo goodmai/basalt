@@ -34,6 +34,7 @@ public struct EngineConfiguration: Sendable {
     public var smallMKernel = false
     public var q3Kernel = false
     public var kvSharedRow = false
+    public var dllm = false
     public var ropeYarn: Double?
 }
 

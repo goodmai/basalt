@@ -7,7 +7,7 @@ import MLX
 struct TinyModelFixtureTests {
 
     @Test("Greedy decoding through the cache picks the argmax of one uncached forward pass, and a fixture rebuilt from its seed decodes the same tokens",
-          arguments: TinyModel.Family.allCases)
+          arguments: TinyModel.Family.allCases.filter(\.decodesTokenByToken))
     func greedySmoke(family: TinyModel.Family) throws {
         let model = try TinyModel.make(family)
         let prompt = TinyModel.tokens(Conversation.firstTurn)
@@ -29,7 +29,7 @@ struct TinyModelFixtureTests {
     }
 
     @Test("The next turn reuses the cached first turn through the engine and answers like a full prefill",
-          arguments: TinyModel.Family.allCases)
+          arguments: TinyModel.Family.allCases.filter(\.decodesTokenByToken))
     func promptCacheReuse(family: TinyModel.Family) async throws {
         let engine = try await TinyModel.engine(family, promptCacheBytes: 1 << 30)
         let first = try await engine.generate(request: greedy(Conversation.firstTurn, key: "ns"))

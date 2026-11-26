@@ -20,6 +20,7 @@ struct ModelsCommand: AsyncParsableCommand {
             TrainJepaSubcommand.self,
             DistillSubcommand.self,
             CalibrateDecideSubcommand.self,
+            TypesSubcommand.self,
         ],
         defaultSubcommand: ListSubcommand.self
     )

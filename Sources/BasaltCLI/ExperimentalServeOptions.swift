@@ -61,9 +61,15 @@ struct ExperimentalServeOptions: ParsableArguments {
     )
     var macaqActivations: MACaQActivationMode = .fp16
 
+    @Option(
+        name: .customLong("experimental-loop-exit"),
+        help: "Experimental (#820): end a one-token decode step of a looped model early and fill the skipped passes' caches from the last pass. Ouro exits once its trained exit gate's cumulative probability reaches this fraction (0-1). Inkling 2 exits after a core pass whose residual changed by less than this fraction from the previous pass; its released checkpoints were not trained to exit, so there it trades quality for speed"
+    )
+    var loopExit: Float?
+
     @Flag(
         name: .customLong("experimental-dllm"),
-        help: "Decode discrete diffusion language models (Dream, DiffuCoder, LLaDA) with Fast-dLLM DualBlockKVCache and confidence-threshold parallel unmasking (#574). Off by default until real-model throughput and quality are measured"
+        help: "Experimental (#819): decode masked-diffusion language models (model_type llada) with Fast-dLLM: blocks of 32 tokens unmasked in parallel above 0.9 confidence over a dual prompt/suffix KV cache. Such models are refused without this flag; other models decode as usual"
     )
     var dllm = false
 
@@ -75,15 +81,17 @@ struct ExperimentalServeOptions: ParsableArguments {
 
     func applyKernelEnvironment(_ set: (String, String) -> Void = { setenv($0, $1, 1) }) {
         if macaqActivations != .fp16 { set("BASALT_MACAQ_ACTIVATIONS", macaqActivations.rawValue) }
+        if let loopExit { set("BASALT_LOOP_EXIT", String(loopExit)) }
     }
 
     func validate() throws {
+        if let loopExit, !(loopExit > 0 && loopExit < 1) { throw ValidationError("--experimental-loop-exit takes a fraction between 0 and 1, got \(loopExit)") }
         if telemetryConfidenceEvery < 0 { throw ValidationError("--telemetry-confidence-every takes 0 or a positive count, got \(telemetryConfidenceEvery)") }
         if dllm, dflash {
             throw ValidationError("--experimental-dllm and --experimental-dflash cannot be combined: Fast-dLLM decodes a diffusion language model directly while DFlash drafts for an autoregressive target")
         }
-        if dllm || dflash {
-            throw ValidationError("\(dllm ? "--experimental-dllm" : "--experimental-dflash") is not wired to the engine yet (#574): generation would run on the standard decode path")
+        if dflash {
+            throw ValidationError("--experimental-dflash is not wired to the engine yet (#574): generation would run on the standard decode path")
         }
         if let aneVisionTower, !CoreAIVisionTower.isBundle(URL(fileURLWithPath: aneVisionTower)) {
             throw ValidationError("--ane-vision-tower \(aneVisionTower) is not a Core AI vision tower bundle (metadata.json and tower.aimodel)")

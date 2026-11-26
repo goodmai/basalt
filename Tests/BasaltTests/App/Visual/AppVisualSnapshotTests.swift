@@ -53,7 +53,7 @@ struct AppVisualSnapshotTests {
 
         #expect(
             diff.verdict == .identical || diff.verdict == .withinTolerance,
-            "\(entry): changedRatio=\(diff.changedRatio) maxDelta=\(diff.maxPixelDelta) verdict=\(diff.verdict)"
+            "\(entry): changedRatio=\(diff.changedRatio) maxDelta=\(diff.maxPixelDelta) bounds=\(diff.bounds.map { "\($0)" } ?? "none") verdict=\(diff.verdict)"
         )
     }
 }
