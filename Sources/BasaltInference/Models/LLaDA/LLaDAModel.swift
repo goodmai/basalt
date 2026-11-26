@@ -7,6 +7,8 @@ import MLXNN
 public protocol DiffusionLanguageModel: LanguageModel {
     var maskTokenId: Int { get }
     var bidirectionalPrompt: Bool { get }
+    func hiddenStates(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray
+    func projectLogits(_ hidden: MLXArray) -> MLXArray
 }
 
 struct LLaDAConfiguration: Decodable, Sendable {
@@ -119,12 +121,20 @@ public final class LLaDAModel: Module, LLMModel, DiffusionLanguageModel {
     }
 
     public func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        projectLogits(hiddenStates(inputs, cache: cache))
+    }
+
+    public func hiddenStates(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
         var h = model.embedTokens(inputs)
         let mask: MLXFast.ScaledDotProductAttentionMaskMode = cache?.first.map { createAttentionMask(h: h, cache: $0) } ?? .none
         for (index, layer) in model.layers.enumerated() {
             h = layer(h, mask: mask, cache: cache?[index])
         }
-        return model.lmHead(model.norm(h))
+        return model.norm(h)
+    }
+
+    public func projectLogits(_ hidden: MLXArray) -> MLXArray {
+        model.lmHead(hidden)
     }
 
     public var loraLayers: [Module] { model.layers }

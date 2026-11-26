@@ -3,80 +3,12 @@ import MLX
 import MLXLMCommon
 @testable import BasaltInference
 
-struct GaugeRoPECarrier {
-    let basisPerFrequency: [MLXArray]
-    let rotaryDims: Int
-    let numKVHeads: Int
-    let carrierHeads: Int
-
-    static func calibrate(preRopeKeys: MLXArray, rotaryDims: Int, carrierHeads: Int) -> GaugeRoPECarrier {
-        let numHeads = preRopeKeys.dim(1)
-        let half = rotaryDims / 2
-        let kRot = preRopeKeys[0..., 0..., 0 ..< rotaryDims].asType(.float32)
-        let k0 = kRot[0..., 0..., 0 ..< half]
-        let k1 = kRot[0..., 0..., half ..< rotaryDims]
-        var bases: [MLXArray] = []
-        bases.reserveCapacity(half)
-        let rank = min(max(1, carrierHeads), numHeads)
-        for freq in 0 ..< half {
-            let x = k0[0..., 0..., freq]
-            let y = k1[0..., 0..., freq]
-            let gram = matmul(x.T, x) + matmul(y.T, y)
-            let sym = 0.5 * (gram + gram.T)
-            let (_, eigVecs) = MLXLinalg.eigh(sym, stream: .cpu)
-            eval(eigVecs)
-            bases.append(eigVecs[0..., (numHeads - rank) ..< numHeads])
-        }
-        return GaugeRoPECarrier(basisPerFrequency: bases, rotaryDims: rotaryDims, numKVHeads: numHeads, carrierHeads: rank)
-    }
-
-    func encode(_ keys: MLXArray) -> MLXArray {
-        let half = rotaryDims / 2
-        let kRot = keys[0..., 0..., 0 ..< rotaryDims].asType(.float32)
-        let k0 = kRot[0..., 0..., 0 ..< half]
-        let k1 = kRot[0..., 0..., half ..< rotaryDims]
-        let c0 = (0 ..< half).map { matmul(k0[0..., 0..., $0], basisPerFrequency[$0]) }
-        let c1 = (0 ..< half).map { matmul(k1[0..., 0..., $0], basisPerFrequency[$0]) }
-        return concatenated([stacked(c0, axis: -1), stacked(c1, axis: -1)], axis: -1)
-    }
-
-    func decode(_ latent: MLXArray) -> MLXArray {
-        let half = rotaryDims / 2
-        let c0 = latent[0..., 0..., 0 ..< half]
-        let c1 = latent[0..., 0..., half ..< rotaryDims]
-        let out0 = (0 ..< half).map { matmul(c0[0..., 0..., $0], basisPerFrequency[$0].T) }
-        let out1 = (0 ..< half).map { matmul(c1[0..., 0..., $0], basisPerFrequency[$0].T) }
-        return concatenated([stacked(out0, axis: -1), stacked(out1, axis: -1)], axis: -1)
-    }
-}
-
-struct WhitenedPCACodec {
-    let encoder: MLXArray
-    let decoder: MLXArray
-
-    var maxRank: Int { encoder.dim(1) }
-
-    static func fit(_ matrix: MLXArray, metric: MLXArray? = nil) -> WhitenedPCACodec {
-        let x = matrix.asType(.float32)
-        let dim = x.dim(1)
-        let pair = metric.map { InputWhitenedSVD.computeWhiteningPair(hessian: $0) }
-        let s = pair?.s ?? MLXArray.eye(dim, dtype: .float32)
-        let sInv = pair?.sInv ?? MLXArray.eye(dim, dtype: .float32)
-        let (_, _, vt) = MLXLinalg.svd(matmul(x, s), stream: .cpu)
-        eval(vt)
-        return WhitenedPCACodec(encoder: matmul(s, vt.T), decoder: matmul(vt, sInv))
-    }
-
+extension WhitenedPCACodec {
     func roundTrip(_ matrix: MLXArray, rank: Int, codeBits: Int?) -> MLXArray {
         let r = min(max(1, rank), maxRank)
         let code = matmul(matrix.asType(.float32), encoder[0..., 0 ..< r])
         return matmul(GaugeRoPEArms.fakeQuantized(code, bits: codeBits), decoder[0 ..< r, 0...])
     }
-}
-
-struct GaugeRoPEKV {
-    let keys: MLXArray
-    let values: MLXArray
 }
 
 struct MLASplitArm {
@@ -126,7 +58,7 @@ struct GaugeRoPEArm {
     static func fit(
         keys: MLXArray, values: MLXArray, rotaryDims: Int, carrierRank: Int, metric: MLXArray? = nil, quantized: Bool = false
     ) -> GaugeRoPEArm {
-        let carrier = GaugeRoPECarrier.calibrate(preRopeKeys: keys, rotaryDims: rotaryDims, carrierHeads: carrierRank)
+        let carrier = GaugeRoPECarrier.calibrate(keys: keys, rotaryDims: rotaryDims, carrierHeads: carrierRank)
         let parts = Self.joint(keys: keys, values: values, carrier: carrier, quantized: quantized)
         return GaugeRoPEArm(carrier: carrier, codec: WhitenedPCACodec.fit(parts.matrix, metric: metric))
     }
@@ -169,21 +101,6 @@ enum GaugeRoPEArms {
         guard let bits else { return xf }
         let q = MLX.quantized(xf, groupSize: groupSize, bits: bits)
         return MLX.dequantized(q.wq, scales: q.scales, biases: q.biases, groupSize: groupSize, bits: bits).asType(.float32)
-    }
-
-    static func rope(_ x: MLXArray, rotaryDims: Int, base: Float, offset: Int = 0, inverse: Bool = false) -> MLXArray {
-        let seq = x.dim(0)
-        let half = rotaryDims / 2
-        let invFreq = MLX.exp(MLXArray(0 ..< half).asType(.float32) * (-2.0 * log(base) / Float(rotaryDims)))
-        let positions = MLXArray(offset ..< (offset + seq)).asType(.float32).reshaped([seq, 1])
-        let angles = matmul(positions, invFreq.reshaped([1, half])) * Float(inverse ? -1 : 1)
-        let cosA = MLX.cos(angles).reshaped([seq, 1, half])
-        let sinA = MLX.sin(angles).reshaped([seq, 1, half])
-        let x0 = x[0..., 0..., 0 ..< half]
-        let x1 = x[0..., 0..., half ..< rotaryDims]
-        let rot = concatenated([x0 * cosA - x1 * sinA, x0 * sinA + x1 * cosA], axis: -1)
-        if rotaryDims == x.dim(2) { return rot }
-        return concatenated([rot, x[0..., 0..., rotaryDims...]], axis: -1)
     }
 
     static func attend(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float) -> MLXArray {

@@ -9,7 +9,7 @@ extension MLXInferenceEngine {
         get async {
             guard let container else { return false }
             if modelFacts.transcribesAudio { return true }
-            return await container.perform { $0.model is NemotronTranscribeModel }
+            return await container.perform { $0.model is any SpeechRecognitionModel }
         }
     }
 
@@ -31,14 +31,10 @@ extension MLXInferenceEngine {
         let duration = request.audio.seconds
         do {
             let text = try await container.performEvaluating(nonSendable: ()) { context, _ in
-                guard let model = context.model as? NemotronTranscribeModel else {
+                guard let model = context.model as? any SpeechRecognitionModel else {
                     throw BasaltError.noAudioEncoder(name)
                 }
-                return try model.transcribe(
-                    audio: samples,
-                    tokenizer: context.tokenizer,
-                    temperature: temperature
-                )
+                return try model.transcribe(audio: samples, tokenizer: context.tokenizer, temperature: temperature, language: language)
             }
             let segments = text.isEmpty ? [] : [Transcription.Segment(start: 0, end: duration, text: text)]
             return Transcription(text: text, language: language, segments: segments)

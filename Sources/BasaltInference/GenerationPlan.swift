@@ -114,7 +114,7 @@ struct GenerationPlan: Equatable, Sendable {
         let zones = zones(settings)
         let mask = capabilities.allows(.kvHeadSplit) ? settings.kvHeadMask : nil
         guard zones == nil else { return GenerationPlan(kvZones: zones, kvHeadMask: mask, kvPrecision: precision) }
-        if let precision, precision.isKVarN { return GenerationPlan(kvPrecision: precision) }
+        if let precision, precision.isKVarN || precision.isGaugeRoPE { return GenerationPlan(kvPrecision: precision) }
         guard precision == nil else { return GenerationPlan() }
         if let mask { return GenerationPlan(kvHeadMask: mask) }
         if capabilities.allows(.quest), let topK = settings.questTopK { return GenerationPlan(questTopK: topK) }

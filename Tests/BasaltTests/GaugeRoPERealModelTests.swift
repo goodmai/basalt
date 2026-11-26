@@ -115,7 +115,7 @@ struct GaugeRoPEProbe {
     }
 
     func error(pre: GaugeRoPEKV) -> Double {
-        error(keysPost: GaugeRoPEArms.rope(pre.keys, rotaryDims: kv.rotaryDims, base: kv.ropeBase), values: pre.values)
+        error(keysPost: GaugeRoPERotary.apply(pre.keys, rotaryDims: kv.rotaryDims, base: kv.ropeBase), values: pre.values)
     }
 
     func row(_ arm: String, rank: Int, bytes: Double, error: Double) -> GaugeRoPERow {
@@ -224,7 +224,7 @@ struct GaugeRoPERealModelTests {
         let (rotary, base) = (rope.rotaryDims(headDim: headDim), rope.effectiveBase(headDim: headDim))
         return GaugeRoPELayerKV(
             layer: layer, queries: q, keysPost: k,
-            keysPre: GaugeRoPEArms.rope(k, rotaryDims: rotary, base: base, inverse: true),
+            keysPre: GaugeRoPERotary.apply(k, rotaryDims: rotary, base: base, inverse: true),
             values: values[0].transposed(1, 0, 2).asType(.float32), scale: cache.scale, rotaryDims: rotary, ropeBase: base)
     }
 
