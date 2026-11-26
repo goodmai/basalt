@@ -97,11 +97,14 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
         self.costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD) ?? 0
     }
 
-    public static let knownActionKeys: [String] = [
-        "submit", "withdraw", "applyEdit", "undoLastEdit", "pairedReserved",
+    public static let readOnlyActionKeys: [String] = [
         "pairedPractice", "registerSVD", "summarizeMoERouter", "measureRoundTrip",
         "inspectTensor", "describeModel",
     ]
+
+    public static let knownActionKeys: [String] = [
+        "submit", "withdraw", "applyEdit", "undoLastEdit", "pairedReserved",
+    ] + readOnlyActionKeys
 
     public static func stripThinkingBlocks(_ text: String) -> String {
         var result = text
@@ -129,11 +132,20 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
             obj["action"] = [name: [String: Any]()]
             return (try? JSONSerialization.data(withJSONObject: obj)) ?? data
         }
-        if let actionDict = obj["action"] as? [String: Any], actionDict.count > 1,
-           let key = knownActionKeys.first(where: { actionDict[$0] != nil }),
-           let value = actionDict[key] {
-            obj["action"] = [key: value]
-            return (try? JSONSerialization.data(withJSONObject: obj)) ?? data
+        if let actionDict = obj["action"] as? [String: Any], actionDict.count > 1 {
+            let matched = knownActionKeys.filter { actionDict[$0] != nil }
+            let chosen: String?
+            if matched.count == 1 {
+                chosen = matched[0]
+            } else if matched.count > 1, matched.allSatisfy(readOnlyActionKeys.contains) {
+                chosen = readOnlyActionKeys.first(where: { actionDict[$0] != nil })
+            } else {
+                chosen = nil
+            }
+            if let key = chosen, let value = actionDict[key] {
+                obj["action"] = [key: value]
+                return (try? JSONSerialization.data(withJSONObject: obj)) ?? data
+            }
         }
         return data
     }
@@ -228,6 +240,23 @@ public enum SelfRewritePromptFormatter {
         return "\(head) ... [truncated \(text.count) chars] ... \(tail)"
     }
 
+    public static func windowedEntries(
+        _ entries: [EditSessionTranscriptEntry],
+        limit: Int = maxPromptEntries
+    ) -> [EditSessionTranscriptEntry] {
+        let cap = max(3, limit)
+        guard entries.count > cap else { return entries }
+        let headCount = 2
+        let tailCount = cap - headCount
+        let dropped = entries.count - cap
+        let marker = EditSessionTranscriptEntry(
+            turnIndex: -1,
+            role: "tool",
+            content: "[... \(dropped) earlier transcript entries omitted ...]"
+        )
+        return Array(entries.prefix(headCount)) + [marker] + Array(entries.suffix(tailCount))
+    }
+
     private static func formatEntry(_ entry: EditSessionTranscriptEntry) -> String {
         let role = entry.role == "editor" ? "assistant" : "user"
         let body = entry.role == "tool" ? compactObservation(entry.content) : entry.content
@@ -245,15 +274,8 @@ public enum SelfRewritePromptFormatter {
         }
         if entries.isEmpty {
             parts.append("user: Begin session. Inspect model topology or tensor stats first, then test edits on practice problems before submitting or withdrawing.")
-        } else if entries.count <= maxPromptEntries {
-            parts.append(contentsOf: entries.map(formatEntry))
         } else {
-            let headCount = 2
-            let tailCount = maxPromptEntries - headCount
-            let dropped = entries.count - maxPromptEntries
-            parts.append(contentsOf: entries.prefix(headCount).map(formatEntry))
-            parts.append("user: [... \(dropped) earlier transcript entries omitted ...]")
-            parts.append(contentsOf: entries.suffix(tailCount).map(formatEntry))
+            parts.append(contentsOf: windowedEntries(entries).map(formatEntry))
         }
         parts.append("assistant:")
         return parts.joined(separator: "\n")

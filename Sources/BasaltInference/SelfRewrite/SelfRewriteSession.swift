@@ -197,6 +197,19 @@ public enum SelfRewriteSessionDriver {
         state.core.appendObservation(errorObservation("action rejected: \(error)\(extra)"))
     }
 
+    private static func recordRepeatedAction(
+        consecutiveErrors: inout Int,
+        state: inout SessionRunState
+    ) -> Bool {
+        consecutiveErrors += 1
+        if consecutiveErrors >= maxConsecutiveErrors {
+            state.core.markExhausted(reason: "repeated identical read action with unchanged weights \(maxConsecutiveErrors) times consecutively")
+            return true
+        }
+        state.core.appendObservation(errorObservation("repeated identical action with unchanged weights; inspect a different tensor, apply or undo an edit, or submit/withdraw"))
+        return false
+    }
+
     private static func runLoop(
         state: inout SessionRunState,
         copy: inout WeightCopy,
@@ -228,7 +241,7 @@ public enum SelfRewriteSessionDriver {
                 break
             }
             if isIdempotentAction(turn.action), completedIdempotentActions.contains(turn.action) {
-                state.core.appendObservation(errorObservation("repeated identical action with unchanged weights; inspect a different tensor, apply or undo an edit, or submit/withdraw"))
+                if recordRepeatedAction(consecutiveErrors: &consecutiveErrors, state: &state) { break }
                 continue
             }
             do {

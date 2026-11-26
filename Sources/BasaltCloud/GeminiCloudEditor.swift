@@ -143,16 +143,7 @@ public actor GeminiCloudEditor: EditSessionEditor {
             system += "\nAvailable practice problemIds: \(practiceIds.joined(separator: ", "))"
         }
         var messages = [OpenRouterClient.ChatRequest.Message(role: "system", content: system)]
-        let windowed: [EditSessionTranscriptEntry]
-        if entries.count <= SelfRewritePromptFormatter.maxPromptEntries {
-            windowed = entries
-        } else {
-            let head = Array(entries.prefix(2))
-            let tail = Array(entries.suffix(SelfRewritePromptFormatter.maxPromptEntries - 2))
-            let dropped = entries.count - SelfRewritePromptFormatter.maxPromptEntries
-            windowed = head + [EditSessionTranscriptEntry(turnIndex: -1, role: "tool", content: "[... \(dropped) earlier transcript entries omitted ...]")] + tail
-        }
-        for entry in windowed {
+        for entry in SelfRewritePromptFormatter.windowedEntries(entries) {
             let role = entry.role == "editor" ? "assistant" : "user"
             let content = entry.role == "tool"
                 ? SelfRewritePromptFormatter.compactObservation(entry.content, limit: 6000)

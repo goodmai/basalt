@@ -27,6 +27,10 @@ extension SelfEditCommand {
         throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")
     }
 
+    func resolvedCloudMaxTokens() -> Int {
+        max(128, maxEditorTokens ?? 4096)
+    }
+
     func buildEditor(
         spec: SelfEditEditorSpec,
         privateStrings: Set<String>,
@@ -50,7 +54,7 @@ extension SelfEditCommand {
                 baseURL: baseURL,
                 allowCloudEditor: allowCloudEditor,
                 maxSessionUSD: maxCloudUsd,
-                maxTokensPerTurn: max(4096, maxEditorTokens)
+                maxTokensPerTurn: resolvedCloudMaxTokens()
             )
             let gate = CloudGate(limits: [modelName: maxCloudUsd], storage: nil)
             return try GeminiCloudEditor(
@@ -79,7 +83,7 @@ extension SelfEditCommand {
             topology: topology
         )
         .withTranscriptURL(prepared.transcriptURL)
-        .withMaxEditorTokens(maxEditorTokens)
+        .withMaxEditorTokens(maxEditorTokens ?? 1024)
 
         let evalConfig = PairedTestRunConfig(
             seeds: seedList,

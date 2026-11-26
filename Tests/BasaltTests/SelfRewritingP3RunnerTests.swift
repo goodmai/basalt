@@ -461,12 +461,27 @@ extension SelfRewritingP3RunnerTests {
 }
 
 extension SelfRewritingP3RunnerTests {
-    @Test("EditEditorTurn.parseJSON normalizes multi-key actions, plain-string zero-arg actions, and Gemma 4 channel thought blocks (#770)")
+    @Test("EditEditorTurn.parseJSON normalizes read-only multi-key and plain-string actions, rejects ambiguous terminal/mutating payloads, and strips Gemma 4 channel thought blocks (#770)")
     func parseJSONNormalizesLiveModelActionShapes() throws {
-        let multiKey = """
+        let readOnlyMultiKey = """
             {"rationale":"extra keys","action":{"inspectTensor":{"name":"w.weight"},"describeModel":{}}}
             """
-        #expect(try EditEditorTurn.parseJSON(from: multiKey).action == .inspectTensor(name: "w.weight"))
+        #expect(try EditEditorTurn.parseJSON(from: readOnlyMultiKey).action == .inspectTensor(name: "w.weight"))
+
+        let singleKnownWithMetadata = """
+            {"rationale":"ok","action":{"submit":{"rationale":"done"},"note":"ignored"}}
+            """
+        #expect(try EditEditorTurn.parseJSON(from: singleKnownWithMetadata).action == .submit(rationale: "done"))
+
+        let ambiguousSubmit = """
+            {"rationale":"ambiguous","action":{"inspectTensor":{"name":"w.weight"},"submit":{"rationale":"unintended"}}}
+            """
+        #expect(throws: SelfRewriteSessionError.self) { _ = try EditEditorTurn.parseJSON(from: ambiguousSubmit) }
+
+        let ambiguousEdit = """
+            {"rationale":"ambiguous","action":{"inspectTensor":{"name":"w.weight"},"undoLastEdit":{}}}
+            """
+        #expect(throws: SelfRewriteSessionError.self) { _ = try EditEditorTurn.parseJSON(from: ambiguousEdit) }
 
         let plainString = "{\"rationale\":\"revert\",\"action\":\"undoLastEdit\"}"
         #expect(try EditEditorTurn.parseJSON(from: plainString).action == .undoLastEdit)
@@ -498,6 +513,8 @@ extension SelfRewritingP3RunnerTests {
         #expect(messages.first?.role == "system")
         #expect(messages.first?.content.contains("Available practice problemIds: m01, m02") == true)
         #expect(messages.last?.content.contains("truncated 9000 chars") == true)
+        #expect(try SelfEditCommand.parse([]).resolvedCloudMaxTokens() == 4096)
+        #expect(try SelfEditCommand.parse(["--max-editor-tokens", "512"]).resolvedCloudMaxTokens() == 512)
     }
 
     @Test("SelfRewriteSessionDriver deduplicates repeated read actions (including non-consecutive A-B-A cycles) until a weight mutation, and exposes samples on practice only (#770, #676)")
@@ -538,5 +555,17 @@ extension SelfRewritingP3RunnerTests {
         #expect(toolObs[4].contains("\"name\":\"\(tensor)\""))
         #expect(toolObs[5].contains("\"samples\"") && toolObs[5].contains("\"problemId\":\"pr-1\""))
         #expect(toolObs[6].contains("\"base_accuracy\"") && !toolObs[6].contains("\"samples\""))
+
+        let stuck = RunnerScriptEditor(Array(repeating: EditEditorTurn(rationale: "loop", action: .describeModel), count: 8))
+        let stuckResult = try await SelfRewriteSessionDriver.run(
+            config: SelfRewriteSessionConfig(sessionId: "sess-stuck", budget: try SelfRewriteBudget(maxForwardPasses: 6, maxToolCalls: 20)),
+            split: Self.makeSplit(), evalSpec: Self.makeSpec(), editor: stuck, original: model
+        )
+        if case .exhausted(let reason) = stuckResult.phase {
+            #expect(reason.contains("repeated identical"))
+        } else {
+            Issue.record("expected .exhausted after 3 consecutive repeated reads, got \(stuckResult.phase)")
+        }
+        #expect(stuckResult.turnCount == 4)
     }
 }

@@ -91,8 +91,8 @@ public struct SelfEditCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Max generation tokens per paired-test answer.")
     public var maxEvalTokens: Int = 512
 
-    @Option(name: .long, help: "Max generation tokens per local editor turn.")
-    public var maxEditorTokens: Int = 1024
+    @Option(name: .long, help: "Max generation tokens per editor turn (defaults to 1024 local, 4096 cloud).")
+    public var maxEditorTokens: Int?
 
     @Option(name: .long, help: "Comma-separated deterministic seeds for paired evaluation (default: 42).")
     public var seeds: String = "42"
