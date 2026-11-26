@@ -30,6 +30,9 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Scenes per batch, eight views each")
     var batchSize: Int = 256
 
+    @Option(name: .long, help: "Optimizer for JEPA training: adamw or muon")
+    var optimizer: TrainingOptimizerKind = .adamw
+
     mutating func run() async throws {
         guard let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path else {
             throw ValidationError("Model '\(model)' is not in the local cache; run `basalt models download \(model)` first")
@@ -39,7 +42,7 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
         defer { await orchestrator.shutdown() }
         try await orchestrator.loadModel(path: modelPath)
         var request = LeJEPATrainRequest(datasetPath: dataset, iterations: iterations)
-        (request.output, request.rank, request.batchSize, request.maxSeqLen) = (output, rank, batchSize, maxSeqLen)
+        (request.output, request.rank, request.batchSize, request.maxSeqLen, request.optimizer) = (output, rank, batchSize, maxSeqLen, optimizer)
         let report = try await engine.trainJEPA(request)
         print("adapter: \(report.adapterDirectory ?? "-")")
         print("projector: \(report.projectorPath ?? "-")")

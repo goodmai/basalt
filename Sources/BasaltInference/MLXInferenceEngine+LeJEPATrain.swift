@@ -96,7 +96,7 @@ extension MLXInferenceEngine {
         let views = GoodViewCollator.totalViewsPerScene
         let loss = LeJEPALoss(baseLambda: request.lambda, referenceSamples: request.batchSize * views, sliceCount: jepaSlices, viewsPerScene: views)
         let directions = LeJEPALoss.unitDirections(projDim: jepaProjection, sliceCount: jepaSlices, seed: 42)
-        let optimizer = AdamW(learningRate: request.learningRate, weightDecay: request.weightDecay)
+        let optimizer = TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate, weightDecay: request.weightDecay)
         let schedule = jepaSchedule(request)
         let step = valueAndGrad(model: head) { head, arrays in
             let out = loss(head(arrays[0], attentionMask: arrays[1]).projected, directions: arrays[2])

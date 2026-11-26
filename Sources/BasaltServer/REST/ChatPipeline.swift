@@ -59,6 +59,7 @@ struct ChatPipeline: Sendable {
         let responseFormat: ResponseFormat?
         let model: String?
         let stream: Bool
+        var enableThinking: Bool? = nil
     }
 
     struct Prepared: Sendable {
@@ -71,6 +72,7 @@ struct ChatPipeline: Sendable {
     let source: String
     let endpoint: String
     let zeroCopyBody: Bool
+    var harnessRouting: HarnessRoutingTable = .empty
     let reject: @Sendable (HTTPResponse.Status, String) -> Response
 
     func rejection(_ status: HTTPResponse.Status, _ message: String) -> Rejection {
@@ -188,7 +190,8 @@ struct ChatPipeline: Sendable {
         built.reasoningEffort = input.reasoningEffort
         built.isServiceRequest = service.isService
         built.toolChoice = input.tools.choice
-        built.cacheKey = PromptCacheKey.resolve(isService: service.isService, headers: headers)
+        let decision = harnessDecision(for: input.chat, headers: headers)
+        built.cacheKey = Self.scopedCacheKey(PromptCacheKey.resolve(isService: service.isService, headers: headers), decision: decision)
         built.topK = input.sampling.topK
         built.presencePenalty = input.sampling.presencePenalty
         built.repetitionPenalty = input.sampling.repetitionPenalty
@@ -201,9 +204,10 @@ struct ChatPipeline: Sendable {
         built.xtcThreshold = input.sampling.antiRepetition.xtcThreshold
         built.xtcProbability = input.sampling.antiRepetition.xtcProbability
         try applyLogprobs(input.sampling.antiRepetition, to: &built)
+        Self.applyThinkingPolicy(input: input, decision: decision, to: &built)
         let request = built.withSpeculativeLookup(input.sampling.speculativeLookup)
             .withGrammarJumpForward(input.sampling.grammarJumpForward)
-            .routed(by: headers).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: input.stream))
+            .routed(by: headers, decision: decision).withOrigin(RequestOrigin(source: source, endpoint: endpoint, stream: input.stream))
         do {
             _ = try request.validated()
         } catch {
@@ -233,6 +237,40 @@ extension ChatPipeline {
             var refused = rejection(HTTPResponse.Status(code: refusal.httpStatus, reasonPhrase: ""), ModelsController.publicMessage(for: refusal))
             if case .memoryPressure(let seconds) = refusal { refused.response.headers[.retryAfter] = String(seconds) }
             throw refused
+        }
+    }
+
+    func harnessDecision(for chat: [ChatMessageInput], headers: HTTPFields) -> HarnessRouteDecision {
+        HarnessRoute.resolve(
+            HarnessRequestFingerprint(
+                userAgent: headers[.userAgent],
+                endpointPath: endpoint,
+                explicitAdapterHeader: headers[GenerationRequest.adapterHeader],
+                systemPromptPrefix: Self.systemPromptPrefix(in: chat),
+                anthropicVersionHeader: headers[GenerationRequest.anthropicVersionHeader]
+            ),
+            table: harnessRouting
+        )
+    }
+
+    static func systemPromptPrefix(in chat: [ChatMessageInput], limit: Int = 1024) -> String? {
+        let joined = chat.prefix { $0.role == .system }.map(\.text).filter { !$0.isEmpty }.joined(separator: "\n")
+        let trimmed = joined.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(limit))
+    }
+
+    static func scopedCacheKey(_ baseKey: String?, decision: HarnessRouteDecision) -> String? {
+        guard let baseKey else { return nil }
+        guard decision.adapterName != nil else { return baseKey }
+        return "\(baseKey)|\(decision.promptCacheNamespace)"
+    }
+
+    static func applyThinkingPolicy(input: Input, decision: HarnessRouteDecision, to request: inout GenerationRequest) {
+        if let explicit = input.enableThinking {
+            request.enableThinking = explicit
+        } else if decision.defaultThinkingOff, input.reasoningEffort == nil, input.thinkingBudget == nil {
+            request.enableThinking = false
         }
     }
 }

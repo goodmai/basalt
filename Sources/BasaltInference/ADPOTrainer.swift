@@ -32,12 +32,20 @@ public struct ADPOOptimizeOptions: Sendable, Equatable {
     public var learningRate: Float
     public var batchSize: Int
     public var emaDecay: Float?
+    public var optimizer: TrainingOptimizerKind
 
-    public init(iterations: Int, learningRate: Float, batchSize: Int = 4, emaDecay: Float? = nil) {
+    public init(
+        iterations: Int,
+        learningRate: Float,
+        batchSize: Int = 4,
+        emaDecay: Float? = nil,
+        optimizer: TrainingOptimizerKind = .adamw
+    ) {
         self.iterations = iterations
         self.learningRate = learningRate
         self.batchSize = max(1, batchSize)
         self.emaDecay = emaDecay
+        self.optimizer = optimizer
     }
 }
 
@@ -420,7 +428,8 @@ extension ADPOTrainer {
                 iterations: options.iterations,
                 learningRate: options.learningRate,
                 batchSize: options.batchSize,
-                emaDecay: effectiveEMA
+                emaDecay: effectiveEMA,
+                optimizer: options.optimizer
             )
         )
         var emaApplied = false
@@ -487,7 +496,7 @@ extension ADPOTrainer {
         config: ADPOConfig,
         options: ADPOOptimizeOptions
     ) throws -> (losses: [Float], margins: [Float], ema: EMAWeightShadow?, guardTriggered: Bool, earlyStep: Int?) {
-        let optimizer = Adam(learningRate: options.learningRate)
+        let optimizer = TrainingOptimizerFactory.make(options.optimizer, learningRate: options.learningRate)
         var ema = options.emaDecay.map { EMAWeightShadow(decay: $0, model: model) }
         let stepFn = valueAndGrad(model: model as Module) { _, batch in
             batchObjective(model: model, batch: batch, config: config)

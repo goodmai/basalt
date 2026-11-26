@@ -1,6 +1,8 @@
 import ArgumentParser
 import BasaltCore
 
+extension TrainingOptimizerKind: ExpressibleByArgument {}
+
 struct AdapterTrainingOptions: ParsableArguments {
     @Option(name: .long, help: "Adapter method: lora, phm or oft")
     var adapterMethod: String?

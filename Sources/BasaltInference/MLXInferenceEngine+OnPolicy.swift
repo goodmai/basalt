@@ -110,7 +110,7 @@ extension MLXInferenceEngine {
         batch.reduce(Float(0)) { $0 + onPolicyLoss([$1], model: model).item(Float.self) } / Float(batch.count)
     }
 
-    static func onPolicyStep(_ batch: [ScoredRow], optimizer: Adam, model: any LanguageModel) throws -> Float {
+    static func onPolicyStep(_ batch: [ScoredRow], optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
         try Task.checkCancellation()
         let step = valueAndGrad(model: model as Module) { _, _ in [onPolicyLoss(batch, model: model)] }
         let (values, gradients) = step(model as Module, [])

@@ -76,6 +76,16 @@ extension AdapterMethod {
     }
 }
 
+extension TrainingOptimizerKind {
+    static func fromMCP(_ args: [String: Any]?) throws(MCPFailure) -> TrainingOptimizerKind? {
+        guard let raw = try MCPArguments.string("optimizer", in: args) else { return nil }
+        guard let parsed = TrainingOptimizerKind(rawValue: raw) else {
+            throw .invalidParams("optimizer must be adamw or muon")
+        }
+        return parsed
+    }
+}
+
 extension TrainRequest {
     static let taskCounts = 2...10_000
 
@@ -98,6 +108,7 @@ extension TrainRequest {
         method = try AdapterMethod.fromMCP(args, fallbackRank: rank)
         iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        optimizer = try TrainingOptimizerKind.fromMCP(args) ?? optimizer
         output = try MCPArguments.string("output", in: args)
     }
 }

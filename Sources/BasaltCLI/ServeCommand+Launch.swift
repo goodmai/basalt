@@ -40,7 +40,8 @@ extension ServeCommand {
     func validate() throws {
         try sessionLog.validateRetention()
         if network.announceReady, mcp { throw ValidationError("--announce-ready writes to stdout, which --mcp uses for JSON-RPC; use one or the other") }
-        _ = try Self.adapterSources(adapters)
+        let adapterSpecs = try Self.adapterSources(adapters)
+        try validateHarnessRouting(registeredAdapters: Set(adapterSpecs.keys))
         guard maxConcurrent >= 1 else {
             throw ValidationError("--max-concurrent must be at least 1, got \(maxConcurrent)")
         }

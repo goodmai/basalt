@@ -59,7 +59,7 @@ struct PreemptibleTrainingRealModelTests {
     static func exclusiveSeconds(_ engine: MLXInferenceEngine, _ container: ModelContainer, rows: [DistillRow], steps: Int) async throws -> Double {
         let adapter = try await engine.adapterSteps(layers: nil, rank: 16, lease: nil, what: "distillation")
         return try await container.performEvaluating(nonSendable: ()) { context, _ in
-            var state = AdapterState(optimizer: Adam(learningRate: 1e-4))
+            var state = AdapterState(optimizer: TrainingOptimizerFactory.make(.adamw, learningRate: 1e-4))
             let start = ContinuousClock.now
             _ = try adapter.withLoRA(&state, context: context) { context, optimizer, _ in
                 try (0 ..< steps).map { try MLXInferenceEngine.distillStep(rows, index: $0, batchSize: 2, optimizer: optimizer, model: context.model) }

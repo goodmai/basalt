@@ -6,7 +6,7 @@ import BasaltCore
 
 struct AdapterState {
     var weights: [(String, MLXArray)] = []
-    let optimizer: Adam
+    let optimizer: TrainingOptimizer
 }
 
 struct AdapterSteps: Sendable {
@@ -70,18 +70,18 @@ struct AdapterSteps: Sendable {
     }
 
     func trained<R: Sendable>(
-        _ state: inout sending AdapterState, _ body: @Sendable (ModelContext, Adam, LoRAConfiguration) throws -> R
+        _ state: inout sending AdapterState, _ body: @Sendable (ModelContext, TrainingOptimizer, LoRAConfiguration) throws -> R
     ) async throws(BasaltError) -> R {
         try await section(&state) { context, state in try withLoRA(&state, context: context, body) }
     }
 
     func trainedAdapter<R: Sendable>(
-        _ state: inout sending AdapterState, _ body: @Sendable (ModelContext, Adam, ConfiguredAdapter) throws -> R
+        _ state: inout sending AdapterState, _ body: @Sendable (ModelContext, TrainingOptimizer, ConfiguredAdapter) throws -> R
     ) async throws(BasaltError) -> R {
         try await section(&state) { context, state in try withAdapter(&state, context: context, body) }
     }
 
-    func withLoRA<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, Adam, LoRAConfiguration) throws -> R) throws -> R {
+    func withLoRA<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, TrainingOptimizer, LoRAConfiguration) throws -> R) throws -> R {
         let configuration = try MLXInferenceEngine.attachLoRA(to: context.model, layers: layers, rank: rank)
         defer { MLXInferenceEngine.detachLoRA(from: context.model) }
         if state.weights.isEmpty {
@@ -95,7 +95,7 @@ struct AdapterSteps: Sendable {
         return result
     }
 
-    func withAdapter<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, Adam, ConfiguredAdapter) throws -> R) throws -> R {
+    func withAdapter<R>(_ state: inout AdapterState, context: ModelContext, _ body: (ModelContext, TrainingOptimizer, ConfiguredAdapter) throws -> R) throws -> R {
         let configuration = try MLXInferenceEngine.attachConfiguredAdapter(to: context.model, layers: layers, method: method)
         defer { _ = PHMAdapterApplicator.revert(in: context.model) }
         if state.weights.isEmpty {

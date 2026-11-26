@@ -87,13 +87,14 @@ struct ChatRequestFastReader {
         let speculativeLookup = try cursor.bool("speculative_lookup")
         let grammarJumpForward = try cursor.bool("grammar_jump_forward")
         let streamOptions = try decodeStreamOptions(cursor.nonNull("stream_options"))
+        let enableThinking = try cursor.bool("enable_thinking")
         return OpenAIController.ChatCompletionRequest(
             model: model, messages: messages, maxTokens: maxTokens, temperature: temperature,
             topP: topP, minP: minP, dynamicTemperature: dynamicTemperature, stream: stream,
             reasoningEffort: reasoningEffort, topK: topK, presencePenalty: presencePenalty,
             repetitionPenalty: repetitionPenalty, thinkingBudget: thinkingBudget,
             speculativeLookup: speculativeLookup, grammarJumpForward: grammarJumpForward,
-            streamOptions: streamOptions)
+            streamOptions: streamOptions, enableThinking: enableThinking)
     }
 
     private static func decodeAntiRepetition(

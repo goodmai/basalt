@@ -191,6 +191,7 @@ public struct CorpusTrainRequest: Sendable, Codable, Equatable {
     public var iterations: Int = 200
     public var batchSize: Int = 2
     public var learningRate: Float = 1e-4
+    public var optimizer: TrainingOptimizerKind = .adamw
     public var maxSeqLen: Int = 2048
     public var checkpointEvery: Int = 50
     public var resume: Bool = false

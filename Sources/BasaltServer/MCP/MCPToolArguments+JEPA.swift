@@ -11,6 +11,7 @@ extension LeJEPATrainRequest {
         batchSize = try MCPArguments.integer("batchSize", in: args, ResearchCall.nonNegative) ?? batchSize
         maxSeqLen = try MCPArguments.integer("maxSeqLen", in: args, ResearchCall.nonNegative) ?? maxSeqLen
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        optimizer = try TrainingOptimizerKind.fromMCP(args) ?? optimizer
         weightDecay = try MCPArguments.number("weightDecay", in: args) ?? weightDecay
         warmupRatio = try MCPArguments.number("warmupRatio", in: args) ?? warmupRatio
         lambda = try MCPArguments.number("lambda", in: args) ?? lambda

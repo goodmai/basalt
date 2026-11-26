@@ -40,6 +40,7 @@ public struct ServerConfig: Sendable {
     public var maxTokens:   Int = 65536
     public var logLevel:    LogLevel = .info
     public var experimentalZeroCopyBody = false
+    public var harnessRouting: HarnessRoutingTable = .empty
     public let apiKey:      String?
     /// Server-wide request budget; nil means no rate limit.
     public let rateLimitPerMinute: Int?

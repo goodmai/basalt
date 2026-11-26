@@ -1,10 +1,6 @@
 import ArgumentParser
 import BasaltCore
 
-// MARK: — Root entry point
-
-// No @main here — entry point is Sources/BasaltBin/main.swift
-
 @available(macOS 10.15, macCatalyst 13, iOS 13, tvOS 13, watchOS 6, *)
 public struct BasaltCLI: AsyncParsableCommand {
     public init() {}
@@ -81,6 +77,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             SessionsCommand.self,
             CloudCommand.self,
             ClusterCommand.self,
+            EMeansCommand.self,
             HarnessCommand.self,
             BenchCommand.self,
             ReviewCommand.self,

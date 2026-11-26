@@ -7,8 +7,17 @@ import MLXNN
 public protocol DiffusionLanguageModel: LanguageModel {
     var maskTokenId: Int { get }
     var bidirectionalPrompt: Bool { get }
+    var additionalStopTokens: [String] { get }
     func hiddenStates(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray
     func projectLogits(_ hidden: MLXArray) -> MLXArray
+}
+
+extension DiffusionLanguageModel {
+    public var additionalStopTokens: [String] { [] }
+}
+
+private let compiledLLaDASwiGLU = compile(shapeless: true) { (gate: MLXArray, up: MLXArray) -> MLXArray in
+    silu(gate) * up
 }
 
 struct LLaDAConfiguration: Decodable, Sendable {
@@ -83,7 +92,7 @@ final class LLaDABlock: Module {
         let attention = attentionWithCacheUpdate(queries: queries, keys: keys, values: values, cache: cache, scale: pow(Float(config.headDim), -0.5), mask: mask)
         let h = x + wo(attention.transposed(0, 2, 1, 3).reshaped(b, l, -1))
         let f = feedForwardNorm(h)
-        return h + down(silu(gate(f)) * up(f))
+        return h + down(compiledLLaDASwiGLU(gate(f), up(f)))
     }
 }
 
@@ -106,6 +115,7 @@ public final class LLaDAModel: Module, LLMModel, DiffusionLanguageModel {
     public let vocabularySize: Int
     public let maskTokenId: Int
     public var bidirectionalPrompt: Bool { true }
+    public var additionalStopTokens: [String] { ["<|eot_id|>"] }
     let config: LLaDAConfiguration
     @ModuleInfo(key: "model") var model: LLaDAInner
 

@@ -41,6 +41,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var iterations = 200
     public var batchSize = 2
     public var learningRate: Float = 1e-4
+    public var optimizer: TrainingOptimizerKind = .adamw
     public var maxSeqLen = 2048
     public var gate: GateRequest
     public var output: String?

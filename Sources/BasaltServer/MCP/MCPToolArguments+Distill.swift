@@ -40,6 +40,7 @@ extension DistillRequest {
         iterations = try MCPArguments.integer("iterations", in: args, ResearchCall.nonNegative) ?? iterations
         batchSize = try MCPArguments.integer("batchSize", in: args, ResearchCall.nonNegative) ?? batchSize
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
+        optimizer = try TrainingOptimizerKind.fromMCP(args) ?? optimizer
         maxSeqLen = try MCPArguments.integer("maxSeqLen", in: args, ResearchCall.nonNegative) ?? maxSeqLen
         output = try MCPArguments.string("output", in: args)
         onPolicy = try MCPArguments.optionalBoolean("onPolicy", in: args) ?? onPolicy

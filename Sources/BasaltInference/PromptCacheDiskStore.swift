@@ -268,7 +268,7 @@ extension PromptCacheDiskStore {
     mutating func store(
         fingerprint: String, model: String, namespace: String, tokens: [Int], cache: PromptCache, keeping kept: Set<String> = []
     ) -> String? {
-        guard !cache.layers.contains(where: { $0 is KEqVRowKVCache || $0 is Inkling2WindowKVCache }) else { return nil }
+        guard !cache.layers.contains(where: { $0 is KEqVRowKVCache || $0 is Inkling2WindowKVCache || $0 is RWKV7LayerCache }) else { return nil }
         let name = Self.fileName(fingerprint: fingerprint, namespace: namespace, tokens: tokens)
         let final = url(name)
         if FileManager.default.fileExists(atPath: final.path) {

@@ -6,6 +6,13 @@ import MLXNN
 public protocol BidirectionalBlockModel {
     var layerCount: Int { get }
     func forward(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray
+    func forwardHidden(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray?
+    func projectLogits(hidden: MLXArray) -> MLXArray?
+}
+
+extension BidirectionalBlockModel {
+    public func forwardHidden(tokens _: MLXArray, caches _: [any KVCache]?) -> MLXArray? { nil }
+    public func projectLogits(hidden _: MLXArray) -> MLXArray? { nil }
 }
 
 public struct LanguageModelBlockAdapter: BidirectionalBlockModel {
@@ -19,6 +26,16 @@ public struct LanguageModelBlockAdapter: BidirectionalBlockModel {
 
     public func forward(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray {
         model(LMInput.Text(tokens: tokens), cache: caches, state: nil).logits
+    }
+
+    public func forwardHidden(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray? {
+        guard let diffusion = model as? any DiffusionLanguageModel else { return nil }
+        return diffusion.hiddenStates(tokens, cache: caches)
+    }
+
+    public func projectLogits(hidden: MLXArray) -> MLXArray? {
+        guard let diffusion = model as? any DiffusionLanguageModel else { return nil }
+        return diffusion.projectLogits(hidden)
     }
 }
 
@@ -72,6 +89,7 @@ public struct FastDLLMGenerationResult: Equatable, Sendable {
     public let denoisingSteps: Int
     public let remaskedTokenCount: Int
     public let evaluatedTokenPositions: Int
+    public var projectedLogitPositions: Int = 0
 
     public init(
         tokens: [Int],
@@ -90,8 +108,78 @@ public struct FastDLLMGenerationResult: Equatable, Sendable {
     }
 }
 
+public struct FastDLLMSession<Model: BidirectionalBlockModel> {
+    let model: Model
+    let config: BlockDiffusionConfig
+    let dualCache: DualBlockKVCache
+    var state: FastDLLMRunner.RunState
+    var nextBlockStart: Int
+    var prefilled = false
+    var suffixPrimed = false
+    var finished: Bool
+    var earlyCutoff: Int?
+
+    public init(model: Model, request: FastDLLMRequest, config: BlockDiffusionConfig) {
+        self.model = model
+        self.config = config
+        self.dualCache = DualBlockKVCache(
+            layerCount: model.layerCount,
+            bidirectionalPrompt: config.bidirectionalPrompt,
+            kernelMode: config.flashKernelMode ?? DualBlockFlashAttentionKernel.environmentDefaultMode
+        )
+        self.state = FastDLLMRunner.makeInitialState(for: request, maskTokenId: config.maskTokenId)
+        self.nextBlockStart = request.promptTokens.count
+        self.finished = request.maxNewTokens <= 0
+    }
+
+    public var isFinished: Bool { finished }
+    package var totalKernelInvocations: Int { dualCache.totalKernelInvocations }
+
+    public mutating func prefillIfNeeded() {
+        guard !prefilled else { return }
+        prefilled = true
+        guard !finished, config.dualCacheEnabled, state.promptLength > 0 else { return }
+        FastDLLMRunner.prefillPrompt(model: model, state: &state, dualCache: dualCache)
+    }
+
+    public mutating func nextBlock() -> [Int]? {
+        guard !finished else { return nil }
+        prefillIfNeeded()
+        guard nextBlockStart < state.generationEnd else {
+            finished = true
+            return nil
+        }
+        let blockSize = max(1, config.blockSize)
+        let blockEnd = min(nextBlockStart + blockSize, state.generationEnd)
+        let activeRange = nextBlockStart ..< blockEnd
+        nextBlockStart = blockEnd
+        let cutoff = FastDLLMRunner.runSingleBlock(
+            model: model,
+            state: &state,
+            dualCache: dualCache,
+            activeRange: activeRange,
+            suffixPrimed: &suffixPrimed,
+            config: config
+        )
+        if let cutoff {
+            earlyCutoff = cutoff
+            finished = true
+            let clamped = min(max(cutoff, activeRange.lowerBound), activeRange.upperBound)
+            return clamped > activeRange.lowerBound ? Array(state.canvas[activeRange.lowerBound ..< clamped]) : []
+        }
+        if nextBlockStart >= state.generationEnd {
+            finished = true
+        }
+        return Array(state.canvas[activeRange])
+    }
+
+    public func buildResult() -> FastDLLMGenerationResult {
+        FastDLLMRunner.buildResult(from: state, cutoff: earlyCutoff)
+    }
+}
+
 public enum FastDLLMRunner {
-    fileprivate struct RunState {
+    struct RunState {
         let promptLength: Int
         let generationEnd: Int
         let usesTrailingSuffix: Bool
@@ -102,6 +190,12 @@ public enum FastDLLMRunner {
         var denoisingSteps = 0
         var remaskedTokenCount = 0
         var evaluatedTokenPositions = 0
+        var projectedLogitPositions = 0
+    }
+
+    fileprivate struct BlockSpan {
+        let range: Range<Int>
+        let totalLength: Int
     }
 
     fileprivate struct BlockPredictions {
@@ -118,26 +212,9 @@ public enum FastDLLMRunner {
         guard request.maxNewTokens > 0 else {
             return emptyResult(for: request)
         }
-        var state = makeInitialState(for: request, maskTokenId: config.maskTokenId)
-        let dualCache = DualBlockKVCache(layerCount: model.layerCount, bidirectionalPrompt: config.bidirectionalPrompt)
-        if config.dualCacheEnabled, state.promptLength > 0 {
-            prefillPrompt(model: model, state: &state, dualCache: dualCache)
-        }
-
-        let blockSize = max(1, config.blockSize)
-        for blockStart in stride(from: state.promptLength, to: state.generationEnd, by: blockSize) {
-            let blockEnd = min(blockStart + blockSize, state.generationEnd)
-            if let earlyResult = runSingleBlock(
-                model: model,
-                state: &state,
-                dualCache: dualCache,
-                activeRange: blockStart ..< blockEnd,
-                config: config
-            ) {
-                return earlyResult
-            }
-        }
-        return buildResult(from: state, cutoff: nil)
+        var session = FastDLLMSession(model: model, request: request, config: config)
+        while session.nextBlock() != nil {}
+        return session.buildResult()
     }
 
     private static func emptyResult(for request: FastDLLMRequest) -> FastDLLMGenerationResult {
@@ -151,7 +228,7 @@ public enum FastDLLMRunner {
         )
     }
 
-    private static func makeInitialState(for request: FastDLLMRequest, maskTokenId: Int) -> RunState {
+    static func makeInitialState(for request: FastDLLMRequest, maskTokenId: Int) -> RunState {
         let promptLength = request.promptTokens.count
         let middle = Array(repeating: maskTokenId, count: request.maxNewTokens)
         return RunState(
@@ -163,10 +240,10 @@ public enum FastDLLMRunner {
         )
     }
 
-    fileprivate static func buildResult(from state: RunState, cutoff: Int?) -> FastDLLMGenerationResult {
+    static func buildResult(from state: RunState, cutoff: Int?) -> FastDLLMGenerationResult {
         let end = cutoff ?? state.generationEnd
         let fullTokens = cutoff.map { Array(state.canvas[..<$0]) } ?? state.canvas
-        return FastDLLMGenerationResult(
+        var result = FastDLLMGenerationResult(
             tokens: fullTokens,
             generatedTokens: Array(state.canvas[state.promptLength ..< end]),
             forwardEvaluations: state.forwardEvaluations,
@@ -174,91 +251,102 @@ public enum FastDLLMRunner {
             remaskedTokenCount: state.remaskedTokenCount,
             evaluatedTokenPositions: state.evaluatedTokenPositions
         )
+        result.projectedLogitPositions = state.projectedLogitPositions
+        return result
     }
 }
 
 extension FastDLLMRunner {
-    fileprivate static func runSingleBlock(
+    static func runSingleBlock(
         model: some BidirectionalBlockModel,
         state: inout RunState,
         dualCache: DualBlockKVCache,
         activeRange: Range<Int>,
+        suffixPrimed: inout Bool,
         config: BlockDiffusionConfig
-    ) -> FastDLLMGenerationResult? {
-        let totalLength = state.usesTrailingSuffix ? state.canvas.count : activeRange.upperBound
+    ) -> Int? {
+        let span = BlockSpan(range: activeRange, totalLength: state.usesTrailingSuffix ? state.canvas.count : activeRange.upperBound)
         if config.dualCacheEnabled {
-            prepareSuffixCache(
-                model: model,
-                state: &state,
-                dualCache: dualCache,
-                activeUpper: activeRange.upperBound,
-                totalLength: totalLength
+            prepareSuffixForBlock(
+                model: model, state: &state, dualCache: dualCache,
+                span: span, suffixPrimed: &suffixPrimed, config: config
             )
         }
-        denoiseBlock(
-            model: model,
-            state: &state,
-            dualCache: dualCache,
-            activeRange: activeRange,
-            totalLength: totalLength,
-            config: config
-        )
+        denoiseBlock(model: model, state: &state, dualCache: dualCache, span: span, config: config)
         state.finalizedBlockEnds.append(activeRange.upperBound)
         if let eosCutoff = completedEOSCutoff(state: state, upTo: activeRange.upperBound, maskTokenId: config.maskTokenId) {
-            return buildResult(from: state, cutoff: eosCutoff)
+            return eosCutoff
         }
         if config.dualCacheEnabled, activeRange.upperBound < state.generationEnd {
-            commitBlock(model: model, state: &state, dualCache: dualCache, activeRange: activeRange)
+            commitBlock(model: model, state: &state, dualCache: dualCache, activeRange: activeRange, keepSuffix: config.reuseSuffixCache)
         }
         return nil
     }
 
-    fileprivate static func prefillPrompt(
+    private static func prepareSuffixForBlock(
+        model: some BidirectionalBlockModel,
+        state: inout RunState,
+        dualCache: DualBlockKVCache,
+        span: BlockSpan,
+        suffixPrimed: inout Bool,
+        config: BlockDiffusionConfig
+    ) {
+        let suffixEnd = config.maxSuffixLength.map { min(span.totalLength, span.range.upperBound + $0) } ?? span.totalLength
+        guard span.range.upperBound < suffixEnd else {
+            dualCache.clearSuffix()
+            return
+        }
+        if config.reuseSuffixCache, suffixPrimed {
+            dualCache.advanceSuffix(by: span.range.count)
+            if dualCache.suffixLength > 0 { return }
+        }
+        dualCache.prepareSuffixPrefill(at: span.range.upperBound)
+        let suffixTensor = MLXArray(state.canvas[span.range.upperBound ..< suffixEnd].map { Int32($0) })[.newAxis, 0...]
+        evaluateCacheOnlyForward(model: model, tokens: suffixTensor, dualCache: dualCache, state: &state)
+        suffixPrimed = true
+    }
+
+    static func prefillPrompt(
         model: some BidirectionalBlockModel,
         state: inout RunState,
         dualCache: DualBlockKVCache
     ) {
         dualCache.preparePromptPrefill()
         let prompt = MLXArray(state.canvas[0 ..< state.promptLength].map { Int32($0) })[.newAxis, 0...]
-        let logits = model.forward(tokens: prompt, caches: dualCache.kvCaches)
-        eval(dualCache.layers.flatMap { $0.innerState() } + [logits])
-        state.forwardEvaluations += 1
-        state.evaluatedTokenPositions += state.promptLength
+        evaluateCacheOnlyForward(model: model, tokens: prompt, dualCache: dualCache, state: &state)
     }
 
-    fileprivate static func prepareSuffixCache(
+    private static func commitBlock(
         model: some BidirectionalBlockModel,
         state: inout RunState,
         dualCache: DualBlockKVCache,
-        activeUpper: Int,
-        totalLength: Int
+        activeRange: Range<Int>,
+        keepSuffix: Bool
     ) {
-        guard activeUpper < totalLength else {
+        if !keepSuffix {
             dualCache.clearSuffix()
-            return
         }
-        dualCache.prepareSuffixPrefill(at: activeUpper)
-        let suffixSlice = state.canvas[activeUpper ..< totalLength]
-        let suffixTensor = MLXArray(suffixSlice.map { Int32($0) })[.newAxis, 0...]
-        let logits = model.forward(tokens: suffixTensor, caches: dualCache.kvCaches)
-        eval(dualCache.layers.flatMap { $0.innerState() } + [logits])
-        state.forwardEvaluations += 1
-        state.evaluatedTokenPositions += suffixSlice.count
-    }
-
-    fileprivate static func commitBlock(
-        model: some BidirectionalBlockModel,
-        state: inout RunState,
-        dualCache: DualBlockKVCache,
-        activeRange: Range<Int>
-    ) {
-        dualCache.clearSuffix()
         dualCache.prepareBlockCommit(at: activeRange.lowerBound)
         let blockTensor = MLXArray(state.canvas[activeRange].map { Int32($0) })[.newAxis, 0...]
-        let logits = model.forward(tokens: blockTensor, caches: dualCache.kvCaches)
-        eval(dualCache.layers.flatMap { $0.innerState() } + [logits])
+        evaluateCacheOnlyForward(model: model, tokens: blockTensor, dualCache: dualCache, state: &state)
+    }
+
+    private static func evaluateCacheOnlyForward(
+        model: some BidirectionalBlockModel,
+        tokens: MLXArray,
+        dualCache: DualBlockKVCache,
+        state: inout RunState
+    ) {
+        if let hidden = model.forwardHidden(tokens: tokens, caches: dualCache.kvCaches) {
+            let cacheState = dualCache.layers.flatMap { $0.innerState() }
+            eval(cacheState.isEmpty ? [hidden] : cacheState)
+        } else {
+            let logits = model.forward(tokens: tokens, caches: dualCache.kvCaches)
+            eval(dualCache.layers.flatMap { $0.innerState() } + [logits])
+            state.projectedLogitPositions += tokens.dim(1)
+        }
         state.forwardEvaluations += 1
-        state.evaluatedTokenPositions += activeRange.count
+        state.evaluatedTokenPositions += tokens.dim(1)
     }
 }
 
@@ -267,70 +355,124 @@ extension FastDLLMRunner {
         model: some BidirectionalBlockModel,
         state: inout RunState,
         dualCache: DualBlockKVCache,
-        activeRange: Range<Int>,
-        totalLength: Int,
+        span: BlockSpan,
         config: BlockDiffusionConfig
     ) {
         let maxSteps = max(1, config.maxStepsPerBlock)
         let remaskEnabled = (config.remaskThreshold ?? 0) > 0
         for step in 0 ..< maxSteps {
-            let maskedMask = activeRange.map { state.canvas[$0] == config.maskTokenId }
+            let maskedMask = span.range.map { state.canvas[$0] == config.maskTokenId }
             let hasMasks = maskedMask.contains(true)
             if !hasMasks && (!remaskEnabled || step == 0 || step >= maxSteps - 1) { break }
-            let blockLogits = evaluateActiveLogits(
-                model: model,
-                state: &state,
-                dualCache: dualCache,
-                activeRange: activeRange,
-                totalLength: totalLength,
-                dualCacheEnabled: config.dualCacheEnabled
+            let predictions = evaluateActivePredictions(
+                model: model, state: &state, dualCache: dualCache,
+                span: span, maskedMask: maskedMask, config: config
             )
-            let predictions = extractPredictions(from: blockLogits)
             applyStep(
-                state: &state,
-                activeRange: activeRange,
-                maskedMask: maskedMask,
-                predictions: predictions,
-                step: step,
-                config: config
+                state: &state, activeRange: span.range, maskedMask: maskedMask,
+                predictions: predictions, step: step, config: config
             )
-            if !hasMasks && !activeRange.contains(where: { state.canvas[$0] == config.maskTokenId }) { break }
-            if completedEOSCutoff(state: state, upTo: activeRange.upperBound, maskTokenId: config.maskTokenId) != nil {
+            if !hasMasks && !span.range.contains(where: { state.canvas[$0] == config.maskTokenId }) { break }
+            if completedEOSCutoff(state: state, upTo: span.range.upperBound, maskTokenId: config.maskTokenId) != nil {
                 break
             }
         }
     }
 
-    fileprivate static func evaluateActiveLogits(
+    private static func evaluateActivePredictions(
         model: some BidirectionalBlockModel,
         state: inout RunState,
         dualCache: DualBlockKVCache,
-        activeRange: Range<Int>,
-        totalLength: Int,
-        dualCacheEnabled: Bool
-    ) -> MLXArray {
+        span: BlockSpan,
+        maskedMask: [Bool],
+        config: BlockDiffusionConfig
+    ) -> BlockPredictions {
         state.forwardEvaluations += 1
         state.denoisingSteps += 1
-        if dualCacheEnabled {
-            dualCache.prepareActiveBlock(at: activeRange.lowerBound)
-            let activeTensor = MLXArray(state.canvas[activeRange].map { Int32($0) })[.newAxis, 0...]
-            state.evaluatedTokenPositions += activeRange.count
-            return model.forward(tokens: activeTensor, caches: dualCache.kvCaches)
+        let remaskEnabled = (config.remaskThreshold ?? 0) > 0
+        let maskedOffsets = remaskEnabled ? [] : maskedMask.enumerated().compactMap { $0.element ? $0.offset : nil }
+        if config.dualCacheEnabled {
+            dualCache.prepareActiveBlock(at: span.range.lowerBound)
+            let activeTensor = MLXArray(state.canvas[span.range].map { Int32($0) })[.newAxis, 0...]
+            state.evaluatedTokenPositions += span.range.count
+            if !remaskEnabled, !maskedOffsets.isEmpty,
+               let hidden = model.forwardHidden(tokens: activeTensor, caches: dualCache.kvCaches),
+               let sparse = projectSparsePredictions(
+                   model: model, hidden: hidden, blockCount: span.range.count,
+                   maskedOffsets: maskedOffsets, state: &state
+               )
+            {
+                return sparse
+            }
+            let logits = model.forward(tokens: activeTensor, caches: dualCache.kvCaches)
+            state.projectedLogitPositions += span.range.count
+            return extractPredictions(from: logits)
         }
-        let mask = DualBlockKVCache.makeBlockDiffusionMask(
-            promptLength: state.promptLength,
-            finalizedBlockEnds: state.finalizedBlockEnds,
-            activeRange: activeRange,
-            totalLength: totalLength
+        return evaluateUncachedPredictions(
+            model: model, state: &state, span: span,
+            maskedOffsets: maskedOffsets, remaskEnabled: remaskEnabled
         )
-        let uncached = DualBlockKVCache.uncachedMaskCaches(layerCount: model.layerCount, mask: mask)
-        let fullTensor = MLXArray(state.canvas[0 ..< totalLength].map { Int32($0) })[.newAxis, 0...]
-        state.evaluatedTokenPositions += totalLength
-        let fullLogits = model.forward(tokens: fullTensor, caches: uncached)
-        return fullLogits[0..., activeRange.lowerBound ..< activeRange.upperBound, 0...]
     }
 
-    fileprivate static func extractPredictions(from blockLogits: MLXArray) -> BlockPredictions {
+    private static func evaluateUncachedPredictions(
+        model: some BidirectionalBlockModel,
+        state: inout RunState,
+        span: BlockSpan,
+        maskedOffsets: [Int],
+        remaskEnabled: Bool
+    ) -> BlockPredictions {
+        let mask = DualBlockKVCache.makeBlockDiffusionMask(
+            promptLength: state.promptLength, finalizedBlockEnds: state.finalizedBlockEnds,
+            activeRange: span.range, totalLength: span.totalLength
+        )
+        let uncached = DualBlockKVCache.uncachedMaskCaches(layerCount: model.layerCount, mask: mask)
+        let fullTensor = MLXArray(state.canvas[0 ..< span.totalLength].map { Int32($0) })[.newAxis, 0...]
+        state.evaluatedTokenPositions += span.totalLength
+        if !remaskEnabled, !maskedOffsets.isEmpty,
+           let fullHidden = model.forwardHidden(tokens: fullTensor, caches: uncached)
+        {
+            let blockHidden = fullHidden[0..., span.range.lowerBound ..< span.range.upperBound, 0...]
+            if let sparse = projectSparsePredictions(
+                model: model, hidden: blockHidden, blockCount: span.range.count,
+                maskedOffsets: maskedOffsets, state: &state
+            ) {
+                return sparse
+            }
+        }
+        let fullLogits = model.forward(tokens: fullTensor, caches: uncached)
+        state.projectedLogitPositions += span.totalLength
+        return extractPredictions(from: fullLogits[0..., span.range.lowerBound ..< span.range.upperBound, 0...])
+    }
+}
+
+extension FastDLLMRunner {
+    private static func projectSparsePredictions(
+        model: some BidirectionalBlockModel,
+        hidden: MLXArray,
+        blockCount: Int,
+        maskedOffsets: [Int],
+        state: inout RunState
+    ) -> BlockPredictions? {
+        let allMasked = maskedOffsets.count == blockCount
+        let selectedHidden = allMasked ? hidden : hidden[0..., MLXArray(maskedOffsets.map(Int32.init)), 0...]
+        guard let logits = model.projectLogits(hidden: selectedHidden) else {
+            return nil
+        }
+        state.projectedLogitPositions += maskedOffsets.count
+        let compact = extractPredictions(from: logits)
+        if allMasked { return compact }
+        var tokens = [Int](repeating: 0, count: blockCount)
+        var confidences = [Float](repeating: 1.0, count: blockCount)
+        var margins = [Float](repeating: 1.0, count: blockCount)
+        for (compactIdx, offset) in maskedOffsets.enumerated() {
+            tokens[offset] = compact.tokens[compactIdx]
+            confidences[offset] = compact.confidences[compactIdx]
+            margins[offset] = compact.margins[compactIdx]
+        }
+        return BlockPredictions(tokens: tokens, confidences: confidences, margins: margins)
+    }
+
+    private static func extractPredictions(from blockLogits: MLXArray) -> BlockPredictions {
         let confidence = Device.defaultDevice().deviceType == .gpu
             ? FusedLogitConfidence.compute(blockLogits)
             : FusedLogitConfidence.reference(blockLogits)
