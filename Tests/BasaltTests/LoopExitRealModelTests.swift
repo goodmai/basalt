@@ -20,13 +20,19 @@ struct LoopExitRealModelTests {
     static var enabled: Bool { env["BASALT_E2E"] == "1" && !models.isEmpty && env["BASALT_E2E_LOOP_CORPUS"] != nil }
     static var thresholds: [Float?] { [nil] + (env["BASALT_E2E_LOOP_THRESHOLDS"] ?? "0.02,0.05,0.1,0.3,0.6,0.9").split(separator: ",").compactMap { Float($0) } }
     static let scored = 512
-    static let prefix = 1536
+    static var prefix: Int { Int(env["BASALT_E2E_LOOP_PREFIX"] ?? "") ?? 1536 }
 
     static func setThreshold(_ threshold: Float?, on model: any LanguageModel) -> () -> (steps: Int, passes: Int) {
         if let ouro = model as? OuroModel {
             ouro.model.loopExitThreshold = threshold
             let base = (ouro.model.exitSteps, ouro.model.exitPasses)
             return { (ouro.model.exitSteps - base.0, ouro.model.exitPasses - base.1) }
+        }
+        if let huginn = model as? HuginnModel {
+            let core = huginn.transformer
+            core.loopExitThreshold = threshold
+            let base = (core.exitSteps, core.exitPasses)
+            return { (core.exitSteps - base.0, core.exitPasses - base.1) }
         }
         if let inkling = model as? Inkling2Model {
             let text = inkling.model.languageModel
@@ -76,7 +82,9 @@ struct LoopExitRealModelTests {
             #expect(tokens.count > Self.scored + 1)
             return try Self.thresholds.map { threshold in
                 let m = try Self.measure(tokens, threshold: threshold, context: context)
-                return "threshold=\(threshold.map { String($0) } ?? "off") ppl=\(String(format: "%.4f", m.perplexity)) passes/token=\(String(format: "%.3f", m.passesPerToken)) tok/s=\(String(format: "%.2f", m.tokensPerSecond)) prefillActiveGB=\(String(format: "%.2f", Double(m.prefillActiveBytes) / 1e9)) peakGB=\(String(format: "%.2f", Double(m.peakBytes) / 1e9))"
+                let line = "threshold=\(threshold.map { String($0) } ?? "off") ppl=\(String(format: "%.4f", m.perplexity)) passes/token=\(String(format: "%.3f", m.passesPerToken)) tok/s=\(String(format: "%.2f", m.tokensPerSecond)) prefillActiveGB=\(String(format: "%.2f", Double(m.prefillActiveBytes) / 1e9)) peakGB=\(String(format: "%.2f", Double(m.peakBytes) / 1e9))"
+                FileHandle.standardError.write(Data("loop-exit partial \(line)\n".utf8))
+                return line
             }
         }
         for line in lines { log.record("result", line) }
