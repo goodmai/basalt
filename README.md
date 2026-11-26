@@ -6,6 +6,8 @@
 
 [English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
+📖 **Monograph:** [Evolution of neural network architectures, 1958–2027](docs/monograph/evo.en.md) by Aleksei Boklag, in the six UN languages ([all](docs/monograph/README.md)) · **problem book:** what basalt already runs from it, checklist [#816](https://github.com/goodmai/basalt/issues/816)
+
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
 [![Release v0.13.0](https://img.shields.io/badge/release-v0.13.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.13.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
