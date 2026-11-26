@@ -302,6 +302,7 @@ public struct TrainRequest: Sendable, Codable, Equatable {
     public var method: AdapterMethod?
     public var iterations = 200
     public var learningRate: Float = 1e-5
+    public var optimizer: TrainingOptimizerKind = .adamw
     public var adpo: ADPOConfig?
     public var emaDecay: Float?
     public var gate: GateRequest
@@ -352,6 +353,7 @@ public struct LeJEPATrainRequest: Sendable, Codable, Equatable {
     public var maxSeqLen: Int = 64
     public var iterations: Int
     public var learningRate: Float = 1e-4
+    public var optimizer: TrainingOptimizerKind = .adamw
     public var weightDecay: Float = 0.05
     public var warmupRatio: Float = 0.05
     public var lambda: Float = 0.02

@@ -13,13 +13,16 @@ struct AdapterProgress: Sendable, Codable, Equatable {
     var layerCount: Int
     var rank: Int
     var method: AdapterMethod?
+    var optimizer: TrainingOptimizerKind?
     var batchSize: Int
     var learningRate: Float
+
+    var effectiveOptimizer: TrainingOptimizerKind { optimizer ?? .adamw }
 
     init(_ request: DistillRequest, model: String, data: String, layerCount: Int) {
         (self.model, self.data, self.layerCount) = (model, data, layerCount)
         layers = request.layers ?? Array(0 ..< layerCount)
-        (rank, method, batchSize, learningRate) = (request.rank, request.method, request.batchSize, request.learningRate)
+        (rank, method, optimizer, batchSize, learningRate) = (request.rank, request.method, request.optimizer, request.batchSize, request.learningRate)
     }
 
     static func digest(_ rows: [DistillRow]) -> String {
@@ -44,11 +47,13 @@ struct AdapterProgress: Sendable, Codable, Equatable {
     func resumable(as identity: AdapterProgress, iterations: Int) -> String? {
         guard model == identity.model else { return "the checkpoint was trained on another model (\(model.prefix(40))), not \(identity.model.prefix(40))" }
         guard data == identity.data else { return "the training rows differ from the checkpoint's: prompts, teacher answers, filter, held-out split, maxSeqLen, samples or reasoning changed" }
+        var normalized = self
+        normalized.optimizer = effectiveOptimizer
         var same = identity
-        (same.step, same.losses) = (step, losses)
-        guard same == self else {
+        (same.step, same.losses, same.optimizer) = (step, losses, identity.effectiveOptimizer)
+        guard same == normalized else {
             let methodDesc = method.map { "method \($0)" } ?? "rank \(rank)"
-            return "the checkpoint was trained with \(methodDesc), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
+            return "the checkpoint was trained with \(methodDesc), optimizer \(effectiveOptimizer.rawValue), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
         }
         guard step < iterations else { return "the checkpoint is at step \(step); iterations must be larger to resume" }
         return nil
@@ -109,7 +114,7 @@ enum AdapterCheckpoint {
         let weights = try MLX.loadArrays(url: directory.appending(component: "adapter.safetensors"))
         let optimizerFile = directory.appending(component: "optimizer.safetensors")
         let optimizer = FileManager.default.fileExists(atPath: optimizerFile.path) ? try MLX.loadArrays(url: optimizerFile) : [:]
-        if let problem = mismatch(weights: weights.mapValues(\.shape), optimizer: optimizer.mapValues(\.shape), trainable: trainable) {
+        if let problem = mismatch(weights: weights.mapValues(\.shape), optimizer: optimizer.mapValues(\.shape), trainable: trainable, kind: state.optimizer.kind) {
             throw BasaltError.invalidRequestStructure(details: "distill: the checkpoint in \(directory.path) does not fit this adapter: \(problem)")
         }
         state.weights = weights.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
@@ -117,19 +122,60 @@ enum AdapterCheckpoint {
         eval(state.weights.map(\.1), state.optimizer)
     }
 
-    static func mismatch(weights: [String: [Int]], optimizer: [String: [Int]], trainable: [String: [Int]]) -> String? {
+    static func mismatch(
+        weights: [String: [Int]],
+        optimizer: [String: [Int]],
+        trainable: [String: [Int]],
+        kind: TrainingOptimizerKind = .adamw
+    ) -> String? {
         guard weights == trainable else {
             let foreign = Set(weights.keys).subtracting(trainable.keys).sorted().prefix(3)
             return foreign.isEmpty ? "its LoRA weights miss keys or have other shapes" : "it holds keys that are not LoRA weights of this adapter: \(foreign.joined(separator: ", "))"
         }
         guard !optimizer.isEmpty else { return nil }
-        let moments = Dictionary(uniqueKeysWithValues: trainable.flatMap { key, shape in [("\(key).m", shape), ("\(key).v", shape)] })
+        return switch kind {
+        case .adamw:
+            adamMismatch(optimizer: optimizer, trainable: trainable, prefix: "")
+        case .muon:
+            muonMismatch(optimizer: optimizer, trainable: trainable)
+        }
+    }
+
+    private static func adamMismatch(
+        optimizer: [String: [Int]],
+        trainable: [String: [Int]],
+        prefix: String
+    ) -> String? {
+        let moments = Dictionary(uniqueKeysWithValues: trainable.flatMap { key, shape in [("\(prefix)\(key).m", shape), ("\(prefix)\(key).v", shape)] })
         let steps = optimizer.filter { $0.key.hasSuffix(".step") }
-        guard optimizer.filter({ !$0.key.hasSuffix(".step") }) == moments, Set(steps.keys) == Set(trainable.keys.map { "\($0).step" }),
+        let expectedSteps = Set(trainable.keys.map { "\(prefix)\($0).step" })
+        guard optimizer.filter({ !$0.key.hasSuffix(".step") }) == moments, Set(steps.keys) == expectedSteps,
               steps.values.allSatisfy({ $0.reduce(1, *) == 1 }) else {
             return "its optimizer state is not Adam's m, v and step for each LoRA weight"
         }
         return nil
+    }
+
+    private static func muonMismatch(optimizer: [String: [Int]], trainable: [String: [Int]]) -> String? {
+        var expectedMatrix: [String: [Int]] = [:]
+        var fallbackTrainable: [String: [Int]] = [:]
+        for (key, shape) in trainable {
+            if TrainingOptimizerFactory.isMatrixShape(shape) {
+                expectedMatrix["states.0.\(key)"] = shape
+            } else {
+                fallbackTrainable[key] = shape
+            }
+        }
+        let matrixState = optimizer.filter { $0.key.hasPrefix("states.0.") }
+        let fallbackState = optimizer.filter { $0.key.hasPrefix("states.1.") }
+        let message = "its optimizer state does not match Muon/AdamW buffers for each LoRA weight"
+        guard matrixState.count + fallbackState.count == optimizer.count, matrixState == expectedMatrix else {
+            return message
+        }
+        if fallbackTrainable.isEmpty {
+            return fallbackState.isEmpty ? nil : message
+        }
+        return adamMismatch(optimizer: fallbackState, trainable: fallbackTrainable, prefix: "states.1.") == nil ? nil : message
     }
 
     static func withResumeHint(_ error: BasaltError, in adapter: URL) -> BasaltError {

@@ -14,7 +14,7 @@ extension MLXInferenceEngine {
             (try distillRows(train, heldOut: heldOut, maxSeqLen: request.maxSeqLen, context), loraBlocks(of: context.model).count)
         }
         let identity = AdapterProgress(request, model: steps.fingerprint, data: AdapterProgress.digest(rows.train + rows.heldOut), layerCount: layerCount)
-        var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
+        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate))
         var progress = try await started(&state, identity, request: request, directory: directory, steps: steps)
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0
@@ -126,7 +126,7 @@ extension MLXInferenceEngine {
         return total / Float(rows.count)
     }
 
-    static func distillStep(_ rows: [DistillRow], index: Int, batchSize: Int, optimizer: Adam, model: any LanguageModel) throws -> Float {
+    static func distillStep(_ rows: [DistillRow], index: Int, batchSize: Int, optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
         try Task.checkCancellation()
         let step = valueAndGrad(model: model as Module) { _, arrays in [maskedLoss(model, arrays[0], arrays[1], arrays[2])] }
         let size = min(batchSize, rows.count)

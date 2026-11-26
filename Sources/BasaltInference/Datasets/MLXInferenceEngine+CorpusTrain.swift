@@ -15,7 +15,7 @@ extension AdapterProgress {
         case .phm(_, let r, _, _): r
         case .oft(let b, _, _): b
         }
-        (rank, method, batchSize, learningRate) = (effectiveRank, resolved, request.batchSize, request.learningRate)
+        (rank, method, optimizer, batchSize, learningRate) = (effectiveRank, resolved, request.optimizer, request.batchSize, request.learningRate)
     }
 }
 
@@ -117,7 +117,7 @@ enum CorpusAdapterRunner {
         }
         let digest = AdapterProgress.digest(rows.train + rows.heldOut)
         let identity = AdapterProgress(request, model: steps.fingerprint, data: digest, layerCount: layerCount)
-        var state = AdapterState(optimizer: Adam(learningRate: request.learningRate))
+        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate))
         var progress = try await startState(&state, identity: identity, request: request, directory: directory, steps: steps)
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0

@@ -43,8 +43,11 @@ struct TrainSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Batch size (1...64)")
     var batchSize: Int = 2
 
-    @Option(name: .long, help: "Adam learning rate")
+    @Option(name: .long, help: "Optimizer learning rate")
     var learningRate: Float = 1e-4
+
+    @Option(name: .long, help: "Optimizer for adapter training: adamw or muon")
+    var optimizer: TrainingOptimizerKind = .adamw
 
     @Option(name: .long, help: "Maximum tokenized sequence length (16...32768)")
     var maxSeqLen: Int = 2048
@@ -91,6 +94,7 @@ struct TrainSubcommand: AsyncParsableCommand {
         var request = CorpusTrainRequest(corpus: corpus)
         request.rank = rank
         request.method = try adapter.resolveMethod(fallbackRank: rank)
+        request.optimizer = optimizer
         (request.iterations, request.batchSize, request.learningRate, request.maxSeqLen) = (iterations, batchSize, learningRate, maxSeqLen)
         (request.output, request.checkpointEvery, request.resume, request.applyOverlay) = (output, checkpointEvery, resume, checkGate)
         request.dpoPairsPath = dpoPairs

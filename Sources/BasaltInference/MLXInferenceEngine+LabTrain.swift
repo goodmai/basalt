@@ -147,7 +147,7 @@ extension MLXInferenceEngine {
         var losses: [Float] = []
         var nonFiniteStep: Int?
         try LoRATrain.train(
-            model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: Adam(learningRate: request.learningRate),
+            model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate),
             loss: { _, inputs, targets, lengths in labLoss(context.model, inputs, targets, lengths) }, tokenizer: context.tokenizer, parameters: parameters
         ) { progress in
             if case .train(let step, let loss, _, _) = progress {
@@ -429,7 +429,8 @@ extension MLXInferenceEngine {
             iterations: request.iterations,
             learningRate: request.learningRate,
             batchSize: min(4, tokenized.count),
-            emaDecay: request.emaDecay ?? adpo.emaDecay
+            emaDecay: request.emaDecay ?? adpo.emaDecay,
+            optimizer: request.optimizer
         )
         let outcome = try ADPOTrainer.optimize(
             model: context.model,
