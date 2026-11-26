@@ -7,11 +7,11 @@
 [English](README.md) · [Русский](README.ru.md) · [中文](README.zh.md) · [Español](README.es.md) · [Français](README.fr.md) · **日本語** · [Deutsch](README.de.md) · [한국어](README.ko.md) · [Bahasa Indonesia](README.id.md) · **[Website — bas-alt.vercel.app](https://bas-alt.vercel.app)**
 
 [![Website](https://img.shields.io/badge/website-bas--alt.vercel.app-FF5E36.svg)](https://bas-alt.vercel.app)
-[![Release v0.11.0](https://img.shields.io/badge/release-v0.11.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.11.0)
+[![Release v0.13.0](https://img.shields.io/badge/release-v0.13.0-0A84FF.svg)](https://github.com/goodmai/basalt/releases/tag/v0.13.0)
 [![CI Release](https://github.com/goodmai/basalt/actions/workflows/release.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/release.yml)
 [![Security Audit](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml/badge.svg)](https://github.com/goodmai/basalt/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](LICENSE)
-[![Models on HF](https://img.shields.io/badge/%F0%9F%A4%97%20Models-goodmai%20%2855%2B%29-black.svg)](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc)
+[![Models on HF](https://img.shields.io/badge/%F0%9F%A4%97%20Models-goodmai%20%2865%2B%29-black.svg)](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc)
 [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6%20Run%20with%20Basalt-1--click-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?lang=en)
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2027%2B%20%C2%B7%20Apple%20Silicon-black.svg)](docs/i18n/ja/install.md#requirements)
@@ -33,7 +33,7 @@
 | [`lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly`](https://huggingface.co/lukaskremla/Qwen3.8-27B-3bit-MLX-TextOnly) | ハイブリッド線形/フルアテンション、dense | [golden](Tests/BasaltTests/Fixtures/golden/lukaskremla--Qwen3.8-27B-3bit-MLX-TextOnly.json) |
 | [`LiquidAI/LFM2.5-24B-A2B-MLX-4bit`](https://huggingface.co/LiquidAI/LFM2.5-24B-A2B-MLX-4bit) | ハイブリッド畳み込み + アテンション、MoE | [golden](Tests/BasaltTests/Fixtures/golden/LiquidAI--LFM2.5-24B-A2B-MLX-4bit.json) |
 
-### [`huggingface.co/goodmai`](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc) からワンクリック起動（検証済みモデル 55 種以上）
+### [`huggingface.co/goodmai`](https://huggingface.co/collections/goodmai/basalt-inference-and-quantization-stack-6af94bed95c64cce97e188fc) からワンクリック起動（検証済みモデル 65 種以上）
 
 [`goodmai`](https://huggingface.co/goodmai) 配下の各モデルカードには **Run with Basalt** ボタン（[`goodmai-run-with-basalt.static.hf.space`](https://goodmai-run-with-basalt.static.hf.space/?lang=en)）があり、`basalt://run?model=...` 経由で `Basalt.app` を起動するか、正確な `basalt serve` / `basalt compose` CLI コマンドを表示します:
 
@@ -53,6 +53,15 @@
 | [`goodmai/DeepSeek-OCR-2-8bit`](https://huggingface.co/goodmai/DeepSeek-OCR-2-8bit) | 公式 768 タイリング対応ビジョンエンコーダ OCR（`/v1/pipeline`） | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?model=goodmai%2FDeepSeek-OCR-2-8bit&role=ocr&lang=en) |
 | [`goodmai/OpenJev-Flash-9B-MLX-4bit`](https://huggingface.co/goodmai/OpenJev-Flash-9B-MLX-4bit) | 9B ローカル System One 判定器（精度 98.9%、LLM トークン −77%） | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?model=goodmai%2FOpenJev-Flash-9B-MLX-4bit&role=decide&lang=en) |
 | [`24gb-voice-zonos`](docs/i18n/ja/compose.md#bundled-hardware-tiered-profiles-526) | 推奨 24 GB Compose スタック（Chat + ZONOS3 + Kokoro ANE） | [![Run with Basalt](https://img.shields.io/badge/%E2%96%B6_Run_with_Basalt-0A84FF.svg)](https://goodmai-run-with-basalt.static.hf.space/?profile=24gb-voice-zonos&lang=en) |
+
+### v0.13.0 の新機能（[変更履歴](CHANGELOG.md)）
+
+- **Inkling 2 Mini。** ループ型 MoE がツール呼び出しとエージェントのターン間のプロンプトキャッシュ再利用を含めてエンドツーエンドで動作します。チェックポイント付属の DSpark ヘッドを使う `--mtp` でコードのデコードが 28.0 から 49.8 tok/s に向上し（M4 Pro、24 GB）、37.5K トークンのプロンプトもピーク 14.5 GB、スワップ 0 です（[#650](https://github.com/goodmai/basalt/issues/650)）。
+- **あらゆるソースから NVFP4。** `models convert --to nvfp4` は任意のチェックポイントから変換できます。NVIDIA ModelOpt NVFP4 は `models download` と `serve` の時点で自動的にロスレスでインポートされます。KV 領域が足りない MoE は Metal OOM にならず、エキスパートをストリーミングします（[#677](https://github.com/goodmai/basalt/issues/677)）。
+- **新アーキテクチャと KV。** エキスパートをストリーミングする Qwen3-Coder-Next（[#642](https://github.com/goodmai/basalt/issues/642)）、BailingHybrid / Ling-3.0（[#672](https://github.com/goodmai/basalt/issues/672)）、32K–128K で KV メモリを 1.40–1.53 分の 1 に抑える実験的な Gemma 4 K=V 共有行 KV キャッシュ（[#645](https://github.com/goodmai/basalt/issues/645)）。
+- **アダプターとコンテキスト。** PEFT LoRA アダプターをフォルダーまたは Hub から読み込み、エクスポートするチェックポイントに融合できます（[#675](https://github.com/goodmai/basalt/issues/675)）。`--rope-yarn` で Qwen 3.5–3.8 のコンテキストを拡張します（[#729](https://github.com/goodmai/basalt/issues/729)）。
+- **翻訳と自己書き換え。** `basalt:translation` ベンチマーク（chrF++、COMET、MetricX-24）と TranslateGemma-4 プロファイル、コピーオンライトの重みを使う実験的な自己書き換え（`basalt selfedit`、[#676](https://github.com/goodmai/basalt/issues/676)）。
+- **堅牢化。** 2 つのエージェントによる不具合調査で、REST/MCP の境界、クラウド予算、スコアリング、変換、キャッシュ、Mac アプリにわたる 64 件を修正しました（[#809](https://github.com/goodmai/basalt/pull/809), [#810](https://github.com/goodmai/basalt/pull/810), [#811](https://github.com/goodmai/basalt/pull/811)）。
 
 ---
 
@@ -79,10 +88,10 @@
 
 詳細: [学習コマンド](docs/i18n/ja/commands.md) · [自己学習、蒸留と品質ゲート](docs/i18n/ja/research-tools.md#self-training-train_experts)
 
-## Compose: 宣言的 `basalt.yaml v2.2`、ビジネスガバナンス & 84 種のハードウェアプロファイル
+## Compose: 宣言的 `basalt.yaml v2.2`、ビジネスガバナンス & 117 種のハードウェアプロファイル
 
 - **モデルのための docker-compose（`basalt.yaml v2.2`）。** ローカルおよびクラウドモデル、RAM 重複排除プランナ、スペシャリストプロファイル、`resident` / `on-demand` / `sequential` メモリモード、`BusinessOrchestrator` 5 コンポーネントルーティング、`LANTERN` セマンティックキャッシュ、`HITL` 承認ゲート（`/v1/mcp/approvals`）、`LAAS-CNRS` ニューロシンボリック知識コア（`SymbolicKnowledgeGraph`）を 1 つの宣言的ファイルで定義できます（[#607](https://github.com/goodmai/basalt/pull/607), [#625](https://github.com/goodmai/basalt/pull/625), [#626](https://github.com/goodmai/basalt/pull/626)）。
-- **あらゆる Mac（`16 GB`〜`256 GB`）向け 84 種の組み込みプロファイル。** 7 つのユニファイドメモリ階層（`16gb`、`24gb`、`32-36gb`、`48gb`、`64gb`、`128gb`、`256gb`）× 12 のワークロード類型を 1 コマンドで起動できます（`basalt compose up 24gb-voice-zonos`、[#528](https://github.com/goodmai/basalt/pull/528)）。
+- **あらゆる Mac（`16 GB`〜`256 GB`）向け 117 種の組み込みプロファイル。** 9 つのユニファイドメモリ階層（`16gb`、`24gb`、`32-36gb`、`48gb`、`64gb`、`96gb`、`128gb`、`192gb`、`256gb`）× 13 のワークロード類型を 1 コマンドで起動できます（`basalt compose up 24gb-voice-zonos`、[#528](https://github.com/goodmai/basalt/pull/528)）。
 - **収まらない構成は事前拒否、差分はライブ適用。** `basalt compose plan` はダウンロード前に Hub からモデルサイズを算出してメモリ超過を拒否し、`compose diff` / `compose up` は差分をクリーンにホットリロードします。`compose bench` は宣言的ベンチマークスイートを実行し、リーダーボードバンドルをエクスポートします（[#505](https://github.com/goodmai/basalt/pull/505)）。
 - **ローカル判定器、キャリブレーション済みルーティング & クラウド予算管理。** `OpenJev-Flash-9B-4bit` は 98.9% のトリアージ精度を達成しながら後段 LLM のトークン消費を 77% 削減します（[#465](https://github.com/goodmai/basalt/pull/465)）。温度スケーリング付き `CalibratedRouterGate` + `Gemini Decision 1` が日次 USD 上限内で高難度クエリを適切にルーティングし（[#418](https://github.com/goodmai/basalt/pull/418), [#622](https://github.com/goodmai/basalt/pull/622)）、知覚された文書や音声テキストはデフォルトで Mac の外に出ません。
 
@@ -142,7 +151,7 @@ ANTHROPIC_BASE_URL=http://localhost:8080 ANTHROPIC_AUTH_TOKEN=local claude
 basalt serve --model goodmai/Qwen3.6-35B-A3B-8bit --expert-streaming --rest
 
 basalt compose plan 24gb-voice-zonos
-basalt compose up 24gb-voice-zonos          # 84 profiles across 16–256 GB Macs
+basalt compose up 24gb-voice-zonos          # 117 profiles across 16–256 GB Macs
 ```
 
 チェックアウトから Mac アプリを起動する（初回起動時に `basalt://` ワンクリックリンクが自動登録されます）:
