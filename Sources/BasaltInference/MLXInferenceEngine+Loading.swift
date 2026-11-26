@@ -94,6 +94,7 @@ extension MLXInferenceEngine {
                 try JSONDecoder.json5().decode(NemotronTranscribeConfiguration.self, from: data)
             )
         }
+        await registry.registerModelType(WhisperModel.modelType) { data in try WhisperModel(configurationData: data) }
         await VLMTypeRegistry.shared.registerModelType(PaddleOCRVL.modelType) { data in
             PaddleOCRVL(try JSONDecoder.json5().decode(PaddleOCRVLConfiguration.self, from: data))
         }
@@ -181,7 +182,7 @@ extension MLXInferenceEngine {
             try await probe(loaded, directory: directory, modelPath: modelPath)
             let drafts = configuration.mtp ? await loadMTPDrafter(for: loaded, directory: source, modelPath: modelPath) : false
             let capabilities = ModelCapabilities.of(modelType: modelType)
-            let transcribes = await loaded.perform { $0.model is NemotronTranscribeModel }
+            let transcribes = await loaded.perform { $0.model is any SpeechRecognitionModel }
             let facts = ModelFacts(
                 profile: ModelProfileRegistry.profile(forModelAt: modelPath),
                 samplingDefaults: SamplingDefaults(generationConfig: ModelCache.generationConfig(at: directory)),
@@ -229,13 +230,18 @@ extension MLXInferenceEngine {
 extension MLXInferenceEngine {
     static func upstreamTokenizer(at directory: URL) async throws -> any Tokenizers.Tokenizer {
         let configuration = LanguageModelConfigurationFromHub(modelFolder: directory)
-        guard let tokenizerConfig = try await configuration.tokenizerConfig else {
+        let fallback: Config? = try await configuration.modelType == WhisperModel.modelType ? whisperTokenizerConfig : nil
+        guard let tokenizerConfig = try await configuration.tokenizerConfig ?? fallback else {
             throw Tokenizers.TokenizerError.missingConfig
         }
         return try Tokenizers.PreTrainedTokenizer(
             tokenizerConfig: compatibleChatTemplate(in: tokenizerConfig),
             tokenizerData: try await configuration.tokenizerData)
     }
+
+    static let whisperTokenizerConfig: Config = [
+        "tokenizer_class": "WhisperTokenizer", "bos_token": "<|endoftext|>", "eos_token": "<|endoftext|>", "unk_token": "<|endoftext|>",
+    ]
 
     static func compatibleChatTemplate(in tokenizerConfig: Config) -> Config {
         guard let template = tokenizerConfig.chatTemplate.string(), var entries = tokenizerConfig.dictionary() else {

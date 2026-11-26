@@ -82,7 +82,7 @@ extension ServeCommand {
     static func audioRefusal(_ model: String, path: String) -> String? {
         let modelType = ModelCache.config(at: URL(fileURLWithPath: path))?["model_type"] as? String
         guard !MLXInferenceEngine.transcribesAudio(modelType: modelType) else { return nil }
-        return "--pipeline-audio-model \(model) (model_type \(modelType ?? "unknown")) has no audio encoder; use Nemotron Transcribe (nemotron_transcribe)"
+        return "--pipeline-audio-model \(model) (model_type \(modelType ?? "unknown")) has no audio encoder; use Nemotron Transcribe (nemotron_transcribe) or Whisper (whisper)"
     }
 
     static func adapterRefusal(_ adapters: [String], plan: PlanVerdict?) -> String? {
