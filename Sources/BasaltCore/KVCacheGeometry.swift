@@ -184,11 +184,29 @@ public struct KVCacheGeometry: Sendable, Equatable {
         isFromConfig = false
     }
 
+    init(
+        elementsPerToken: Double,
+        keyElementsPerToken: Double,
+        windowedElementsPerToken: Double,
+        window: Int,
+        fixedStateBytes: Int64,
+        quantizedGroupSize: Int
+    ) {
+        self.elementsPerToken = elementsPerToken
+        self.keyElementsPerToken = keyElementsPerToken
+        self.windowedElementsPerToken = windowedElementsPerToken
+        self.window = window
+        self.fixedStateBytes = fixedStateBytes
+        self.quantizedGroupSize = quantizedGroupSize
+        self.isFromConfig = true
+    }
+
     static let maxDimension = 1 << 16
 
     public init?(config root: [String: Any]) {
         let c = root["text_config"] as? [String: Any] ?? root
         if let xlstm = Self.xlstmGeometry(c) { self = xlstm; return }
+        if let recurrent = Self.recurrentModelGeometry(c) { self = recurrent; return }
         guard let layers = c["num_hidden_layers"] as? Int, (1 ... Self.maxDimension).contains(layers),
               let heads = c["num_attention_heads"] as? Int, (1 ... Self.maxDimension).contains(heads) else { return nil }
         let kvHeads = c["num_key_value_heads"] as? Int ?? heads

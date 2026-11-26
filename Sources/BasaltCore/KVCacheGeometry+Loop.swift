@@ -34,7 +34,6 @@ extension KVCacheGeometry {
         let channels = 2 * kvHeads * headDim + 2 * hidden
         return Int64(visits * (kernel - 1) * channels) * Int64(activationBytes)
     }
-
     init(recurrentFixedStateBytes bytes: Int64) {
         elementsPerToken = 0
         keyElementsPerToken = 0
@@ -78,5 +77,37 @@ extension KVCacheGeometry {
         if let value = raw as? Double { return value }
         if let value = raw as? Int { return Double(value) }
         return (raw as? NSNumber)?.doubleValue
+    }
+
+    static func recurrentModelGeometry(_ c: [String: Any]) -> KVCacheGeometry? {
+        guard let modelType = (c["model_type"] as? String)?.lowercased() else { return nil }
+        let isMamba3 = Mamba3Configuration.supportedModelTypes.contains(modelType)
+        let isGDN2 = GatedDeltaNet2Configuration.supportedModelTypes.contains(modelType)
+        guard isMamba3 || isGDN2,
+              JSONSerialization.isValidJSONObject(c),
+              let data = try? JSONSerialization.data(withJSONObject: c)
+        else { return nil }
+        if isMamba3 {
+            guard let cfg = try? JSONDecoder().decode(Mamba3Configuration.self, from: data).validated() else { return nil }
+            return KVCacheGeometry(recurrentFixedStateBytes: cfg.recurrentStateFootprint().bytes.rawValue)
+        }
+        guard let cfg = try? JSONDecoder().decode(GatedDeltaNet2Configuration.self, from: data).validated() else { return nil }
+            let sliding = cfg.slidingAttentionLayerIndices.count
+            let full = max(0, cfg.attentionLayerCount - sliding)
+            let kvDim = cfg.numKeyValueHeads * cfg.attentionHeadDim
+            let groupSize = quantizedGroupSize(keyDim: cfg.attentionHeadDim, valueDim: cfg.attentionHeadDim) ?? defaultQuantizedGroupSize
+            return KVCacheGeometry(
+                elementsPerToken: Double(full * 2 * kvDim),
+                keyElementsPerToken: Double(full * kvDim),
+                windowedElementsPerToken: kvBytesPerToken(
+                    layers: sliding,
+                    kvHeads: cfg.numKeyValueHeads,
+                    headDim: cfg.attentionHeadDim,
+                    bytesPerElement: 1
+                ),
+                window: cfg.slidingWindow ?? 0,
+                fixedStateBytes: cfg.recurrentStateFootprint(activationBytes: Int(activationBytes)).bytes.rawValue,
+                quantizedGroupSize: groupSize
+            )
     }
 }
