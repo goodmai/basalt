@@ -74,9 +74,9 @@ struct AdaLoRAAndShortcutAuditTests {
 
         let cmd = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl", "--quantized-base-bits", "4", "--learning-rate", "0.0004"])
         #expect(cmd.quantizedBaseBits == 4)
-        for unwired in [["--dpo-pairs", "pairs.jsonl"], ["--adalora-target-rank", "8"]] {
-            #expect(throws: (any Error).self, "\(unwired)") { _ = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl"] + unwired) }
-        }
+        let dpoCmd = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl", "--dpo-pairs", "pairs.jsonl"])
+        #expect(dpoCmd.dpoPairs == "pairs.jsonl")
+        #expect(throws: (any Error).self) { _ = try TrainSubcommand.parse(["org/model", "--dataset", "local.jsonl", "--adalora-target-rank", "8"]) }
 
         var req = CorpusTrainRequest(corpus: CorpusSourceSpec(source: "local.jsonl"))
         req.learningRate = 4e-4
