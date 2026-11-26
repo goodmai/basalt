@@ -118,6 +118,19 @@ extension MLXInferenceEngine {
     public static func registerAliases() async {
         await aliasRegistration.value
     }
+
+    public static func loadableModelTypes(among candidates: [String]) async -> [String] {
+        await registerAliases()
+        var loadable: [String] = []
+        for type in candidates {
+            if await LLMTypeRegistry.shared.contains(type) {
+                loadable.append(type)
+            } else if await VLMTypeRegistry.shared.contains(type) {
+                loadable.append(type)
+            }
+        }
+        return loadable
+    }
 }
 
 extension MLXInferenceEngine {
