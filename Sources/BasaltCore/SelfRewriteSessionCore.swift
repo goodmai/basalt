@@ -97,9 +97,24 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
         self.costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD) ?? 0
     }
 
+    public static let readOnlyActionKeys: [String] = [
+        "pairedPractice", "registerSVD", "summarizeMoERouter", "measureRoundTrip",
+        "inspectTensor", "describeModel",
+    ]
+
+    public static let knownActionKeys: [String] = [
+        "submit", "withdraw", "applyEdit", "undoLastEdit", "pairedReserved",
+    ] + readOnlyActionKeys
+
     public static func stripThinkingBlocks(_ text: String) -> String {
         var result = text
-        for (open, close) in [("<think>", "</think>"), ("<|thought|>", "<|thought|>"), ("<thought>", "</thought>")] {
+        let delimiters = [
+            ("<think>", "</think>"),
+            ("<|thought|>", "<|thought|>"),
+            ("<thought>", "</thought>"),
+            ("<|channel>thought", "<channel|>"),
+        ]
+        for (open, close) in delimiters {
             while let start = result.range(of: open) {
                 if let end = result.range(of: close, range: start.upperBound ..< result.endIndex) {
                     result.removeSubrange(start.lowerBound ..< end.upperBound)
@@ -109,6 +124,30 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
             }
         }
         return result
+    }
+
+    static func normalizeActionPayload(_ data: Data) -> Data {
+        guard var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return data }
+        if let name = obj["action"] as? String, knownActionKeys.contains(name) {
+            obj["action"] = [name: [String: Any]()]
+            return (try? JSONSerialization.data(withJSONObject: obj)) ?? data
+        }
+        if let actionDict = obj["action"] as? [String: Any], actionDict.count > 1 {
+            let matched = knownActionKeys.filter { actionDict[$0] != nil }
+            let chosen: String?
+            if matched.count == 1 {
+                chosen = matched[0]
+            } else if matched.count > 1, matched.allSatisfy(readOnlyActionKeys.contains) {
+                chosen = readOnlyActionKeys.first(where: { actionDict[$0] != nil })
+            } else {
+                chosen = nil
+            }
+            if let key = chosen, let value = actionDict[key] {
+                obj["action"] = [key: value]
+                return (try? JSONSerialization.data(withJSONObject: obj)) ?? data
+            }
+        }
+        return data
     }
 
     public static func extractBalancedJSONObjects(from text: String) -> [String] {
@@ -151,7 +190,7 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
         for candidate in candidates.reversed() {
             if let data = candidate.data(using: .utf8) {
                 do {
-                    return try decoder.decode(EditEditorTurn.self, from: data)
+                    return try decoder.decode(EditEditorTurn.self, from: normalizeActionPayload(data))
                 } catch {
                     lastError = error
                 }
@@ -161,7 +200,7 @@ public struct EditEditorTurn: Sendable, Codable, Equatable {
             throw .invalidEditorTurn("response is not valid UTF-8 JSON")
         }
         do {
-            return try decoder.decode(EditEditorTurn.self, from: fallbackData)
+            return try decoder.decode(EditEditorTurn.self, from: normalizeActionPayload(fallbackData))
         } catch {
             throw .invalidEditorTurn("could not decode EditEditorTurn JSON: \(lastError ?? error)")
         }
@@ -192,12 +231,36 @@ public enum SelfRewritePromptFormatter {
     }
 
     public static let maxObservationChars = 2400
+    public static let maxPromptEntries = 16
 
     public static func compactObservation(_ text: String, limit: Int = maxObservationChars) -> String {
         guard text.count > limit, limit > 500 else { return text }
         let head = text.prefix(limit - 450)
         let tail = text.suffix(350)
         return "\(head) ... [truncated \(text.count) chars] ... \(tail)"
+    }
+
+    public static func windowedEntries(
+        _ entries: [EditSessionTranscriptEntry],
+        limit: Int = maxPromptEntries
+    ) -> [EditSessionTranscriptEntry] {
+        let cap = max(3, limit)
+        guard entries.count > cap else { return entries }
+        let headCount = 2
+        let tailCount = cap - headCount
+        let dropped = entries.count - cap
+        let marker = EditSessionTranscriptEntry(
+            turnIndex: -1,
+            role: "tool",
+            content: "[... \(dropped) earlier transcript entries omitted ...]"
+        )
+        return Array(entries.prefix(headCount)) + [marker] + Array(entries.suffix(tailCount))
+    }
+
+    private static func formatEntry(_ entry: EditSessionTranscriptEntry) -> String {
+        let role = entry.role == "editor" ? "assistant" : "user"
+        let body = entry.role == "tool" ? compactObservation(entry.content) : entry.content
+        return "\(role): \(body)"
     }
 
     public static func formatSinglePrompt(
@@ -212,11 +275,7 @@ public enum SelfRewritePromptFormatter {
         if entries.isEmpty {
             parts.append("user: Begin session. Inspect model topology or tensor stats first, then test edits on practice problems before submitting or withdrawing.")
         } else {
-            for entry in entries {
-                let role = entry.role == "editor" ? "assistant" : "user"
-                let body = entry.role == "tool" ? compactObservation(entry.content) : entry.content
-                parts.append("\(role): \(body)")
-            }
+            parts.append(contentsOf: windowedEntries(entries).map(formatEntry))
         }
         parts.append("assistant:")
         return parts.joined(separator: "\n")

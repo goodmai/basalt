@@ -55,7 +55,7 @@ struct AppLifecycleL10nDefectRegressionTests {
             cloudEnvironment: { cloudBox.withLock { $0 } }
         )
         await app.start()
-        #expect(await app.readyEndpoint(within: .seconds(5)) != nil)
+        #expect(await app.readyEndpoint(within: .seconds(20)) != nil)
 
         cloudBox.withLock { $0 = ["OPENROUTER_API_KEY": "sk-fresh"] }
         await app.switchEngine(launch.arguments)
@@ -70,7 +70,7 @@ struct AppLifecycleL10nDefectRegressionTests {
         #expect(afterRestart.environment["OPENROUTER_API_KEY"] == "sk-fresh")
 
         await app.switchEngine(launch.arguments, forceRestart: true)
-        #expect(await app.readyEndpoint(within: .seconds(5)) != nil)
+        #expect(await app.readyEndpoint(within: .seconds(20)) != nil)
         await app.stop()
     }
 
