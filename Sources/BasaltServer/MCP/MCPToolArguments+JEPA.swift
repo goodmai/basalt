@@ -13,6 +13,7 @@ extension LeJEPATrainRequest {
         learningRate = try MCPArguments.number("learningRate", in: args) ?? learningRate
         optimizer = try TrainingOptimizerKind.fromMCP(args) ?? optimizer
         weightDecay = try MCPArguments.number("weightDecay", in: args) ?? weightDecay
+        optimizerOptions = try TrainingOptimizerOptions.fromMCP(args, kind: optimizer, weightDecay: weightDecay)
         warmupRatio = try MCPArguments.number("warmupRatio", in: args) ?? warmupRatio
         lambda = try MCPArguments.number("lambda", in: args) ?? lambda
         maxGradNorm = try MCPArguments.number("maxGradNorm", in: args) ?? maxGradNorm

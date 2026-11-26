@@ -14,15 +14,23 @@ struct AdapterProgress: Sendable, Codable, Equatable {
     var rank: Int
     var method: AdapterMethod?
     var optimizer: TrainingOptimizerKind?
+    var optimizerOptions: TrainingOptimizerOptions?
     var batchSize: Int
     var learningRate: Float
 
     var effectiveOptimizer: TrainingOptimizerKind { optimizer ?? .adamw }
+    var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: effectiveOptimizer)
+        resolved.kind = effectiveOptimizer
+        return resolved
+    }
 
     init(_ request: DistillRequest, model: String, data: String, layerCount: Int) {
         (self.model, self.data, self.layerCount) = (model, data, layerCount)
         layers = request.layers ?? Array(0 ..< layerCount)
-        (rank, method, optimizer, batchSize, learningRate) = (request.rank, request.method, request.optimizer, request.batchSize, request.learningRate)
+        (rank, method, optimizer, optimizerOptions, batchSize, learningRate) = (
+            request.rank, request.method, request.optimizer, request.effectiveOptimizerOptions, request.batchSize, request.learningRate
+        )
     }
 
     static func digest(_ rows: [DistillRow]) -> String {
@@ -49,14 +57,29 @@ struct AdapterProgress: Sendable, Codable, Equatable {
         guard data == identity.data else { return "the training rows differ from the checkpoint's: prompts, teacher answers, filter, held-out split, maxSeqLen, samples or reasoning changed" }
         var normalized = self
         normalized.optimizer = effectiveOptimizer
+        normalized.optimizerOptions = effectiveOptimizerOptions
         var same = identity
-        (same.step, same.losses, same.optimizer) = (step, losses, identity.effectiveOptimizer)
+        (same.step, same.losses, same.optimizer, same.optimizerOptions) = (
+            step, losses, identity.effectiveOptimizer, identity.effectiveOptimizerOptions
+        )
         guard same == normalized else {
             let methodDesc = method.map { "method \($0)" } ?? "rank \(rank)"
-            return "the checkpoint was trained with \(methodDesc), optimizer \(effectiveOptimizer.rawValue), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
+            let optDesc = optimizerSummary(effectiveOptimizerOptions)
+            return "the checkpoint was trained with \(methodDesc), optimizer \(optDesc), layers \(layers) of \(layerCount), batch size \(batchSize) and learning rate \(learningRate); resume with the same settings"
         }
         guard step < iterations else { return "the checkpoint is at step \(step); iterations must be larger to resume" }
         return nil
+    }
+
+    private func optimizerSummary(_ options: TrainingOptimizerOptions) -> String {
+        switch options.kind {
+        case .adamw, .muon:
+            options.kind.rawValue
+        case .muonclip:
+            "muonclip(tau=\(options.qkClipTau), alpha=\(options.qkClipAlpha))"
+        case .soap:
+            "soap(freq=\(options.soapPrecondFreq), maxDim=\(options.soapMaxPrecondDim), shampooBeta=\(options.soapShampooBeta))"
+        }
     }
 }
 
@@ -114,7 +137,13 @@ enum AdapterCheckpoint {
         let weights = try MLX.loadArrays(url: directory.appending(component: "adapter.safetensors"))
         let optimizerFile = directory.appending(component: "optimizer.safetensors")
         let optimizer = FileManager.default.fileExists(atPath: optimizerFile.path) ? try MLX.loadArrays(url: optimizerFile) : [:]
-        if let problem = mismatch(weights: weights.mapValues(\.shape), optimizer: optimizer.mapValues(\.shape), trainable: trainable, kind: state.optimizer.kind) {
+        if let problem = mismatch(
+            weights: weights.mapValues(\.shape),
+            optimizer: optimizer.mapValues(\.shape),
+            trainable: trainable,
+            kind: state.optimizer.kind,
+            soapMaxPrecondDim: state.optimizer.options.soapMaxPrecondDim
+        ) {
             throw BasaltError.invalidRequestStructure(details: "distill: the checkpoint in \(directory.path) does not fit this adapter: \(problem)")
         }
         state.weights = weights.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
@@ -126,7 +155,8 @@ enum AdapterCheckpoint {
         weights: [String: [Int]],
         optimizer: [String: [Int]],
         trainable: [String: [Int]],
-        kind: TrainingOptimizerKind = .adamw
+        kind: TrainingOptimizerKind = .adamw,
+        soapMaxPrecondDim: Int = TrainingOptimizerOptions.defaultSOAPMaxPrecondDim
     ) -> String? {
         guard weights == trainable else {
             let foreign = Set(weights.keys).subtracting(trainable.keys).sorted().prefix(3)
@@ -136,8 +166,10 @@ enum AdapterCheckpoint {
         return switch kind {
         case .adamw:
             adamMismatch(optimizer: optimizer, trainable: trainable, prefix: "")
-        case .muon:
+        case .muon, .muonclip:
             muonMismatch(optimizer: optimizer, trainable: trainable)
+        case .soap:
+            soapMismatch(optimizer: optimizer, trainable: trainable, maxPrecondDim: soapMaxPrecondDim)
         }
     }
 
@@ -172,6 +204,46 @@ enum AdapterCheckpoint {
         guard matrixState.count + fallbackState.count == optimizer.count, matrixState == expectedMatrix else {
             return message
         }
+        if fallbackTrainable.isEmpty {
+            return fallbackState.isEmpty ? nil : message
+        }
+        return adamMismatch(optimizer: fallbackState, trainable: fallbackTrainable, prefix: "states.1.") == nil ? nil : message
+    }
+
+    private static func soapMismatch(
+        optimizer: [String: [Int]],
+        trainable: [String: [Int]],
+        maxPrecondDim: Int
+    ) -> String? {
+        var expectedSOAP: [String: [Int]] = [:]
+        var expectedSteps: Set<String> = []
+        var fallbackTrainable: [String: [Int]] = [:]
+        for (key, shape) in trainable {
+            if MatrixOptimizerMath.isSOAPEligible(shape: shape, maxPrecondDim: maxPrecondDim) {
+                let plan = MatrixOptimizerMath.soapAxisPlan(rows: shape[0], cols: shape[1], maxPrecondDim: maxPrecondDim)
+                expectedSOAP["states.0.\(key).m"] = shape
+                expectedSOAP["states.0.\(key).v"] = shape
+                expectedSteps.insert("states.0.\(key).step")
+                if plan.useLeft {
+                    expectedSOAP["states.0.\(key).l"] = [shape[0], shape[0]]
+                    expectedSOAP["states.0.\(key).qL"] = [shape[0], shape[0]]
+                }
+                if plan.useRight {
+                    expectedSOAP["states.0.\(key).r"] = [shape[1], shape[1]]
+                    expectedSOAP["states.0.\(key).qR"] = [shape[1], shape[1]]
+                }
+            } else {
+                fallbackTrainable[key] = shape
+            }
+        }
+        let soapState = optimizer.filter { $0.key.hasPrefix("states.0.") }
+        let fallbackState = optimizer.filter { $0.key.hasPrefix("states.1.") }
+        let message = "its optimizer state does not match SOAP/AdamW buffers for each LoRA weight"
+        guard soapState.count + fallbackState.count == optimizer.count else { return message }
+        let soapSteps = soapState.filter { $0.key.hasSuffix(".step") }
+        guard soapState.filter({ !$0.key.hasSuffix(".step") }) == expectedSOAP,
+              Set(soapSteps.keys) == expectedSteps,
+              soapSteps.values.allSatisfy({ $0.reduce(1, *) == 1 }) else { return message }
         if fallbackTrainable.isEmpty {
             return fallbackState.isEmpty ? nil : message
         }

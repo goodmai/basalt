@@ -50,8 +50,10 @@ struct DistillSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "LoRA rank")
     var rank: Int = 16
 
-    @Option(name: .long, help: "Optimizer for distillation training: adamw or muon")
-    var optimizer: TrainingOptimizerKind = .adamw
+    @OptionGroup
+    var optimizerOptions: OptimizerTrainingOptions
+
+    var optimizer: TrainingOptimizerKind { optimizerOptions.optimizer }
 
     @OptionGroup
     var adapter: AdapterTrainingOptions
@@ -81,6 +83,7 @@ struct DistillSubcommand: AsyncParsableCommand {
         (request.filter, request.budgetUSD, request.iterations, request.rank, request.output, request.includeReasoning) = (filter, budgetUsd, iterations, rank, output, includeReasoning)
         request.method = try adapter.resolveMethod(fallbackRank: rank)
         request.optimizer = optimizer
+        request.optimizerOptions = try optimizerOptions.resolve()
         (request.onPolicy, request.checkpointEvery, request.resume) = (onPolicy, checkpointEvery, resume)
         let engine = MLXInferenceEngine()
         let orchestrator = ModelOrchestratorActor(engine: engine)

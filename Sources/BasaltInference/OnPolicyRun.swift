@@ -11,7 +11,7 @@ struct OnPolicyRun: Sendable {
     let steps: AdapterSteps
 
     func train(saving directory: URL) async throws(BasaltError) -> OnPolicyOutcome {
-        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate))
+        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(options: request.effectiveOptimizerOptions, learningRate: request.learningRate))
         let heldOutRows = try await sampled(plan.heldOut, round: 0, &state)
         let heldOut = try await scored(plan.heldOut, heldOutRows)
         let before = try await steps.trainedAdapter(&state) { context, _, _ in MLXInferenceEngine.meanKL(heldOut, model: context.model) }

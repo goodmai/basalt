@@ -401,13 +401,12 @@ extension ResearchTool {
             "maxSeqLen": ["type": "integer", "minimum": 4, "maximum": 512, "description": "Maximum tokens per view (default: 64)"],
             "iterations": ["type": "integer", "minimum": 1, "maximum": 10000, "description": "Training iterations (default: 100)"],
             "learningRate": ["type": "number", "description": "Peak learning rate (default: 1e-4)"],
-            "optimizer": ["type": "string", "enum": TrainingOptimizerKind.allCases.map(\.rawValue), "description": "Optimizer: adamw or muon (default: adamw)"],
-            "weightDecay": ["type": "number", "description": "AdamW weight decay (default: 0.05)"],
+            "weightDecay": ["type": "number", "description": "Weight decay (default: 0.05)"],
             "warmupRatio": ["type": "number", "description": "Warmup fraction of iterations (default: 0.05)"],
             "lambda": ["type": "number", "description": "SIGReg weight (default: 0.02)"],
             "maxGradNorm": ["type": "number", "description": "Gradient clipping max norm (default: 1.0)"],
             "isCausal": ["type": "boolean", "description": "Causal encoding (default: false)"],
-        ]
+        ].merging(optimizerProperties) { $1 }
     }
 
     static var distillProperties: [String: Any] {
@@ -432,7 +431,6 @@ extension ResearchTool {
             "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
             "batchSize": ["type": "integer", "minimum": 1, "maximum": 64, "description": "Examples per step (default 2)"],
             "learningRate": ["type": "number", "description": "Optimizer learning rate (default 1e-4)"],
-            "optimizer": ["type": "string", "enum": TrainingOptimizerKind.allCases.map(\.rawValue), "description": "Optimizer: adamw or muon (default adamw)"],
             "maxSeqLen": ["type": "integer", "minimum": 16, "maximum": 32_768, "description": "Longer examples are dropped and counted (default 2048)"],
             "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
             "onPolicy": ["type": "boolean", "description": "On-policy distillation: the student samples, a basalt teacher (provider openai) scores its tokens on /v1/score, reverse KL over the teacher's top 20; no cache, budget or filter (default false)"],
@@ -441,7 +439,7 @@ extension ResearchTool {
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
             "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
-        ].merging(adapterMethodProperties) { $1 }
+        ].merging(adapterMethodProperties) { $1 }.merging(optimizerProperties) { $1 }
     }
 
     static var trainProperties: [String: Any] {
@@ -456,12 +454,11 @@ extension ResearchTool {
             "rank": ["type": "integer", "minimum": 1, "maximum": 64, "description": "LoRA rank (default 8)"],
             "iterations": ["type": "integer", "minimum": 1, "maximum": 10_000, "description": "Training iterations (default 200)"],
             "learningRate": ["type": "number", "description": "Optimizer learning rate (default 1e-5)"],
-            "optimizer": ["type": "string", "enum": TrainingOptimizerKind.allCases.map(\.rawValue), "description": "Optimizer: adamw or muon (default adamw)"],
             "output": ["type": "string", "description": "Adapter directory (default ~/.basalt/adapters/<fingerprint>/<timestamp>); never inside the model directory"],
             "onPolicy": ["type": "boolean", "description": "On-policy distillation: the student samples, a basalt teacher (provider openai) scores its tokens on /v1/score, reverse KL over the teacher's top 20; no cache, budget or filter (default false)"],
             "heldOut": ["type": "array", "items": ["type": "string"], "minItems": ResearchCall.comparePrompts.lowerBound, "maxItems": ResearchCall.comparePrompts.upperBound, "description": "General prompts the quality gate checks the adapter on"],
             "maxKL": ["type": "number", "minimum": 0, "description": "Gate: largest mean KL on heldOut (default 0.5)"],
             "maxPerplexityRise": ["type": "number", "minimum": 0, "description": "Gate: largest relative perplexity rise on heldOut (default 0.1)"],
-        ].merging(adapterMethodProperties) { $1 }
+        ].merging(adapterMethodProperties) { $1 }.merging(optimizerProperties) { $1 }
     }
 }

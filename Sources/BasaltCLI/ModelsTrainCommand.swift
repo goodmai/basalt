@@ -46,8 +46,10 @@ struct TrainSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Optimizer learning rate")
     var learningRate: Float = 1e-4
 
-    @Option(name: .long, help: "Optimizer for adapter training: adamw or muon")
-    var optimizer: TrainingOptimizerKind = .adamw
+    @OptionGroup
+    var optimizerOptions: OptimizerTrainingOptions
+
+    var optimizer: TrainingOptimizerKind { optimizerOptions.optimizer }
 
     @Option(name: .long, help: "Maximum tokenized sequence length (16...32768)")
     var maxSeqLen: Int = 2048
@@ -99,6 +101,7 @@ struct TrainSubcommand: AsyncParsableCommand {
 
     func validate() throws {
         if adaLoRATargetRank != nil { throw ValidationError("--adalora-target-rank is not wired to corpus training yet (#617): the run would keep a fixed rank") }
+        try optimizerOptions.validate()
         try validateModes()
         try validatePostTrainingOptions()
     }
@@ -159,6 +162,7 @@ extension TrainSubcommand {
         request.rank = rank
         request.method = method
         request.optimizer = optimizer
+        request.optimizerOptions = optimizerOptions.buildOptions()
         (request.iterations, request.batchSize, request.learningRate, request.maxSeqLen) = (iterations, batchSize, effectiveLR, maxSeqLen)
         (request.output, request.checkpointEvery, request.resume, request.applyOverlay) = (outputPath, checkpointEvery, resume, applyOverlay)
         request.dpoPairsPath = dpoPairs
@@ -185,6 +189,7 @@ extension TrainSubcommand {
         config.rank = rank
         config.method = method
         config.optimizer = optimizer
+        config.optimizerOptions = optimizerOptions.buildOptions(weightDecay: config.weightDecay)
         config.seed = seed
         config.initialAdapterPath = initialAdapterPath
         config.output = outputPath
@@ -203,6 +208,7 @@ extension TrainSubcommand {
             seed: seed
         )
         config.optimizer = optimizer
+        config.optimizerOptions = optimizerOptions.buildOptions(weightDecay: config.weightDecay)
         config.tasks = .arithmetic(count: grpoTasks, seed: seed)
         config.rank = rank
         config.method = method

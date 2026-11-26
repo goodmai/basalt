@@ -92,6 +92,7 @@ extension MLXInferenceEngine {
         guard (1 ... 64).contains(request.batchSize) else { throw refused("batchSize must be in 1...64") }
         guard (16 ... 32_768).contains(request.maxSeqLen) else { throw refused("maxSeqLen must be in 16...32768") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "distill")
         guard request.checkpointEvery >= 0 else { throw refused("checkpointEvery must be 0 (off) or a positive number of steps") }
         guard !(request.onPolicy && request.resume) else { throw refused("resume continues offline distillation; an on-policy run starts over") }
     }

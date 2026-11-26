@@ -303,12 +303,18 @@ public struct TrainRequest: Sendable, Codable, Equatable {
     public var iterations = 200
     public var learningRate: Float = 1e-5
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var adpo: ADPOConfig?
     public var emaDecay: Float?
     public var gate: GateRequest
     public var output: String?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer)
+        resolved.kind = optimizer
+        return resolved
+    }
 
     public init(tasks: TrainingTasks, gate: GateRequest) {
         self.tasks = tasks
@@ -354,11 +360,19 @@ public struct LeJEPATrainRequest: Sendable, Codable, Equatable {
     public var iterations: Int
     public var learningRate: Float = 1e-4
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var weightDecay: Float = 0.05
     public var warmupRatio: Float = 0.05
     public var lambda: Float = 0.02
     public var maxGradNorm: Float = 1.0
     public var isCausal: Bool = false
+
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer, weightDecay: weightDecay)
+        resolved.kind = optimizer
+        resolved.weightDecay = weightDecay
+        return resolved
+    }
 
     public init(datasetPath: String, iterations: Int) {
         self.datasetPath = datasetPath

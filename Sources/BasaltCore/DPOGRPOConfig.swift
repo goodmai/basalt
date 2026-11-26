@@ -116,6 +116,7 @@ public struct OfflineDPOConfig: Sendable, Equatable, Codable {
     public var layers: [Int]?
     public var method: AdapterMethod?
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var seed: UInt64 = 42
     public var maxGradNorm: Float = 1.0
     public var weightDecay: Float = 0.01
@@ -125,6 +126,12 @@ public struct OfflineDPOConfig: Sendable, Equatable, Codable {
     public var gate: GateRequest?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer, weightDecay: weightDecay)
+        resolved.kind = optimizer
+        resolved.weightDecay = weightDecay
+        return resolved
+    }
 
     public init(
         pairsPath: String,
@@ -155,6 +162,7 @@ public struct OfflineDPOConfig: Sendable, Equatable, Codable {
         try ConfigBounds.requirePositive(maxGradNorm, max: Float.greatestFiniteMagnitude, name: "maxGradNorm", prefix: prefix)
         try ConfigBounds.requireNonNegative(weightDecay, max: Float.greatestFiniteMagnitude, name: "weightDecay", prefix: prefix)
         try effectiveMethod.validate(prefix: prefix)
+        try effectiveOptimizerOptions.validateAdapterCompatible(prefix: prefix)
     }
 }
 
@@ -188,6 +196,7 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
     public var layers: [Int]?
     public var method: AdapterMethod?
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var maxGradNorm: Float = 1.0
     public var weightDecay: Float = 0.01
     public var output: String?
@@ -195,6 +204,12 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
     public var applyOverlay: Bool = false
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer, weightDecay: weightDecay)
+        resolved.kind = optimizer
+        resolved.weightDecay = weightDecay
+        return resolved
+    }
 
     public init(
         groupSize: Int = 4,
@@ -224,6 +239,7 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
         try ConfigBounds.requirePositive(maxGradNorm, max: Float.greatestFiniteMagnitude, name: "maxGradNorm", prefix: prefix)
         try ConfigBounds.requireNonNegative(weightDecay, max: Float.greatestFiniteMagnitude, name: "weightDecay", prefix: prefix)
         try effectiveMethod.validate(prefix: prefix)
+        try effectiveOptimizerOptions.validateAdapterCompatible(prefix: prefix)
     }
 }
 

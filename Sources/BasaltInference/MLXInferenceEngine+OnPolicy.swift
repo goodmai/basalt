@@ -112,10 +112,46 @@ extension MLXInferenceEngine {
 
     static func onPolicyStep(_ batch: [ScoredRow], optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
         try Task.checkCancellation()
+        if optimizer.usesQKClip {
+            return try onPolicyStepWithQKClip(batch, optimizer: optimizer, model: model)
+        }
         let step = valueAndGrad(model: model as Module) { _, _ in [onPolicyLoss(batch, model: model)] }
         let (values, gradients) = step(model as Module, [])
         optimizer.update(model: model as Module, gradients: gradients)
         eval(model as Module, optimizer, values)
+        let loss = values[0].item(Float.self)
+        guard loss.isFinite else { throw BasaltError.inferenceError("distill: the reverse KL became non-finite; nothing was saved") }
+        return loss
+    }
+
+    private static func onPolicyStepWithQKClip(_ batch: [ScoredRow], optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
+        try QKClipController.validateTrainableSupport(for: model, prefix: "distill")
+        let layers = QKClipController.attentionLayers(of: model)
+        let probe = QKResidualProbe()
+        let rows = batch.map(\.row)
+        let lengths = rows.map { max(0, $0.tokens.count - 1) }
+        let (inputs, _, mask) = distillBatch(rows)
+        let (ids, logprobs) = teacherTensors(batch, width: inputs.dim(1))
+        let step = valueAndGrad(model: model as Module) { _, _ in
+            probe.reset()
+            let logits = QKClipController.forward(model, inputs: inputs, probe: probe).asType(.float32)
+            let kl = reverseKL(logits, teacherIds: ids, teacherLogprobs: logprobs, mask: mask)
+            let maxLogits = QKClipController.layerMaxLogits(
+                model: model, layers: layers, inputs: inputs, probe: probe, isCausal: true, validLengths: lengths
+            )
+            probe.reset()
+            return [kl] + maxLogits
+        }
+        let (values, gradients) = step(model as Module, [])
+        optimizer.update(model: model as Module, gradients: gradients)
+        eval(model as Module, optimizer, values)
+        QKClipController.applyClip(
+            model: model,
+            layers: layers,
+            layerMaxLogitArrays: Array(values.dropFirst()),
+            tau: optimizer.options.qkClipTau,
+            alpha: optimizer.options.qkClipAlpha
+        )
         let loss = values[0].item(Float.self)
         guard loss.isFinite else { throw BasaltError.inferenceError("distill: the reverse KL became non-finite; nothing was saved") }
         return loss

@@ -22,6 +22,10 @@ public enum OfflineDPOTrainer {
         TrainingOptimizerFactory.make(kind, learningRate: learningRate, weightDecay: weightDecay)
     }
 
+    static func makeOptimizer(_ options: TrainingOptimizerOptions, learningRate: Float) -> TrainingOptimizer {
+        TrainingOptimizerFactory.make(options: options, learningRate: learningRate)
+    }
+
     public static func pairLoss(
         chosenLogProbs: MLXArray,
         rejectedLogProbs: MLXArray,
@@ -50,6 +54,7 @@ public enum OfflineDPOTrainer {
         family: String?,
         context: ModelContext
     ) throws -> OfflineDPOReport {
+        try config.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "dpo")
         let tokenized = try tokenize(pairs, maxSeqLen: config.maxSeqLen, context: context)
         guard !tokenized.isEmpty else {
             throw BasaltError.invalidRequestStructure(details: "dpo: no valid tokenized preference pairs within maxSeqLen \(config.maxSeqLen)")
@@ -215,7 +220,10 @@ extension OfflineDPOTrainer {
         cached: [CachedDPOPair],
         config: OfflineDPOConfig
     ) throws -> [Float] {
-        let optimizer = makeOptimizer(config.optimizer, learningRate: config.learningRate, weightDecay: config.weightDecay)
+        let optimizer = makeOptimizer(config.effectiveOptimizerOptions, learningRate: config.learningRate)
+        if optimizer.usesQKClip {
+            try QKClipController.validateTrainableSupport(for: model, prefix: "dpo")
+        }
         let stepFn = valueAndGrad(model: model as Module) { _, batch in
             batchObjective(model: model, batch: batch, config: config)
         }
@@ -234,6 +242,13 @@ extension OfflineDPOTrainer {
             let loss = values[0].item(Float.self)
             guard loss.isFinite else {
                 throw BasaltError.inferenceError("dpo: loss became non-finite at step \(step)")
+            }
+            if optimizer.usesQKClip {
+                let seqs = batch.compactMap { item -> MLXArray? in
+                    let ids = item.pair.promptIds + item.pair.chosenIds
+                    return ids.count > 1 ? MLXArray(ids.dropLast().map(Int32.init)).reshaped([1, ids.count - 1]) : nil
+                }
+                QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: optimizer.options)
             }
             losses.append(loss)
         }

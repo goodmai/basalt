@@ -10,11 +10,12 @@ extension MLXInferenceEngine {
     static func distillAdapter(
         _ train: [TrainingTask], heldOut: [TrainingTask], request: DistillRequest, directory: URL, steps: AdapterSteps
     ) async throws(BasaltError) -> DistillRun {
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "distill")
         let (rows, layerCount) = try await steps.read { context in
             (try distillRows(train, heldOut: heldOut, maxSeqLen: request.maxSeqLen, context), loraBlocks(of: context.model).count)
         }
         let identity = AdapterProgress(request, model: steps.fingerprint, data: AdapterProgress.digest(rows.train + rows.heldOut), layerCount: layerCount)
-        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate))
+        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(options: request.effectiveOptimizerOptions, learningRate: request.learningRate))
         var progress = try await started(&state, identity, request: request, directory: directory, steps: steps)
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0
@@ -128,12 +129,54 @@ extension MLXInferenceEngine {
 
     static func distillStep(_ rows: [DistillRow], index: Int, batchSize: Int, optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
         try Task.checkCancellation()
+        if optimizer.usesQKClip {
+            return try distillStepWithQKClip(rows, index: index, batchSize: batchSize, optimizer: optimizer, model: model)
+        }
         let step = valueAndGrad(model: model as Module) { _, arrays in [maskedLoss(model, arrays[0], arrays[1], arrays[2])] }
         let size = min(batchSize, rows.count)
         let (inputs, targets, mask) = distillBatch((0 ..< size).map { rows[(index * size + $0) % rows.count] })
         let (values, gradients) = step(model as Module, [inputs, targets, mask])
         optimizer.update(model: model as Module, gradients: gradients)
         eval(model as Module, optimizer, values)
+        return values[0].item(Float.self)
+    }
+}
+
+extension MLXInferenceEngine {
+    private static func distillStepWithQKClip(
+        _ rows: [DistillRow],
+        index: Int,
+        batchSize: Int,
+        optimizer: TrainingOptimizer,
+        model: any LanguageModel
+    ) throws -> Float {
+        try QKClipController.validateTrainableSupport(for: model, prefix: "train")
+        let layers = QKClipController.attentionLayers(of: model)
+        let probe = QKResidualProbe()
+        let size = min(batchSize, rows.count)
+        let batchRows = (0 ..< size).map { rows[(index * size + $0) % rows.count] }
+        let lengths = batchRows.map { max(0, $0.tokens.count - 1) }
+        let step = valueAndGrad(model: model as Module) { _, arrays in
+            probe.reset()
+            let logits = QKClipController.forward(model, inputs: arrays[0], probe: probe).asType(.float32)
+            let loss = (crossEntropy(logits: logits, targets: arrays[1], reduction: .none) * arrays[2]).sum() / maximum(arrays[2].sum(), 1)
+            let maxLogits = QKClipController.layerMaxLogits(
+                model: model, layers: layers, inputs: arrays[0], probe: probe, isCausal: true, validLengths: lengths
+            )
+            probe.reset()
+            return [loss] + maxLogits
+        }
+        let (inputs, targets, mask) = distillBatch(batchRows)
+        let (values, gradients) = step(model as Module, [inputs, targets, mask])
+        optimizer.update(model: model as Module, gradients: gradients)
+        eval(model as Module, optimizer, values)
+        QKClipController.applyClip(
+            model: model,
+            layers: layers,
+            layerMaxLogitArrays: Array(values.dropFirst()),
+            tau: optimizer.options.qkClipTau,
+            alpha: optimizer.options.qkClipAlpha
+        )
         return values[0].item(Float.self)
     }
 }

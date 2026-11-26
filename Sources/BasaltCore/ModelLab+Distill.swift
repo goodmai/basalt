@@ -42,6 +42,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var batchSize = 2
     public var learningRate: Float = 1e-4
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var maxSeqLen = 2048
     public var gate: GateRequest
     public var output: String?
@@ -50,6 +51,11 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var resume = false
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer)
+        resolved.kind = optimizer
+        return resolved
+    }
 
     public init(prompts: String, teacher: TeacherSpec, gate: GateRequest) {
         self.prompts = prompts
