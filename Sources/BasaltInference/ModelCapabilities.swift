@@ -45,6 +45,18 @@ public enum ModelFamilyAliases {
         for type in ["lfm3_vl", "lfm3-vl"] {
             await vlm.registerModelType(type) { LFM2VL(try decoder.decode(LFM2VLConfiguration.self, from: $0)) }
         }
+        await registerFastWeightModels()
+    }
+
+    private static func registerFastWeightModels() async {
+        let registry = LLMTypeRegistry.shared
+        await registry.registerModelType(TTTModel.modelType) { data in try TTTModel(configurationData: data) }
+        for type in TitansModel.modelTypes {
+            await registry.registerModelType(type) { data in try TitansModel(configurationData: data) }
+        }
+        for type in LaCTModel.modelTypes {
+            await registry.registerModelType(type) { data in try LaCTModel(configurationData: data) }
+        }
     }
 }
 
@@ -172,6 +184,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([RWKV7Model.modelType, XLSTMModel.modelType], rwkv7),
             (Mamba3Model.supportedModelTypes, mamba3),
             (GatedDeltaNet2Model.supportedModelTypes, gdn2),
+            ([TTTModel.modelType] + TitansModel.modelTypes + LaCTModel.modelTypes, rwkv7),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
             ([DeepSeekOCR.modelType, DeepSeekOCR2.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),

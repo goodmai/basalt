@@ -1,7 +1,25 @@
 import Foundation
 
 extension KVCacheGeometry {
+    static func attentionHeads(_ c: [String: Any]) -> Int? {
+        if let heads = c["num_attention_heads"] as? Int { return heads }
+        guard FastWeightFootprint.isFastWeightModelType(c["model_type"] as? String) else { return nil }
+        return c["num_attn_heads"] as? Int ?? c["num_heads"] as? Int
+    }
+
+    static func slidingWindow(_ c: [String: Any]) -> Int {
+        c["sliding_window"] as? Int ?? c["sliding_window_size"] as? Int ?? c["window_size"] as? Int ?? 0
+    }
+
     static func localLayerKinds(_ c: [String: Any], layers: Int) -> [LayerKind]? {
+        if let modelType = (c["model_type"] as? String)?.lowercased() {
+            if FastWeightFootprint.tttModelTypes.contains(modelType) {
+                return Array(repeating: .linear, count: layers)
+            }
+            if FastWeightFootprint.titansModelTypes.contains(modelType) || FastWeightFootprint.lactModelTypes.contains(modelType) {
+                return Array(repeating: .windowed, count: layers)
+            }
+        }
         if let local = c["local_layer_ids"] as? [Int], c["sliding_window_size"] is Int {
             let windowed = Set(local)
             return (0 ..< layers).map { windowed.contains($0) ? .windowed : .full }

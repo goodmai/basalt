@@ -410,7 +410,7 @@ extension PromptLookupTokenIterator {
     }
 
     static func stagesRounds(_ cache: [KVCache]) -> Bool {
-        guard cache.contains(where: { $0 is RotatingKVCache }) else { return false }
+        guard cache.contains(where: { $0 is RotatingKVCache }), !cache.contains(where: { $0 is FastWeightLayerCache }) else { return false }
         let storage = KVCacheStorage(cache)
         guard let round = storage.beginRound(maximumPositions: draftLimit + 1) else { return false }
         storage.rollback(round)

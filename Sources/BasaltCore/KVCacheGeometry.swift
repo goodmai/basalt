@@ -208,7 +208,7 @@ public struct KVCacheGeometry: Sendable, Equatable {
         if let xlstm = Self.xlstmGeometry(c) { self = xlstm; return }
         if let recurrent = Self.recurrentModelGeometry(c) { self = recurrent; return }
         guard let layers = c["num_hidden_layers"] as? Int, (1 ... Self.maxDimension).contains(layers),
-              let heads = c["num_attention_heads"] as? Int, (1 ... Self.maxDimension).contains(heads) else { return nil }
+              let heads = Self.attentionHeads(c), (1 ... Self.maxDimension).contains(heads) else { return nil }
         let kvHeads = c["num_key_value_heads"] as? Int ?? heads
         guard let headDim = c["head_dim"] as? Int ?? (c["hidden_size"] as? Int).map({ $0 / heads }),
               (1 ... Self.maxDimension).contains(headDim), (1 ... Self.maxDimension).contains(kvHeads) else { return nil }
@@ -225,8 +225,10 @@ public struct KVCacheGeometry: Sendable, Equatable {
         windowedElementsPerToken = Self.kvBytesPerToken(
             layers: windowedLayers, kvHeads: kvHeads, headDim: headDim, bytesPerElement: 1
         )
-        window = c["sliding_window"] as? Int ?? c["sliding_window_size"] as? Int ?? 0
-        fixedStateBytes = Int64(linear) * Self.linearStateBytes(c) + Self.shortConvStateBytes(c, visits: kinds.count, kvHeads: kvHeads, headDim: headDim)
+        window = Self.slidingWindow(c)
+        fixedStateBytes = Int64(linear) * Self.linearStateBytes(c)
+            + Self.shortConvStateBytes(c, visits: kinds.count, kvHeads: kvHeads, headDim: headDim)
+            + FastWeightFootprint.configFixedStateBytes(c)
         quantizedGroupSize = Self.quantizedGroupSize(keyDim: global.keyDim, valueDim: global.valueDim)
             ?? Self.defaultQuantizedGroupSize
         isFromConfig = true
