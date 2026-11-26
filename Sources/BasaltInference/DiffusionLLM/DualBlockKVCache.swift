@@ -21,11 +21,16 @@ public final class DualBlockLayerKVCache: KVCacheAttentionProtocol {
     public var phase: DualBlockCachePhase = .promptPrefill
     public var customMask: MLXArray?
     public let bidirectionalPrompt: Bool
+    public let kernelMode: DualBlockFlashKernelMode
     package private(set) var kernelInvocations = 0
     package private(set) var fallbackInvocations = 0
 
-    public init(bidirectionalPrompt: Bool = false) {
+    public init(
+        bidirectionalPrompt: Bool = false,
+        kernelMode: DualBlockFlashKernelMode? = nil
+    ) {
         self.bidirectionalPrompt = bidirectionalPrompt
+        self.kernelMode = kernelMode ?? DualBlockFlashAttentionKernel.environmentDefaultMode
     }
 
     public var prefixKeys: MLXArray? {
@@ -129,7 +134,7 @@ public final class DualBlockLayerKVCache: KVCacheAttentionProtocol {
     }
 
     public func copy() -> any KVCache {
-        let clone = DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt)
+        let clone = DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt, kernelMode: kernelMode)
         clone.prefixKeyBuffer = prefixKeys
         clone.prefixValueBuffer = prefixValues
         clone.suffixKeys = suffixKeys
@@ -182,7 +187,7 @@ extension DualBlockLayerKVCache {
                 suffixKeys: suffixKeys, suffixValues: suffixValues
             )
             if customMask == nil,
-               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask)
+               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask, mode: kernelMode)
             {
                 kernelInvocations += 1
                 return DualBlockFlashAttentionKernel.attention(queries: queries, segments: segments, scale: scale)
@@ -196,7 +201,7 @@ extension DualBlockLayerKVCache {
                 suffixKeys: nil, suffixValues: nil
             )
             if customMask == nil,
-               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask)
+               DualBlockFlashAttentionKernel.isEligible(queries: queries, segments: segments, mask: mask, mode: kernelMode)
             {
                 kernelInvocations += 1
                 return DualBlockFlashAttentionKernel.attention(queries: queries, segments: segments, scale: scale)
@@ -253,8 +258,15 @@ extension DualBlockLayerKVCache {
 public struct DualBlockKVCache {
     public let layers: [DualBlockLayerKVCache]
 
-    public init(layerCount: Int, bidirectionalPrompt: Bool = false) {
-        self.layers = (0 ..< max(0, layerCount)).map { _ in DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt) }
+    public init(
+        layerCount: Int,
+        bidirectionalPrompt: Bool = false,
+        kernelMode: DualBlockFlashKernelMode? = nil
+    ) {
+        let resolvedMode = kernelMode ?? DualBlockFlashAttentionKernel.environmentDefaultMode
+        self.layers = (0 ..< max(0, layerCount)).map { _ in
+            DualBlockLayerKVCache(bidirectionalPrompt: bidirectionalPrompt, kernelMode: resolvedMode)
+        }
     }
 
     public var kvCaches: [any KVCache] { layers }

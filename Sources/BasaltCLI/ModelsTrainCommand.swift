@@ -276,7 +276,7 @@ extension TrainSubcommand {
             try await orchestrator.loadModel(path: modelPath)
             return try await engine.trainGRPO(config)
         }
-        print("grpo accuracy: \(String(format: "%.3f", report.accuracyBefore)) -> \(String(format: "%.3f", report.accuracyAfter)), mean KL: \(String(format: "%.4f", report.meanKL)), gate: \(report.gatePassed ? "passed" : "failed")")
+        print("grpo accuracy: \(String(format: "%.3f", report.accuracyBefore)) -> \(String(format: "%.3f", report.accuracyAfter)), updates: \(report.updatesApplied), skipped: \(report.skippedGroups), mean KL: \(String(format: "%.4f", report.meanKL)), gate: \(report.gatePassed ? "passed" : "failed")")
         print("adapter: \(report.outputPath)")
     }
 

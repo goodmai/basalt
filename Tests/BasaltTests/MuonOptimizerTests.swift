@@ -167,7 +167,7 @@ struct MuonOptimizerTests {
             bias: MuonTestSupport.freshBias(), scalar: MuonTestSupport.freshScalar(), tensor: MuonTestSupport.freshTensor()
         )
 
-        let composite = TrainingOptimizerFactory.make(.muon, learningRate: lr, weightDecay: wd)
+        let composite = TrainingOptimizerFactory.make(.muon, learningRate: lr, weightDecay: wd, muonLRMultiplier: 1.0)
         let muonRef = Muon(learningRate: lr, weightDecay: wd)
         let adamRef = AdamW(learningRate: lr, weightDecay: wd)
         let adamFallbackRef = AdamW(learningRate: lr, weightDecay: wd)
@@ -203,7 +203,9 @@ struct MuonOptimizerTests {
     func newtonSchulzConditioningAndSchedulePropagation() {
         let model = MatrixOnlyModule(matrix: MuonTestSupport.freshMatrix())
         let before = MuonTestSupport.freshMatrix()
-        let opt = TrainingOptimizerFactory.make(.muon, learningRate: 1.0, weightDecay: 0.0)
+        let opt = TrainingOptimizerFactory.make(.muon, learningRate: 1.0, weightDecay: 0.0, muonLRMultiplier: 1.0)
+        #expect(TrainingOptimizerFactory.defaultMuonLRMultiplier == 10.0)
+        #expect(TrainingOptimizerFactory.make(.muon, learningRate: 1e-4).muonLRMultiplier == 10.0)
         opt.update(model: model, gradients: ModuleParameters.unflattened([("matrix", MuonTestSupport.freshMatrix())]))
         eval(model, opt)
 

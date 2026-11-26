@@ -178,6 +178,7 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
     public var betaKL: Float = 0.04
     public var clipEpsilon: Float = 0.2
     public var rounds: Int = 8
+    public var ppoEpochs: Int = 2
     public var maxTokens: Int = 64
     public var temperature: Float = 0.7
     public var learningRate: Float = 5e-5
@@ -216,6 +217,7 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
         try ConfigBounds.requireNonNegative(betaKL, max: 100, name: "betaKL", prefix: prefix)
         try ConfigBounds.requireOpenUnit(clipEpsilon, name: "clipEpsilon", prefix: prefix)
         try ConfigBounds.requireInt(rounds, in: 1 ... 10_000, name: "rounds", prefix: prefix)
+        try ConfigBounds.requireInt(ppoEpochs, in: 1 ... 16, name: "ppoEpochs", prefix: prefix)
         try ConfigBounds.requireInt(maxTokens, in: 1 ... 4096, name: "maxTokens", prefix: prefix)
         try ConfigBounds.requirePositive(temperature, max: 2, name: "temperature", prefix: prefix)
         try ConfigBounds.requirePositive(learningRate, max: 1, name: "learningRate", prefix: prefix)
@@ -263,6 +265,8 @@ public struct GRPOReport: Sendable, Equatable, Codable {
     public var accuracyBefore: Float = 0
     public var accuracyAfter: Float = 0
     public var meanKL: Float = 0
+    public var updatesApplied: Int = 0
+    public var skippedGroups: Int = 0
     public var gatePassed: Bool = false
     public var outputPath: String = ""
 

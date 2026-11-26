@@ -140,6 +140,7 @@ struct OfflineDPOAndGRPOCoreTests {
 
         let grpo = GRPOConfig()
         try grpo.validate()
+        #expect(grpo.ppoEpochs == 2)
         let decodedGRPO = try JSONDecoder().decode(GRPOConfig.self, from: JSONEncoder().encode(grpo))
         #expect(decodedGRPO == grpo)
 
@@ -150,6 +151,10 @@ struct OfflineDPOAndGRPOCoreTests {
         var badClip = grpo
         badClip.clipEpsilon = 1.0
         #expect(throws: BasaltError.self) { try badClip.validate() }
+
+        var badEpochs = grpo
+        badEpochs.ppoEpochs = 0
+        #expect(throws: BasaltError.self) { try badEpochs.validate() }
     }
 }
 
@@ -336,6 +341,7 @@ struct OfflineDPOAndGRPOEngineTests {
         #expect(report.losses.allSatisfy { $0.isFinite })
         #expect(report.meanRewards.count == 2 && report.meanRewards.allSatisfy { $0.isFinite })
         #expect(report.meanKL.isFinite && report.meanKL >= 0)
+        #expect(report.updatesApplied + report.skippedGroups > 0)
         #expect(report.accuracyBefore.isFinite && report.accuracyAfter.isFinite)
         #expect(report.gatePassed)
         #expect(report.outputPath == outDir.path)
@@ -384,6 +390,7 @@ struct OfflineDPOAndGRPOEngineTests {
             }
         }
         #expect(!report.losses.isEmpty && report.losses.allSatisfy { $0.isFinite })
+        #expect(report.updatesApplied == report.losses.count * config.ppoEpochs && report.updatesApplied >= 2)
         #expect(report.meanRewards.count == 2 && report.meanRewards.allSatisfy { $0.isFinite })
         #expect(report.meanKL.isFinite && report.meanKL >= 0)
         #expect(await Self.parameterBits(container) == beforeBits)

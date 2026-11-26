@@ -11,6 +11,7 @@ public final class TrainingOptimizer: Optimizer {
     }
 
     public let kind: TrainingOptimizerKind
+    public let muonLRMultiplier: Float
     private let backing: Backing
 
     public var learningRate: Float {
@@ -19,15 +20,16 @@ public final class TrainingOptimizer: Optimizer {
             case .adamw(let adamw):
                 adamw.learningRate = learningRate
             case .muon(_, let matrix, let fallback):
-                matrix.learningRate = learningRate
+                matrix.learningRate = learningRate * muonLRMultiplier
                 fallback.learningRate = learningRate
             }
         }
     }
 
-    init(kind: TrainingOptimizerKind, learningRate: Float, backing: Backing) {
+    init(kind: TrainingOptimizerKind, learningRate: Float, muonLRMultiplier: Float = 1.0, backing: Backing) {
         self.kind = kind
         self.learningRate = learningRate
+        self.muonLRMultiplier = muonLRMultiplier
         self.backing = backing
     }
 
@@ -70,7 +72,8 @@ public final class TrainingOptimizer: Optimizer {
 }
 
 public enum TrainingOptimizerFactory {
-    public static let defaultWeightDecay: Float = 0.01
+    public static let defaultWeightDecay: Float = 0.0
+    public static let defaultMuonLRMultiplier: Float = 10.0
 
     public static func isMatrixShape(_ shape: [Int]) -> Bool {
         shape.count == 2 && shape[0] > 0 && shape[1] > 0
@@ -83,14 +86,15 @@ public enum TrainingOptimizerFactory {
     public static func make(
         _ kind: TrainingOptimizerKind,
         learningRate: Float,
-        weightDecay: Float = defaultWeightDecay
+        weightDecay: Float = defaultWeightDecay,
+        muonLRMultiplier: Float = defaultMuonLRMultiplier
     ) -> sending TrainingOptimizer {
         switch kind {
         case .adamw:
             let adamw = AdamW(learningRate: learningRate, weightDecay: weightDecay)
             return TrainingOptimizer(kind: .adamw, learningRate: learningRate, backing: .adamw(adamw))
         case .muon:
-            let matrix = Muon(learningRate: learningRate, weightDecay: weightDecay)
+            let matrix = Muon(learningRate: learningRate * muonLRMultiplier, weightDecay: weightDecay)
             let fallback = AdamW(learningRate: learningRate, weightDecay: weightDecay)
             let composite = MultiOptimizer(
                 optimizers: [matrix, fallback],
@@ -99,6 +103,7 @@ public enum TrainingOptimizerFactory {
             return TrainingOptimizer(
                 kind: .muon,
                 learningRate: learningRate,
+                muonLRMultiplier: muonLRMultiplier,
                 backing: .muon(composite: composite, matrix: matrix, fallback: fallback)
             )
         }

@@ -20,10 +20,19 @@ extension EMeans {
         let clusterIds = MLXArray((0 ..< k).map(Int32.init)).reshaped(1, 1, k, 1)
         let signs = alternatingSigns(dim: x.dim(3))
         var permutation: [Int32] = []
+        let useLastEpoch = config.finalizer == .lastEpochMean
         for step in 0 ..< schedule.totalSteps {
-            let batchInEpoch = step % schedule.batchesPerEpoch
-            if batchInEpoch == 0 {
-                permutation = EMeansCore.shuffledIndices(count: t, rng: &rng)
+            let batchInEpoch: Int
+            if useLastEpoch && step >= schedule.finalEpochStart {
+                batchInEpoch = step - schedule.finalEpochStart
+                if batchInEpoch == 0 {
+                    permutation = EMeansCore.shuffledIndices(count: t, rng: &rng)
+                }
+            } else {
+                batchInEpoch = step % schedule.batchesPerEpoch
+                if batchInEpoch == 0 {
+                    permutation = EMeansCore.shuffledIndices(count: t, rng: &rng)
+                }
             }
             let start = batchInEpoch * schedule.batchSize
             let end = min(t, start + schedule.batchSize)

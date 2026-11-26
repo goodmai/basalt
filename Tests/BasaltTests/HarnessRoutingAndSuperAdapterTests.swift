@@ -183,8 +183,22 @@ struct HarnessRoutingTests {
         #expect(HarnessRoute.resolve(explicitOverride, table: withDefault) == HarnessRouteDecision(
             adapterName: "pi",
             detectedHarness: .claudeCode,
-            defaultThinkingOff: true,
+            defaultThinkingOff: false,
             promptCacheNamespace: "adapter:pi"
+        ))
+
+        let plainTableExplicit = HarnessRequestFingerprint(
+            userAgent: "curl/8.0",
+            endpointPath: "/v1/chat/completions",
+            explicitAdapterHeader: "base",
+            systemPromptPrefix: nil,
+            anthropicVersionHeader: nil
+        )
+        #expect(HarnessRoute.resolve(plainTableExplicit, table: .empty) == HarnessRouteDecision(
+            adapterName: "base",
+            detectedHarness: nil,
+            defaultThinkingOff: false,
+            promptCacheNamespace: "adapter:base"
         ))
 
         for forcedBase in ["none", "NONE", "base", "Base"] {

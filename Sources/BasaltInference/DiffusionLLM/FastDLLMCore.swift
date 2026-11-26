@@ -9,6 +9,12 @@ public enum BlockDiffusionConfigError: Error, Equatable, Sendable {
     case invalidTop2MarginThreshold(Float)
 }
 
+public enum DualBlockFlashKernelMode: Sendable, Equatable {
+    case auto
+    case forced
+    case disabled
+}
+
 public struct BlockDiffusionConfig: Equatable, Sendable {
     public var blockSize: Int
     public var confidenceThreshold: Float
@@ -22,6 +28,7 @@ public struct BlockDiffusionConfig: Equatable, Sendable {
     public var prefixCacheOnly = false
     public var reuseSuffixCache = false
     public var maxSuffixLength: Int? = nil
+    public var flashKernelMode: DualBlockFlashKernelMode? = nil
 
     public init(
         blockSize: Int = 32,
@@ -56,7 +63,7 @@ public struct BlockDiffusionConfig: Equatable, Sendable {
 
     public static func live(environment: [String: String] = ProcessInfo.processInfo.environment) -> Self {
         var config = Self(blockSize: 8, confidenceThreshold: 0.9, maxStepsPerBlock: 8)
-        config.reuseSuffixCache = true
+        config.reuseSuffixCache = false
         config.maxSuffixLength = 128
         config.factorParallelUnmasking = 1.25
         if let raw = environment["BASALT_DLLM_BLOCK_SIZE"], let size = Int(raw), size >= 1 {

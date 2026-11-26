@@ -122,7 +122,11 @@ public struct FastDLLMSession<Model: BidirectionalBlockModel> {
     public init(model: Model, request: FastDLLMRequest, config: BlockDiffusionConfig) {
         self.model = model
         self.config = config
-        self.dualCache = DualBlockKVCache(layerCount: model.layerCount, bidirectionalPrompt: config.bidirectionalPrompt)
+        self.dualCache = DualBlockKVCache(
+            layerCount: model.layerCount,
+            bidirectionalPrompt: config.bidirectionalPrompt,
+            kernelMode: config.flashKernelMode ?? DualBlockFlashAttentionKernel.environmentDefaultMode
+        )
         self.state = FastDLLMRunner.makeInitialState(for: request, maskTokenId: config.maskTokenId)
         self.nextBlockStart = request.promptTokens.count
         self.finished = request.maxNewTokens <= 0
@@ -392,12 +396,13 @@ extension FastDLLMRunner {
             let activeTensor = MLXArray(state.canvas[span.range].map { Int32($0) })[.newAxis, 0...]
             state.evaluatedTokenPositions += span.range.count
             if !remaskEnabled, !maskedOffsets.isEmpty,
-               let hidden = model.forwardHidden(tokens: activeTensor, caches: dualCache.kvCaches)
+               let hidden = model.forwardHidden(tokens: activeTensor, caches: dualCache.kvCaches),
+               let sparse = projectSparsePredictions(
+                   model: model, hidden: hidden, blockCount: span.range.count,
+                   maskedOffsets: maskedOffsets, state: &state
+               )
             {
-                return projectSparsePredictions(
-                    model: model, hidden: hidden, blockCount: span.range.count,
-                    maskedOffsets: maskedOffsets, state: &state
-                )
+                return sparse
             }
             let logits = model.forward(tokens: activeTensor, caches: dualCache.kvCaches)
             state.projectedLogitPositions += span.range.count
@@ -427,10 +432,12 @@ extension FastDLLMRunner {
            let fullHidden = model.forwardHidden(tokens: fullTensor, caches: uncached)
         {
             let blockHidden = fullHidden[0..., span.range.lowerBound ..< span.range.upperBound, 0...]
-            return projectSparsePredictions(
+            if let sparse = projectSparsePredictions(
                 model: model, hidden: blockHidden, blockCount: span.range.count,
                 maskedOffsets: maskedOffsets, state: &state
-            )
+            ) {
+                return sparse
+            }
         }
         let fullLogits = model.forward(tokens: fullTensor, caches: uncached)
         state.projectedLogitPositions += span.totalLength
@@ -445,15 +452,11 @@ extension FastDLLMRunner {
         blockCount: Int,
         maskedOffsets: [Int],
         state: inout RunState
-    ) -> BlockPredictions {
+    ) -> BlockPredictions? {
         let allMasked = maskedOffsets.count == blockCount
         let selectedHidden = allMasked ? hidden : hidden[0..., MLXArray(maskedOffsets.map(Int32.init)), 0...]
         guard let logits = model.projectLogits(hidden: selectedHidden) else {
-            return BlockPredictions(
-                tokens: [Int](repeating: 0, count: blockCount),
-                confidences: [Float](repeating: 0, count: blockCount),
-                margins: [Float](repeating: 0, count: blockCount)
-            )
+            return nil
         }
         state.projectedLogitPositions += maskedOffsets.count
         let compact = extractPredictions(from: logits)

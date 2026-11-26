@@ -129,8 +129,8 @@ public enum HarnessRoute: Sendable {
         table: HarnessRoutingTable
     ) -> HarnessRouteDecision {
         let detected = detectHarness(fingerprint)
-        let adapterName = resolveAdapterName(fingerprint: fingerprint, detected: detected, table: table)
-        let defaultThinkingOff = adapterName != nil && table.thinkingOffWhenHarnessAdapterActive
+        let (adapterName, routedByPolicy) = resolveAdapter(fingerprint: fingerprint, detected: detected, table: table)
+        let defaultThinkingOff = routedByPolicy && adapterName != nil && table.thinkingOffWhenHarnessAdapterActive
         let namespace = adapterName.map { "adapter:\($0)" } ?? baseNamespace
         return HarnessRouteDecision(
             adapterName: adapterName,
@@ -140,23 +140,23 @@ public enum HarnessRoute: Sendable {
         )
     }
 
-    private static func resolveAdapterName(
+    private static func resolveAdapter(
         fingerprint: HarnessRequestFingerprint,
         detected: AgentHarnessKind?,
         table: HarnessRoutingTable
-    ) -> String? {
+    ) -> (name: String?, routedByPolicy: Bool) {
         if let explicit = fingerprint.explicitAdapterHeader?.trimmingCharacters(in: .whitespacesAndNewlines), !explicit.isEmpty {
             let lowered = explicit.lowercased()
-            if lowered == "none" || lowered == "base" { return nil }
-            return explicit
+            if !table.isEmpty && (lowered == "none" || lowered == "base") { return (nil, false) }
+            return (explicit, false)
         }
         if let detected, let mapped = table.harnessToAdapter[detected] {
-            return mapped
+            return (mapped, true)
         }
         if let fallback = table.defaultAdapter?.trimmingCharacters(in: .whitespacesAndNewlines), !fallback.isEmpty {
-            return fallback
+            return (fallback, true)
         }
-        return nil
+        return (nil, false)
     }
 
     private static func detectFromUserAgent(_ userAgent: String?) -> AgentHarnessKind? {

@@ -116,7 +116,8 @@ enum RWKV7Ops {
         let (b, l, c) = (x.dim(0), x.dim(1), x.dim(2))
         let prev = previous?.asType(x.dtype) ?? MLXArray.zeros([b, 1, c], dtype: x.dtype)
         let shifted = l == 1 ? prev : concatenated([prev, x[0..., ..<(l - 1), 0...]], axis: 1)
-        return (shifted - x, x[0..., (l - 1)..., 0...])
+        let last = l == 1 ? x : (x[0..., (l - 1)..., 0...] + MLXArray(Float(0)).asType(x.dtype))
+        return (shifted - x, last)
     }
 
     static func l2Normalize(_ x: MLXArray, eps: Float = 1e-12) -> MLXArray {

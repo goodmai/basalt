@@ -52,10 +52,11 @@ private enum DualBlockTestHelpers {
         return diff.item(Float.self)
     }
 
-    static func makeLLaDAD128Model(seed: UInt64 = 8190) throws -> LLaDAModel {
+    static func makeLLaDAModel(headDim: Int = 128, seed: UInt64 = 8190) throws -> LLaDAModel {
+        let dModel = headDim * 2
         let json = """
-            {"model_type": "llada", "d_model": 256, "n_layers": 2, "n_heads": 2, "n_kv_heads": 2,
-             "mlp_hidden_size": 384, "vocab_size": 256, "embedding_size": 256,
+            {"model_type": "llada", "d_model": \(dModel), "n_layers": 2, "n_heads": 2, "n_kv_heads": 2,
+             "mlp_hidden_size": \(dModel + 128), "vocab_size": 256, "embedding_size": 256,
              "rms_norm_eps": 1e-5, "rope_theta": 10000.0, "mask_token_id": 255}
             """
         return try withRandomState(MLXRandom.RandomState(seed: seed)) {
@@ -80,16 +81,29 @@ private struct DenseForwardOnlyAdapter: BidirectionalBlockModel {
     }
 }
 
+private struct PartialHiddenOnlyAdapter: BidirectionalBlockModel {
+    let inner: LanguageModelBlockAdapter
+    var layerCount: Int { inner.layerCount }
+    func forward(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray { inner.forward(tokens: tokens, caches: caches) }
+    func forwardHidden(tokens: MLXArray, caches: [any KVCache]?) -> MLXArray? { inner.forwardHidden(tokens: tokens, caches: caches) }
+    func projectLogits(hidden _: MLXArray) -> MLXArray? { nil }
+}
+
 @Suite("Zero-copy 3-segment DualBlockFlashAttention Metal kernel parity (#819, #228)", .serialized)
 struct DualBlockFlashAttentionParityTests {
     @Test(
-        "Kernel matches stock concatenated SDPA across head_dim 64 and 128 and all three floating dtypes",
-        arguments: [(64, DType.float32), (64, .bfloat16), (64, .float16), (128, .float32), (128, .bfloat16), (128, .float16)]
+        "Kernel matches stock concatenated SDPA across BQ 8 and 16, head_dim 64 and 128, and all three floating dtypes",
+        arguments: [
+            (8, 64, DType.float32), (8, 64, .bfloat16), (8, 64, .float16),
+            (8, 128, .float32), (8, 128, .bfloat16), (8, 128, .float16),
+            (19, 64, .float32), (19, 64, .bfloat16), (19, 64, .float16),
+            (19, 128, .float32), (19, 128, .bfloat16), (19, 128, .float16),
+        ]
     )
-    func matchesStockAcrossHeadDimsAndDTypes(headDim: Int, dtype: DType) {
+    func matchesStockAcrossHeadDimsAndDTypes(qLen: Int, headDim: Int, dtype: DType) {
         let tol: Float = dtype == .float32 ? 1e-4 : (dtype == .float16 ? 3e-3 : 2e-3)
-        let shape = DualSegmentShape(batch: 1, qHeads: 8, kvHeads: 2, qLen: 19, prefixLen: 37, activeLen: 19, suffixLen: 45, headDim: headDim)
-        let (q, seg) = DualBlockTestHelpers.makeInputs(shape, dtype: dtype, seed: UInt64(headDim * 100 + (dtype == .float32 ? 1 : dtype == .float16 ? 2 : 3)))
+        let shape = DualSegmentShape(batch: 1, qHeads: 8, kvHeads: 2, qLen: qLen, prefixLen: 37, activeLen: qLen, suffixLen: 45, headDim: headDim)
+        let (q, seg) = DualBlockTestHelpers.makeInputs(shape, dtype: dtype, seed: UInt64(qLen * 1000 + headDim * 100 + (dtype == .float32 ? 1 : dtype == .float16 ? 2 : 3)))
         let scale = 1.0 / Float(headDim).squareRoot()
         let fused = DualBlockFlashAttentionKernel.attention(queries: q, segments: seg, scale: scale)
         let stock = DualBlockTestHelpers.stockAttention(queries: q, segments: seg, scale: scale)
@@ -146,53 +160,80 @@ struct DualBlockFlashAttentionParityTests {
                 #expect(bytes > 0 && bytes <= DualBlockFlashAttentionKernel.maxThreadgroupMemoryBytes)
             }
         }
-        #expect(DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .none, disabled: false))
-        #expect(!DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .none, disabled: true))
-        #expect(!DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .causal, disabled: false))
+        #expect(DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .none, mode: .auto))
+        #expect(!DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .none, mode: .disabled))
+        #expect(!DualBlockFlashAttentionKernel.isEligible(queries: q, segments: seg, mask: .causal, mode: .forced))
+    }
+
+    @Test("DualBlockLayerKVCache grows prefix capacity past 256 tokens while preserving stored keys and values")
+    func prefixCapacityGrowthPast256() {
+        let cache = DualBlockLayerKVCache(bidirectionalPrompt: true, kernelMode: .disabled)
+        var referenceK: [MLXArray] = []
+        var referenceV: [MLXArray] = []
+        for chunkIdx in 0 ..< 5 {
+            let (k, v) = withRandomState(MLXRandom.RandomState(seed: UInt64(9000 + chunkIdx))) {
+                (MLXRandom.normal([1, 2, 64, 16]).asType(.float32), MLXRandom.normal([1, 2, 64, 16]).asType(.float32))
+            }
+            eval(k, v)
+            referenceK.append(k)
+            referenceV.append(v)
+            _ = cache.update(keys: k, values: v)
+        }
+        #expect(cache.prefixLength == 320)
+        let expectedK = concatenated(referenceK, axis: 2)
+        let expectedV = concatenated(referenceV, axis: 2)
+        #expect(DualBlockTestHelpers.maxAbsDiff(cache.prefixKeys!, expectedK) == 0)
+        #expect(DualBlockTestHelpers.maxAbsDiff(cache.prefixValues!, expectedV) == 0)
     }
 }
 
 @Suite("Fast-dLLM masked-only lm_head, zero-copy kernel dispatch, suffix slicing, and block-streaming iterator (#819)", .serialized)
 struct FastDLLMBoostIntegrationTests {
-    @Test("D=128 LLaDA invokes DualBlockFlashAttentionKernel, skips wasted lm_head projections, and matches dense forward bit-identically")
-    func maskedOnlyLMHeadAndKernelDispatchParity() throws {
-        let model = try DualBlockTestHelpers.makeLLaDAD128Model()
+    @Test(
+        "Model-level token parity (#228): kernel on vs kernel off produces identical tokens for D=64 and D=128",
+        arguments: [(64, 8), (128, 16)]
+    )
+    func modelLevelKernelOnOffAndMaskedLMHeadParity(headDim: Int, blockSize: Int) throws {
+        let model = try DualBlockTestHelpers.makeLLaDAModel(headDim: headDim, seed: UInt64(8190 + headDim))
         let fastAdapter = try LanguageModelBlockAdapter(model)
         let denseAdapter = try DenseForwardOnlyAdapter(model)
+        let partialAdapter = PartialHiddenOnlyAdapter(inner: fastAdapter)
         let request = FastDLLMRequest(
             promptTokens: [5, 19, 42, 7, 88, 13, 64, 21],
-            maxNewTokens: 32,
+            maxNewTokens: blockSize * 2,
             includeTrailingMaskSuffix: true
         )
-        let config = BlockDiffusionConfig(
-            blockSize: 16,
-            confidenceThreshold: 0.95,
-            maxStepsPerBlock: 16,
-            maskTokenId: model.maskTokenId,
-            dualCacheEnabled: true
+        var kernelOnCfg = BlockDiffusionConfig(
+            blockSize: blockSize, confidenceThreshold: 0.95, maxStepsPerBlock: blockSize,
+            maskTokenId: model.maskTokenId, dualCacheEnabled: true
         )
-        var fastSession = FastDLLMSession(model: fastAdapter, request: request, config: config)
-        var streamed: [Int] = []
-        var blockCount = 0
-        while let block = fastSession.nextBlock() {
-            streamed.append(contentsOf: block)
-            blockCount += 1
-        }
-        let fast = fastSession.buildResult()
-        let dense = FastDLLMRunner.generate(model: denseAdapter, request: request, config: config)
+        kernelOnCfg.flashKernelMode = .forced
+        var kernelOffCfg = kernelOnCfg
+        kernelOffCfg.flashKernelMode = .disabled
 
-        #expect(blockCount == 2)
-        #expect(streamed == fast.generatedTokens)
-        #expect(fast.generatedTokens == dense.generatedTokens)
-        #expect(fast.tokens == dense.tokens)
-        #expect(fastSession.totalKernelInvocations > 0)
-        #expect(fast.projectedLogitPositions > 0)
-        #expect(fast.projectedLogitPositions < dense.projectedLogitPositions)
+        var onSession = FastDLLMSession(model: fastAdapter, request: request, config: kernelOnCfg)
+        var streamed: [Int] = []
+        while let block = onSession.nextBlock() { streamed.append(contentsOf: block) }
+        let kernelOn = onSession.buildResult()
+
+        var offSession = FastDLLMSession(model: denseAdapter, request: request, config: kernelOffCfg)
+        while offSession.nextBlock() != nil {}
+        let kernelOff = offSession.buildResult()
+
+        let partialRes = FastDLLMRunner.generate(model: partialAdapter, request: request, config: kernelOffCfg)
+
+        #expect(onSession.totalKernelInvocations > 0)
+        #expect(offSession.totalKernelInvocations == 0)
+        #expect(streamed == kernelOn.generatedTokens)
+        #expect(kernelOn.generatedTokens == kernelOff.generatedTokens)
+        #expect(kernelOn.tokens == kernelOff.tokens)
+        #expect(partialRes.generatedTokens == kernelOff.generatedTokens)
+        #expect(kernelOn.projectedLogitPositions > 0 && kernelOn.projectedLogitPositions < kernelOff.projectedLogitPositions)
     }
 
     @Test("DiffusionTokenIterator streams block-by-block and strips trailing stop tokens cleanly")
     func iteratorStreamsBlocksAndStripsStopToken() throws {
-        let model = try DualBlockTestHelpers.makeLLaDAD128Model(seed: 8191)
+        let model = try DualBlockTestHelpers.makeLLaDAModel(headDim: 128, seed: 8191)
         let prompt: [Int32] = [3, 11, 29, 47]
         let rawAdapter = try LanguageModelBlockAdapter(model)
         let baseReq = FastDLLMRequest(promptTokens: prompt.map(Int.init), maxNewTokens: 12, includeTrailingMaskSuffix: true)
@@ -222,7 +263,7 @@ struct FastDLLMBoostIntegrationTests {
     func cacheModesAndLiveEnvConfig() throws {
         let liveDefault = BlockDiffusionConfig.live(environment: [:])
         #expect(liveDefault.blockSize == 8 && liveDefault.maxStepsPerBlock == 8)
-        #expect(liveDefault.reuseSuffixCache && !liveDefault.prefixCacheOnly)
+        #expect(!liveDefault.reuseSuffixCache && !liveDefault.prefixCacheOnly)
         #expect(liveDefault.maxSuffixLength == 128)
         #expect(liveDefault.factorParallelUnmasking == 1.25)
 
@@ -246,7 +287,7 @@ struct FastDLLMBoostIntegrationTests {
         #expect(parsed.prefixCacheOnly && parsed.reuseSuffixCache)
         #expect(parsed.maxSuffixLength == 64)
 
-        let model = try DualBlockTestHelpers.makeLLaDAD128Model(seed: 8192)
+        let model = try DualBlockTestHelpers.makeLLaDAModel(headDim: 128, seed: 8192)
         #expect(model.additionalStopTokens.contains("<|eot_id|>"))
         let adapter = try LanguageModelBlockAdapter(model)
         let prompt = [4, 12, 22, 34, 55, 67]

@@ -278,10 +278,19 @@ private extension EMeans {
         let clusterIds = k <= 64 ? MLXArray((0 ..< k).map(Int32.init)).reshaped(k, 1) : nil
         let signs = alternatingSigns(dim: points.dim(1))
         var permutation: [Int32] = []
+        let useLastEpoch = config.finalizer == .lastEpochMean
         for step in 0 ..< schedule.totalSteps {
-            let batchInEpoch = step % schedule.batchesPerEpoch
-            if batchInEpoch == 0 {
-                permutation = EMeansCore.shuffledIndices(count: n, rng: &rng)
+            let batchInEpoch: Int
+            if useLastEpoch && step >= schedule.finalEpochStart {
+                batchInEpoch = step - schedule.finalEpochStart
+                if batchInEpoch == 0 {
+                    permutation = EMeansCore.shuffledIndices(count: n, rng: &rng)
+                }
+            } else {
+                batchInEpoch = step % schedule.batchesPerEpoch
+                if batchInEpoch == 0 {
+                    permutation = EMeansCore.shuffledIndices(count: n, rng: &rng)
+                }
             }
             let start = batchInEpoch * schedule.batchSize
             let end = min(n, start + schedule.batchSize)

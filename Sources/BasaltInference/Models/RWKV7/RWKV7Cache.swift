@@ -71,9 +71,9 @@ public final class RWKV7LayerCache: KVCache {
 
     public func copy() -> any KVCache {
         let copied = RWKV7LayerCache()
-        copied.stateMatrix = stateMatrix.map { $0[.ellipsis] }
-        copied.prevTimeX = prevTimeX.map { $0[.ellipsis] }
-        copied.prevChannelX = prevChannelX.map { $0[.ellipsis] }
+        copied.stateMatrix = stateMatrix.map { $0 + MLXArray(Float(0)).asType($0.dtype) }
+        copied.prevTimeX = prevTimeX.map { $0 + MLXArray(Float(0)).asType($0.dtype) }
+        copied.prevChannelX = prevChannelX.map { $0 + MLXArray(Float(0)).asType($0.dtype) }
         copied.offset = offset
         return copied
     }

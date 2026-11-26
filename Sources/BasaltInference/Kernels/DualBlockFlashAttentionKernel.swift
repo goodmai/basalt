@@ -37,13 +37,12 @@ package enum DualBlockFlashAttentionKernel {
         }
     }
 
-    package static var isDisabledByEnvironment: Bool {
-        ProcessInfo.processInfo.environment[disableEnvironmentKey] == "1"
-    }
-
-    package static var isForcedByEnvironment: Bool {
-        ProcessInfo.processInfo.environment[forceEnvironmentKey] == "1"
-    }
+    package static let environmentDefaultMode: DualBlockFlashKernelMode = {
+        let env = ProcessInfo.processInfo.environment
+        if env[disableEnvironmentKey] == "1" { return .disabled }
+        if env[forceEnvironmentKey] == "1" { return .forced }
+        return .auto
+    }()
 
     package static func blockK(for dtype: DType) -> Int {
         dtype == .float32 ? 8 : 16
@@ -71,13 +70,12 @@ package enum DualBlockFlashAttentionKernel {
         queries: MLXArray,
         segments: Segments,
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
-        disabled: Bool = isDisabledByEnvironment,
-        forced: Bool = isForcedByEnvironment
+        mode: DualBlockFlashKernelMode = environmentDefaultMode
     ) -> Bool {
-        guard !disabled else { return false }
+        guard mode != .disabled else { return false }
         guard case .none = mask else { return false }
         guard let dims = validated(queries: queries, segments: segments) else { return false }
-        if forced { return true }
+        if mode == .forced { return true }
         let totalK = dims.prefixLen + dims.activeLen + dims.suffixLen
         return dims.qLen >= minDispatchQueryLen || totalK >= minDispatchTotalK
     }

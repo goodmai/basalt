@@ -34,6 +34,8 @@ struct GRPORoundsOutcome: Sendable {
     let losses: [Float]
     let meanRewards: [Float]
     let meanKL: Float
+    let updatesApplied: Int
+    let skippedGroups: Int
 }
 
 public enum GRPOTrainer {
@@ -94,6 +96,8 @@ public enum GRPOTrainer {
         report.accuracyBefore = accuracyBefore
         report.accuracyAfter = accuracyAfter
         report.meanKL = outcome.meanKL
+        report.updatesApplied = outcome.updatesApplied
+        report.skippedGroups = outcome.skippedGroups
         report.gatePassed = gateReport.passed
         return report
     }
@@ -112,7 +116,7 @@ extension GRPOTrainer {
     static func evaluateHeldOut(
         _ tasks: [TrainingTask],
         context: ModelContext,
-        score: (TrainingTask, String) -> Float
+        score: Scorer
     ) throws -> Float {
         guard !tasks.isEmpty else { return 0 }
         var hits: Float = 0
@@ -128,7 +132,7 @@ extension GRPOTrainer {
         config: GRPOConfig,
         stops: Set<Int>,
         context: ModelContext,
-        score: (TrainingTask, String) -> Float
+        score: Scorer
     ) throws -> [GRPORollout] {
         var rollouts: [GRPORollout] = []
         rollouts.reserveCapacity(config.groupSize)
@@ -216,41 +220,42 @@ extension GRPOTrainer {
         config: GRPOConfig,
         optimizer: any Optimizer,
         context: ModelContext,
-        score: (TrainingTask, String) -> Float
+        score: Scorer
     ) throws -> GRPORoundsOutcome {
         let stops = MLXInferenceEngine.stopTokenIds(context)
         let vocab = MLXInferenceEngine.vocabularySize(context.model)
         let promptCache = try practice.map { try MLXInferenceEngine.labPrompt($0.prompt, context) }
-        var losses: [Float] = []
-        var meanRewards: [Float] = []
+        var (losses, meanRewards) = ([Float](), [Float]())
         meanRewards.reserveCapacity(config.rounds)
-        var klSum: Float = 0
-        var klCount = 0
+        var (klSum, klCount, updatesApplied, skippedGroups) = (Float(0), 0, 0, 0)
         for round in 0 ..< config.rounds {
             try Task.checkCancellation()
-            var roundRewardSum: Float = 0
-            var roundRewardCount = 0
+            var (roundRewardSum, roundRewardCount) = (Float(0), 0)
             for (taskIndex, task) in practice.enumerated() {
                 let promptIds = promptCache[taskIndex]
-                guard !promptIds.isEmpty, promptIds.allSatisfy({ $0 >= 0 && $0 < vocab }) else { continue }
+                guard !promptIds.isEmpty, promptIds.allSatisfy({ $0 >= 0 && $0 < vocab }) else {
+                    skippedGroups += 1; continue
+                }
                 let slot = GRPOTaskSlot(task: task, promptIds: promptIds, round: round, taskIndex: taskIndex)
                 let rollouts = try sampleGroup(slot, config: config, stops: stops, context: context, score: score)
                 let rewards = rollouts.map(\.reward)
                 roundRewardSum += rewards.reduce(Float(0), +)
                 roundRewardCount += rewards.count
                 let advantages = GRPOAdvantage.normalize(rewards: rewards)
-                guard advantages.contains(where: { $0 != 0 }) else { continue }
+                guard advantages.contains(where: { $0 != 0 }) else { skippedGroups += 1; continue }
                 let group = prepareGroup(promptIds: promptIds, rollouts: rollouts, advantages: advantages, model: context.model)
-                guard !group.rollouts.isEmpty else { continue }
+                guard !group.rollouts.isEmpty else { skippedGroups += 1; continue }
                 let step = try stepGroup(group, config: config, optimizer: optimizer, model: context.model)
                 losses.append(step.loss)
-                klSum += max(0, step.kl)
-                klCount += 1
+                klSum += max(0, step.kl); klCount += 1; updatesApplied += step.updates
             }
             meanRewards.append(roundRewardCount > 0 ? roundRewardSum / Float(roundRewardCount) : 0)
         }
-        let meanKL = klCount > 0 ? klSum / Float(klCount) : 0
-        return GRPORoundsOutcome(losses: losses, meanRewards: meanRewards, meanKL: meanKL)
+        return GRPORoundsOutcome(
+            losses: losses, meanRewards: meanRewards,
+            meanKL: klCount > 0 ? klSum / Float(klCount) : 0,
+            updatesApplied: updatesApplied, skippedGroups: skippedGroups
+        )
     }
 
     static func stepGroup(
@@ -258,21 +263,28 @@ extension GRPOTrainer {
         config: GRPOConfig,
         optimizer: any Optimizer,
         model: any LanguageModel
-    ) throws -> (loss: Float, kl: Float) {
-        try Task.checkCancellation()
+    ) throws -> (loss: Float, kl: Float, updates: Int) {
+        let epochs = max(1, config.ppoEpochs)
         let stepFn = valueAndGrad(model: model as Module) { _, activeGroup in
             groupObjective(model: model, group: activeGroup, config: config)
         }
-        let (values, gradients) = stepFn(model as Module, group)
-        let (clipped, _) = clipGradNorm(gradients: gradients, maxNorm: config.maxGradNorm)
-        optimizer.update(model: model as Module, gradients: clipped)
-        eval(model as Module, optimizer, values)
-        let loss = values[0].item(Float.self)
-        let kl = values[1].item(Float.self)
-        guard loss.isFinite, kl.isFinite else {
-            throw BasaltError.inferenceError("grpo: policy gradient loss or KL became non-finite")
+        var lastLoss: Float = 0
+        var lastKL: Float = 0
+        for _ in 0 ..< epochs {
+            try Task.checkCancellation()
+            let (values, gradients) = stepFn(model as Module, group)
+            let (clipped, _) = clipGradNorm(gradients: gradients, maxNorm: config.maxGradNorm)
+            optimizer.update(model: model as Module, gradients: clipped)
+            eval(model as Module, optimizer, values)
+            let loss = values[0].item(Float.self)
+            let kl = values[1].item(Float.self)
+            guard loss.isFinite, kl.isFinite else {
+                throw BasaltError.inferenceError("grpo: policy gradient loss or KL became non-finite")
+            }
+            lastLoss = loss
+            lastKL = kl
         }
-        return (loss, kl)
+        return (lastLoss, lastKL, epochs)
     }
 
     static func groupObjective(
