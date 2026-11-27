@@ -24,6 +24,15 @@ public struct DepthDiagnosticsRequest: Sendable, Codable, Equatable {
         self.layers = layers
     }
 
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        includeRank = try container.decodeIfPresent(Bool.self, forKey: .includeRank) ?? true
+        softcapThresholdFraction = try container.decodeIfPresent(Double.self, forKey: .softcapThresholdFraction) ?? 0.95
+        maxSequenceLength = try container.decodeIfPresent(Int.self, forKey: .maxSequenceLength) ?? 512
+        layers = try container.decodeIfPresent([Int].self, forKey: .layers)
+    }
+
     public func validate(layerCount: Int? = nil) throws(BasaltError) {
         guard !prompt.isEmpty else {
             throw .invalidRequestStructure(details: "depth_diagnostics: prompt must not be empty")

@@ -82,6 +82,7 @@ public struct BasaltCLI: AsyncParsableCommand {
             BenchCommand.self,
             ReviewCommand.self,
             SelfEditCommand.self,
+            XrayCommand.self,
         ],
         defaultSubcommand: ChatCommand.self
     )

@@ -28,14 +28,24 @@ public struct APIKeyAuthenticator<Context: RequestContext>: RouterMiddleware {
         return joined.isEmpty ? "/" : "/\(joined)"
     }
 
+    private static var adminExactPaths: Set<String> {
+        [
+            "/v1/models/load", "/v1/models/download", "/v1/models/publish",
+            "/v1/compose", "/v1/mcp/approvals",
+            "/v1/xray/depth", "/v1/xray/outliers", "/v1/xray/causal",
+            "/api/v1/xray/depth", "/api/v1/xray/outliers", "/api/v1/xray/causal",
+        ]
+    }
+
+    private static var adminPrefixes: [String] {
+        ["/v1/models/convert", "/api/v1/models/convert", "/v1/compose/", "/v1/mcp/approvals/"]
+    }
+
     static func isAdminRequest(_ request: Request) -> Bool {
         let path = normalizedPath(request.uri.path)
         if request.method == .delete && (path == "/v1/models" || path.hasPrefix("/v1/models/")) { return true }
-        if path == "/v1/models/load" || path == "/v1/models/download" || path == "/v1/models/publish" { return true }
-        if path.hasPrefix("/v1/models/convert") || path.hasPrefix("/api/v1/models/convert") { return true }
-        if path == "/v1/compose" || path.hasPrefix("/v1/compose/") { return true }
-        if path == "/v1/mcp/approvals" || path.hasPrefix("/v1/mcp/approvals/") { return true }
-        return false
+        if adminExactPaths.contains(path) { return true }
+        return adminPrefixes.contains { path.hasPrefix($0) }
     }
 
     static func request(_ request: Request, budgetKey: String?, rateKey: String? = nil) -> Request {

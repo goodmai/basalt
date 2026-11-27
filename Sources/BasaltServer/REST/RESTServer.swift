@@ -22,6 +22,8 @@ package struct RESTServer: Sendable {
     private(set) var modelHub = ModelHubOperations.live()
     private(set) var hitlApprovals = HITLApprovalActor()
     private(set) var hitlClock: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+    private(set) var researchTools = false
+    private(set) var toolFilter = MCPToolFilter.standard
     private(set) var onReady: (@Sendable (Int) -> Void)?
 
     let shutdownDeadline: Duration
@@ -180,6 +182,7 @@ package struct RESTServer: Sendable {
         v1.post("/generate/stream", use: controller.generateStream)
         ModelsConvertController(operations: modelHub).add(to: v1)
         XrayTokensController(orchestrator: orchestrator).add(to: v1)
+        XrayController(orchestrator: orchestrator, researchTools: researchTools, toolFilter: toolFilter).add(to: v1)
     }
 
     private func addModelRoutes(to oai: RouterGroup<BasicRequestContext>, _ controller: ModelsController) {
@@ -190,6 +193,7 @@ package struct RESTServer: Sendable {
         ModelsConvertController(operations: modelHub).add(to: oai)
         ModelsHubController(orchestrator: orchestrator, operations: modelHub).add(to: oai)
         MCPApprovalsController(approvals: hitlApprovals, clock: hitlClock).add(to: oai)
+        XrayController(orchestrator: orchestrator, researchTools: researchTools, toolFilter: toolFilter).add(to: oai)
     }
 
     private func addGenerationRoutes(to oai: RouterGroup<BasicRequestContext>, defaultId: String) {
@@ -292,6 +296,13 @@ extension RESTServer {
     package func withModelHub(_ operations: ModelHubOperations) -> RESTServer {
         var server = self
         server.modelHub = operations
+        return server
+    }
+
+    package func withResearchTools(_ enabled: Bool, filter: MCPToolFilter = .standard) -> RESTServer {
+        var server = self
+        server.researchTools = enabled
+        server.toolFilter = filter
         return server
     }
 
