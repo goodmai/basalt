@@ -31,6 +31,7 @@ struct GenerationPlan: Equatable, Sendable {
         var questTopK: Int?
         var attentionBackend: AttentionBackend = .standard
         var mobaTopK = 8
+        var nsaWindow = 256
         var speculativeLookup = false
         var capabilities = ModelCapabilities.unrestricted
         var adapter: String?
@@ -56,6 +57,7 @@ struct GenerationPlan: Equatable, Sendable {
     var questTopK: Int?
     var attentionBackend: AttentionBackend = .standard
     var mobaTopK = 8
+    var nsaWindow = 256
     var kvPrecision: KVPrecision?
     var speculativeLookup = false
     var drafts = false
@@ -119,7 +121,10 @@ struct GenerationPlan: Equatable, Sendable {
         if let mask { return GenerationPlan(kvHeadMask: mask) }
         if capabilities.allows(.quest), let topK = settings.questTopK { return GenerationPlan(questTopK: topK) }
         if capabilities.allows(.quest), settings.attentionBackend != .standard {
-            return GenerationPlan(attentionBackend: settings.attentionBackend, mobaTopK: settings.mobaTopK)
+            return GenerationPlan(
+                attentionBackend: settings.attentionBackend,
+                mobaTopK: settings.mobaTopK,
+                nsaWindow: settings.nsaWindow)
         }
         return GenerationPlan(kEqVRow: settings.kEqVRow)
     }

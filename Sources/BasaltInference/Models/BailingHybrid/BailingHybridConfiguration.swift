@@ -42,6 +42,11 @@ public struct BailingHybridConfiguration: Codable, Sendable, Equatable {
     public var normTopkProb: Bool
     public var routedScalingFactor: Float
     public var moeRouterEnableExpertBias: Bool
+    public var useOutputNorm: Bool
+    public var dsaIndexHeads: Int?
+    public var dsaIndexHeadDim: Int?
+    public var dsaTopK: Int?
+    public var dsaRopeHeadDim: Int?
 
     enum CodingKeys: String, CodingKey {
         case modelType = "model_type"
@@ -83,6 +88,11 @@ public struct BailingHybridConfiguration: Codable, Sendable, Equatable {
         case normTopkProb = "norm_topk_prob"
         case routedScalingFactor = "routed_scaling_factor"
         case moeRouterEnableExpertBias = "moe_router_enable_expert_bias"
+        case useOutputNorm = "use_mla_o_norm"
+        case dsaIndexHeads = "dsa_index_heads"
+        case dsaIndexHeadDim = "dsa_index_head_dim"
+        case dsaTopK = "dsa_top_k"
+        case dsaRopeHeadDim = "dsa_rope_head_dim"
     }
 
     private enum AliasKeys: String, CodingKey {
@@ -132,6 +142,11 @@ public struct BailingHybridConfiguration: Codable, Sendable, Equatable {
         normTopkProb = try Self.value(c, .normTopkProb, default: true)
         routedScalingFactor = try Self.value(c, .routedScalingFactor, default: 1.0)
         moeRouterEnableExpertBias = try Self.value(c, .moeRouterEnableExpertBias, default: true)
+        useOutputNorm = try Self.value(c, .useOutputNorm, default: false)
+        dsaIndexHeads = try c.decodeIfPresent(Int.self, forKey: .dsaIndexHeads)
+        dsaIndexHeadDim = try c.decodeIfPresent(Int.self, forKey: .dsaIndexHeadDim)
+        dsaTopK = try c.decodeIfPresent(Int.self, forKey: .dsaTopK)
+        dsaRopeHeadDim = try c.decodeIfPresent(Int.self, forKey: .dsaRopeHeadDim)
     }
 
     private static func value<T: Decodable>(
@@ -195,6 +210,7 @@ extension BailingHybridConfiguration {
     public func validated() throws(BasaltError) -> BailingHybridConfiguration {
         try validateCoreGeometry()
         try validateMLAGeometry()
+        try validateDSAGeometry()
         try validateMoEGeometry()
         return self
     }
@@ -221,12 +237,12 @@ extension BailingHybridConfiguration {
     }
 
     private func validateMLAGeometry() throws(BasaltError) {
-        guard kvLoraRank > 0, qkNopeHeadDim >= 0, qkRopeHeadDim > 0, qkRopeHeadDim.isMultiple(of: 2),
+        guard kvLoraRank > 0, qkNopeHeadDim >= 0, qkRopeHeadDim >= 0, qkRopeHeadDim.isMultiple(of: 2),
               qkHeadDim > 0, vHeadDim > 0
         else {
             throw .modelConfigurationInvalid(
                 path: modelType,
-                reason: "bailing_hybrid MLA requires positive kv_lora_rank, even positive qk_rope_head_dim and positive v_head_dim"
+                reason: "bailing_hybrid MLA requires positive kv_lora_rank, even non-negative qk_rope_head_dim, positive qk_head_dim and positive v_head_dim"
             )
         }
         if let qLoraRank, qLoraRank <= 0 {
@@ -239,6 +255,26 @@ extension BailingHybridConfiguration {
             throw .modelConfigurationInvalid(
                 path: modelType,
                 reason: "bailing_hybrid unsupported gated_attention_proj_granularity_type '\(granularity)'"
+            )
+        }
+    }
+
+    private func validateDSAGeometry() throws(BasaltError) {
+        let anySet = dsaIndexHeads != nil || dsaIndexHeadDim != nil || dsaTopK != nil || dsaRopeHeadDim != nil
+        guard anySet else { return }
+        guard let heads = dsaIndexHeads, heads > 0,
+              let dim = dsaIndexHeadDim, dim > 0,
+              let topK = dsaTopK, topK > 0
+        else {
+            throw .modelConfigurationInvalid(
+                path: modelType,
+                reason: "bailing_hybrid DSA indexer requires positive dsa_index_heads, dsa_index_head_dim and dsa_top_k"
+            )
+        }
+        if let ropeDim = dsaRopeHeadDim, ropeDim < 0 || !ropeDim.isMultiple(of: 2) || ropeDim > dim {
+            throw .modelConfigurationInvalid(
+                path: modelType,
+                reason: "bailing_hybrid dsa_rope_head_dim (\(ropeDim)) must be even and in 0...\(dim)"
             )
         }
     }
@@ -270,5 +306,19 @@ extension BailingHybridConfiguration {
                 reason: "bailing_hybrid num_experts_per_tok (\(numExpertsPerTok)) exceeds topk_group capacity (\(maxSelectable))"
             )
         }
+    }
+}
+
+extension BailingHybridConfiguration {
+    package var dsaIndexerConfig: DSALightningIndexer.Config? {
+        guard let heads = dsaIndexHeads, let dim = dsaIndexHeadDim, let topK = dsaTopK else {
+            return nil
+        }
+        var cfg = DSALightningIndexer.Config(
+            indexHeads: heads, indexHeadDim: dim, topK: topK, ropeHeadDim: dsaRopeHeadDim ?? 0)
+        cfg.ropeTheta = ropeTheta
+        cfg.ropeInterleave = ropeInterleave
+        cfg.rmsNormEps = rmsNormEps
+        return cfg
     }
 }

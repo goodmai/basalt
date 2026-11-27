@@ -152,7 +152,11 @@ public final class BailingHybridModel: Module, LLMModel, KVCacheDimensionProvide
 
     public func newCache(parameters: GenerateParameters?) throws -> [any KVCache] {
         try model.layers.map { layer in
-            layer.isMLA ? try makeAttentionKVCache(parameters: parameters) : ArraysCache(size: 4)
+            guard layer.isMLA else { return ArraysCache(size: 4) }
+            if configuration.qkRopeHeadDim == 0 || configuration.dsaIndexerConfig != nil {
+                return DSALatentKVCache()
+            }
+            return try makeAttentionKVCache(parameters: parameters)
         }
     }
 

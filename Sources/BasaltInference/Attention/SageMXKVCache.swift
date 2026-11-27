@@ -7,15 +7,26 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
     enum Mode: Equatable, Sendable {
         case sagemx
         case moba(topBlocks: Int)
+        case nsa(topBlocks: Int, window: Int)
+
+        static func from(backend: AttentionBackend, topBlocks: Int, nsaWindow: Int) -> Mode? {
+            switch backend {
+            case .standard: nil
+            case .sagemx: .sagemx
+            case .moba: .moba(topBlocks: topBlocks)
+            case .nsa: .nsa(topBlocks: topBlocks, window: nsaWindow)
+            }
+        }
     }
 
     static let blockTokens = 64
     static let minTokensForKernel = 64
 
     let mode: Mode
-    private let base = KVCacheSimple()
-    private var centroids: MLXArray?
-    private var indexedBlocks = 0
+    let base = KVCacheSimple()
+    var centroids: MLXArray?
+    var valueCentroids: MLXArray?
+    var indexedBlocks = 0
     private(set) var kernelSteps = 0
     private(set) var materializedForCaller = false
 
@@ -39,7 +50,9 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
     var maxSize: Int? { nil }
     var isTrimmable: Bool { true }
 
-    func innerState() -> [MLXArray] { base.innerState() + [centroids].compactMap { $0 } }
+    func innerState() -> [MLXArray] {
+        base.innerState() + [centroids, valueCentroids].compactMap { $0 }
+    }
 
     var state: [MLXArray] {
         get { base.state }
@@ -51,6 +64,7 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
             switch mode {
             case .sagemx: ["sagemx"]
             case .moba(let k): ["moba", String(k)]
+            case .nsa(let k, let window): ["nsa", String(k), String(window)]
             }
         }
         set { preconditionFailure("SageMXKVCache is never restored from a serialized prompt cache") }
@@ -67,6 +81,7 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
         let kept = min(indexedBlocks, offset / Self.blockTokens)
         if kept < indexedBlocks {
             centroids = kept == 0 ? nil : centroids?[0..., 0..., ..<kept]
+            valueCentroids = kept == 0 ? nil : valueCentroids?[0..., 0..., ..<kept]
             indexedBlocks = kept
         }
         return removed
@@ -80,6 +95,7 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
         let copied = SageMXKVCache(mode: mode)
         if !base.state.isEmpty { copied.base.state = base.state }
         copied.centroids = centroids
+        copied.valueCentroids = valueCentroids
         copied.indexedBlocks = indexedBlocks
         copied.kernelSteps = kernelSteps
         copied.materializedForCaller = materializedForCaller
@@ -91,31 +107,58 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
         mask: MLXFast.ScaledDotProductAttentionMaskMode
     ) -> MLXArray {
         let (k, v) = base.update(keys: keys, values: values)
-        if case .moba = mode { indexCentroids(k) }
+        updateCentroidsForMode(keys: k, values: v)
         guard Self.supports(queries: queries, keys: k, mask: mask) else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
         }
+        return attendForMode(queries: queries, keys: k, values: v, scale: scale, mask: mask)
+    }
+
+    private func attendForMode(
+        queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
+    ) -> MLXArray {
         switch mode {
         case .sagemx:
-            guard k.dim(2) >= Self.minTokensForKernel else {
-                return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
+            guard keys.dim(2) >= Self.minTokensForKernel else {
+                return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
             }
             kernelSteps += 1
             let isCausal = Self.isCausal(mask) && queries.dim(2) > 1
-            let (kExp, vExp) = Self.expandGQA(k: k, v: v, qHeads: queries.dim(1))
+            let (kExp, vExp) = Self.expandGQA(k: keys, v: values, qHeads: queries.dim(1))
             return SageMXAttentionMetal.attention(
                 q: queries, k: kExp, v: vExp,
                 options: SageMXAttentionMetal.Options(scale: scale, causal: isCausal))
         case .moba(let topBlocks):
             guard queries.dim(2) == 1, topBlocks > 0, let centroids, indexedBlocks > topBlocks + 2 else {
-                return MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v, scale: scale, mask: mask)
+                return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
             }
             kernelSteps += 1
-            return mobaAttention(queries: queries, keys: k, values: v, centroids: centroids, topBlocks: topBlocks, scale: scale)
+            return mobaAttention(queries: queries, keys: keys, values: values, centroids: centroids, topBlocks: topBlocks, scale: scale)
+        case .nsa(let topBlocks, let window):
+            guard Self.canRunNSA(keys: keys, topBlocks: topBlocks, indexedBlocks: indexedBlocks) else {
+                return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
+            }
+            kernelSteps += 1
+            let isCausal = Self.isCausal(mask) && queries.dim(2) > 1
+            let cfg = BlockSparseRoutingMetal.Config(
+                blockSize: Self.blockTokens, topBlocks: topBlocks,
+                slidingWindow: window, scale: scale, causal: isCausal)
+            return nsaAttention(queries: queries, keys: keys, values: values, config: cfg)
+        }
+    }
+}
+
+extension SageMXKVCache {
+    func updateCentroidsForMode(keys: MLXArray, values: MLXArray) {
+        switch mode {
+        case .sagemx: break
+        case .moba: indexCentroids(keys)
+        case .nsa: indexNSACentroids(keys: keys, values: values)
         }
     }
 
-    private func mobaAttention(
+    func mobaAttention(
         queries: MLXArray, keys: MLXArray, values: MLXArray, centroids: MLXArray, topBlocks: Int, scale: Float
     ) -> MLXArray {
         let qHeads = queries.dim(1)
@@ -133,12 +176,11 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
         if hasTail { fixedIds.append(Int32(indexedBlocks)) }
         let fixed = broadcast(MLXArray(fixedIds).reshaped(1, 1, fixedIds.count), to: [qHeads, 1, fixedIds.count])
         let selected = concatenated([fixed, picked], axis: -1)
-        let (kExp, vExp) = Self.expandGQA(k: keys, v: values, qHeads: qHeads)
         return BlockSparseRoutingMetal.sparseSelectedAttention(
-            q: queries, k: kExp, v: vExp, selectedBlocks: selected, blockSize: Self.blockTokens, scale: scale)
+            q: queries, k: keys, v: values, selectedBlocks: selected, blockSize: Self.blockTokens, scale: scale)
     }
 
-    private func indexCentroids(_ keys: MLXArray) {
+    func indexCentroids(_ keys: MLXArray) {
         let complete = offset / Self.blockTokens
         guard complete > indexedBlocks else { return }
         let slice = keys[.ellipsis, (indexedBlocks * Self.blockTokens) ..< (complete * Self.blockTokens), 0...]
@@ -149,7 +191,7 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
         indexedBlocks = complete
     }
 
-    private static func supports(
+    static func supports(
         queries: MLXArray, keys: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode
     ) -> Bool {
         if case .array = mask { return false }
@@ -159,12 +201,12 @@ final class SageMXKVCache: KVCacheAttentionProtocol {
             && queries.dim(1).isMultiple(of: max(1, keys.dim(1)))
     }
 
-    private static func isCausal(_ mask: MLXFast.ScaledDotProductAttentionMaskMode) -> Bool {
+    static func isCausal(_ mask: MLXFast.ScaledDotProductAttentionMaskMode) -> Bool {
         if case .causal = mask { return true }
         return false
     }
 
-    private static func expandGQA(k: MLXArray, v: MLXArray, qHeads: Int) -> (MLXArray, MLXArray) {
+    static func expandGQA(k: MLXArray, v: MLXArray, qHeads: Int) -> (MLXArray, MLXArray) {
         let kvHeads = k.dim(1)
         guard kvHeads < qHeads else { return (k, v) }
         let group = qHeads / kvHeads

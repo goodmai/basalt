@@ -22,11 +22,14 @@ struct KVCacheOptions: ParsableArguments {
     @Option(name: .customLong("quest-top-k"), help: ArgumentHelp("Experimental: on long prompts, each decode step of a full-attention layer attends to 128 sink tokens, the last 256 or more, and only these many 64-token blocks between them, picked per KV head by their key bounds (Quest). Models whose attention reads the whole cache, like Gemma 4, stay dense. Not with --kv-bits, --kv-zones or --kv-head-split, and only for requests without a prompt-cache namespace"))
     var questTopK: Int?
 
-    @Option(name: .customLong("attention-backend"), help: ArgumentHelp("Experimental: full-attention Metal backend for non-cached requests: standard (default MLX SDPA), sagemx (SageAttention/MXAttention UOS+PNQ mean-centered kernel, #551/#634), or moba (MoBA centroid-routed block-sparse Metal kernel, #551/#634)"))
+    @Option(name: .customLong("attention-backend"), help: ArgumentHelp("Experimental: full-attention Metal backend for non-cached requests: standard (default MLX SDPA), sagemx (SageAttention/MXAttention UOS+PNQ mean-centered kernel, #551/#634), moba (MoBA centroid-routed block-sparse Metal kernel, #551/#634), or nsa (experimental mean-pooled, fixed-gate 3-branch NSA approximation, #845)"))
     var attentionBackend: AttentionBackend = .standard
 
-    @Option(name: .customLong("moba-top-k"), help: ArgumentHelp("With --attention-backend moba, number of 64-token middle blocks selected per query head alongside sink and recent blocks (1...4096, default 8)"))
+    @Option(name: .customLong("moba-top-k"), help: ArgumentHelp("With --attention-backend moba or nsa, number of 64-token blocks selected alongside fixed or window branches (1...4096, default 8)"))
     var mobaTopK: Int = 8
+
+    @Option(name: .customLong("nsa-window"), help: ArgumentHelp("With --attention-backend nsa, sliding-window token count for the local branch (1...65536, default 256)"))
+    var nsaWindow: Int = 256
 
     @Option(name: .customLong("rope-yarn"), help: ArgumentHelp("Extend the context of Qwen 3.5, 3.6 and 3.8 (qwen3_5) with YaRN by this factor (e.g. 2 for about 512K tokens, 4 for about 1M); the model's config is staged with rope_type yarn and original_max_position_embeddings set to its native context. YaRN is static: short prompts pay its small cost too, so use it only for contexts past the native one. Other models, Gemma 4 included, load with their stock RoPE and a warning"))
     var ropeYarn: Double?
@@ -49,6 +52,7 @@ struct KVCacheOptions: ParsableArguments {
             }
         }
         guard (1 ... 4096).contains(mobaTopK) else { throw ValidationError("--moba-top-k takes a number of blocks in 1...4096") }
+        guard (1 ... 65_536).contains(nsaWindow) else { throw ValidationError("--nsa-window takes a window size in 1...65536") }
         if attentionBackend != .standard {
             guard bits == nil, !zoned, headSplit == nil, questTopK == nil else {
                 throw ValidationError("--attention-backend \(attentionBackend.rawValue) does not combine with --kv-bits, --kv-zones, --kv-head-split or --quest-top-k")

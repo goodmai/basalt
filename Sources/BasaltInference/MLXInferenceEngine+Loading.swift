@@ -88,6 +88,7 @@ extension MLXInferenceEngine {
         await registry.registerModelType(OuroModel.modelType) { data in try OuroModel(configurationData: data) }
         await registry.registerModelType(HuginnModel.modelType) { data in try HuginnModel(configurationData: data) }
         await registry.registerModelType(RWKV7Model.modelType) { data in try RWKV7Model(configurationData: data) }
+        await registry.registerModelType(XLSTMModel.modelType) { data in try XLSTMModel(configurationData: data) }
         await registry.registerModelType(PrismHadamard.modelType) { data in
             try PrismHadamard.model(configuration: data)
         }
@@ -118,6 +119,7 @@ extension MLXInferenceEngine {
         VLMProcessorLoadingRegistry.shared.register(ModelTypeProcessorResolver(processorTypes: [DeepSeekOCR2.modelType: DeepSeekOCRProcessor.ocr2ProcessorType]))
         await registerMuseGlimmerAliases()
         await registerBailingHybridAliases()
+        await registerHyperConnectionAliases()
     }
 
     public static func registerAliases() async {
@@ -457,7 +459,7 @@ extension MLXInferenceEngine {
         if let questTopK = configuration.questTopK {
             logger.info("Quest: a decode step attends to \(QuestKVCache.sinkTokens) sink tokens, the last \(QuestKVCache.windowTokens) or more, and the \(questTopK) best \(QuestKVCache.blockTokens)-token blocks between them")
         } else if configuration.attentionBackend != .standard {
-            logger.info("Attention backend: \(configuration.attentionBackend.rawValue) (mobaTopK=\(configuration.mobaTopK)) enabled on full-attention layers")
+            logger.info("Attention backend: \(configuration.attentionBackend.rawValue)\(configuration.attentionBackendLogDetail) enabled on full-attention layers")
         } else if let prec = configuration.kvPrecision, prec.isKVarN {
             logger.info("KV cache: \(prec) 2-bit tile compression enabled on full-attention layers")
         }

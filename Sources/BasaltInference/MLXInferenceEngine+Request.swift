@@ -228,7 +228,7 @@ extension MLXInferenceEngine {
         options.lookup = LookupOptions(
             speculative: plan.speculativeLookup, recycling: configuration.speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
-        (options.attentionBackend, options.mobaTopK) = (plan.attentionBackend, plan.mobaTopK)
+        (options.attentionBackend, options.mobaTopK, options.nsaWindow) = (plan.attentionBackend, plan.mobaTopK, plan.nsaWindow)
         (options.kEqVRow, options.gaugeRoPE) = (plan.kEqVRow, modelFacts.gaugeRoPE)
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         (options.pacer, options.prefillScratch) = (prefillPacer, modelFacts.prefillScratch)
@@ -254,6 +254,7 @@ extension MLXInferenceEngine {
             kvPrecision: kvPrec, kvZones: configuration.kvZones, attendsThroughZones: modelAttendsThroughZones, prefillsInChunks: modelPrefillsInChunks,
             evictsThroughUpdate: modelFacts.evictsThroughUpdate, kvHeadMask: kvHeadMask, questTopK: questApplies ? configuration.questTopK : nil,
             attentionBackend: questApplies ? configuration.attentionBackend : .standard, mobaTopK: configuration.mobaTopK,
+            nsaWindow: configuration.nsaWindow,
             speculativeLookup: configuration.speculativeLookup,
             capabilities: modelFacts.capabilities, adapter: adapterNamespace, polarRotated: modelFacts.polarRotated,
             kEqVRow: configuration.kvSharedRow ? modelFacts.kEqVRow : nil)

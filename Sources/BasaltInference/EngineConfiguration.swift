@@ -11,6 +11,7 @@ public struct EngineConfiguration: Sendable {
     public var questTopK: Int? = nil
     public var attentionBackend: AttentionBackend = .standard
     public var mobaTopK = 8
+    public var nsaWindow = 256
     public var repetitionPenalty: Float? = nil
     public var topK: Int? = nil
     public var minP: Float? = nil
@@ -48,7 +49,16 @@ extension EngineConfiguration {
         configuration.batchSlots = max(1, batchSlots)
         configuration.mtpBlockSize = mtpBlockSize.map { max(2, $0) }
         configuration.mobaTopK = max(1, mobaTopK)
+        configuration.nsaWindow = max(1, nsaWindow)
         configuration.questTopK = questTopK.map { max(1, $0) }
         return configuration
+    }
+
+    var attentionBackendLogDetail: String {
+        switch attentionBackend {
+        case .standard, .sagemx: ""
+        case .moba: " (mobaTopK=\(mobaTopK))"
+        case .nsa: " (topBlocks=\(mobaTopK), nsaWindow=\(nsaWindow))"
+        }
     }
 }
