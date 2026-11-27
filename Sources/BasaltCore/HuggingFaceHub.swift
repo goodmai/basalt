@@ -393,12 +393,12 @@ extension HuggingFaceHub {
         onFile: @escaping Progress
     ) async throws -> URL {
         if !usesCustomProtocols, !requireVerified, baseURL == "https://huggingface.co" {
-            return try await downloadSnapshotNative(
+            return try await addingCompanionFiles(to: downloadSnapshotNative(
                 repoId: repoId,
                 subfolder: subfolder,
                 token: token,
                 onFile: onFile
-            )
+            ))
         }
 
         let details = try await modelDetails(repoId: repoId, token: token)
@@ -439,7 +439,7 @@ extension HuggingFaceHub {
             }
             for try await _ in group {}
         }
-        return subfolder.map { destDir.appendingPathComponent($0) } ?? destDir
+        return try await addingCompanionFiles(to: subfolder.map { destDir.appendingPathComponent($0) } ?? destDir)
     }
 
     private func transfer(_ file: HubFile, token: String?, onProgress: @escaping Progress) async throws {

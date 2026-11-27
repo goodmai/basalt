@@ -89,6 +89,16 @@ struct ModelCapabilities: Equatable, Sendable {
             reason: "model_type '\(modelType)' is a masked-diffusion language model and cannot decode token by token; serve it with --experimental-dllm (#819)")
     }
 
+    static func refuseIncompleteCheckpoint(at directory: URL, modelType: String?, path: String) throws(BasaltError) {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        if !files.contains(where: { $0.hasSuffix(".safetensors") }), files.contains(where: { $0.hasSuffix(".npz") }) {
+            throw .modelConfigurationInvalid(path: path, reason: "the weights are an .npz archive (the old mlx-examples layout) and basalt reads only safetensors; use a safetensors build of this model or convert the archive")
+        }
+        guard modelType == WhisperModel.modelType, !files.contains("tokenizer.json") else { return }
+        let source = WhisperTokenizerSource.repository(config: ModelCache.config(at: directory)) ?? "the matching openai/whisper-* repository"
+        throw .modelConfigurationInvalid(path: path, reason: "this Whisper checkpoint ships no tokenizer.json; download the model again with basalt models download, which fetches it from \(source), or copy it into the folder")
+    }
+
     static func refuseUnverifiedKVBits(_ precision: KVPrecision?, modelType: String?, path: String) throws(BasaltError) {
         guard precision != nil, of(modelType: modelType)?.allows(.kvQuantization) != true else { return }
         if modelType?.lowercased() == BailingHybridModel.modelType {

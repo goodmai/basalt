@@ -141,6 +141,12 @@ extension MLXInferenceEngine {
 extension MLXInferenceEngine {
     public var isLoaded: Bool { container != nil }
 
+    private func refuseUnloadable(_ directory: URL, modelType: String?, modelPath: String) throws(BasaltError) {
+        try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
+        try ModelCapabilities.refuseDiffusionWithoutFlag(dllm: configuration.dllm, modelType: modelType, path: modelPath)
+        try ModelCapabilities.refuseIncompleteCheckpoint(at: directory, modelType: modelType, path: modelPath)
+    }
+
     static func imageToken(in config: [String: Any]?) -> Int? {
         (config?["image_token_id"] ?? config?["image_token_index"]) as? Int
     }
@@ -160,8 +166,7 @@ extension MLXInferenceEngine {
             throw .modelNotFound(identifier: modelPath)
         }
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
-        try ModelCapabilities.refuseUnverifiedKVBits(configuration.kvPrecision, modelType: modelType, path: modelPath)
-        try ModelCapabilities.refuseDiffusionWithoutFlag(dllm: configuration.dllm, modelType: modelType, path: modelPath)
+        try refuseUnloadable(directory, modelType: modelType, modelPath: modelPath)
         let gaugeRoPE = try ModelCapabilities.gaugeRoPELayout(configuration.kvPrecision, config: ModelCache.config(at: directory), ropeYarn: configuration.ropeYarn, path: modelPath)
 
         if container != nil { await unloadCurrentModel() }
