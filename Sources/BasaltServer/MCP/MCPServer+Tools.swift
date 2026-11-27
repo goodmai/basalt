@@ -7,7 +7,8 @@ extension MCPServer {
         do throws(MCPFailure) {
             let call = try MCPArguments.toolCall(params)
             let known = MCPTool(name: call.name)
-            guard known != nil || call.name == "phasor_probe" else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
+            let extraTool = Self.extraDiagnosticTool(call.name)
+            guard known != nil || extraTool != nil else { throw MCPFailure.methodNotFound("Unknown tool: \(call.name)") }
             let isMediaGenTool = MCPToolName(rawValue: call.name) != nil || MCPVideoToolName(rawValue: call.name) != nil
             let allowed = isMediaGenTool
                 ? MCPToolName.isAllowed(call.name, by: toolFilter)
@@ -23,8 +24,10 @@ extension MCPServer {
             let output: ToolResult
             if let known {
                 output = try await result(of: known, args: call.arguments)
+            } else if let extraTool {
+                output = try await runExtraDiagnostic(extraTool, args: call.arguments)
             } else {
-                output = try await phasorProbe(call.arguments)
+                throw MCPFailure.methodNotFound("Unknown tool: \(call.name)")
             }
             writer(MCPWire.result(id: id, output))
         } catch {
@@ -269,11 +272,64 @@ extension MCPServer {
         }
     }
 
+    private enum ExtraDiagnosticTool: String {
+        case phasorProbe = "phasor_probe"
+        case depthDiagnostics = "depth_diagnostics"
+        case outlierProfile = "outlier_profile"
+        case causalSweep = "causal_sweep"
+    }
+
+    private static func extraDiagnosticTool(_ name: String) -> ExtraDiagnosticTool? {
+        ExtraDiagnosticTool(rawValue: name)
+    }
+
+    private func runExtraDiagnostic(_ tool: ExtraDiagnosticTool, args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        switch tool {
+        case .phasorProbe: try await phasorProbe(args)
+        case .depthDiagnostics: try await depthDiagnostics(args)
+        case .outlierProfile: try await outlierProfile(args)
+        case .causalSweep: try await causalSweep(args)
+        }
+    }
+
     private func phasorProbe(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
         let request = try PhasorProbeRequest(mcp: args)
         do throws(BasaltError) {
             return .json(try await orchestrator.research { model throws(BasaltError) in
                 try await ResearchCall.lab(model).phasorProbe(request)
+            })
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+
+    private func depthDiagnostics(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let request = try MCPToolCatalog.parseDepthDiagnosticsRequest(args)
+        do throws(BasaltError) {
+            return .json(try await orchestrator.research { model throws(BasaltError) in
+                try await ResearchCall.lab(model).runDepthDiagnostics(request)
+            })
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+
+    private func outlierProfile(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let request = try OutlierProfileRequest(mcp: args)
+        do throws(BasaltError) {
+            return .json(try await orchestrator.research { model throws(BasaltError) in
+                try await ResearchCall.lab(model).runOutlierProfile(request)
+            })
+        } catch {
+            throw MCPFailure(error)
+        }
+    }
+
+    private func causalSweep(_ args: [String: Any]?) async throws(MCPFailure) -> ToolResult {
+        let request = try CausalSweepRequest(mcp: args)
+        do throws(BasaltError) {
+            return .json(try await orchestrator.research { model throws(BasaltError) in
+                try await ResearchCall.lab(model).runCausalSweep(request)
             })
         } catch {
             throw MCPFailure(error)

@@ -10,13 +10,73 @@ extension Introspector {
         journal: URL? = OverlayRegistry.defaultJournal
     ) {
         let allowed = ResearchTool.introspection(interventions: interventions).filter { filter.allows($0.rawValue, researchTools: researchTools) }
-        self.init(orchestrator: orchestrator, tools: allowed.map(\.definition), journal: journal) { call, model throws(BasaltError) in
+        let definitions = allowed.map(\.definition) + Self.extraXRayDefinitions(interventions: interventions, filter: filter, researchTools: researchTools)
+        self.init(orchestrator: orchestrator, tools: definitions, journal: journal) { call, model throws(BasaltError) in
+            if let diagnostic = try await Self.runExtraXRay(call, on: model) { return diagnostic }
             let parsed = try ResearchCall(introspected: call)
             if case .tensor(let req) = parsed, req.spectrum, !filter.allowsSpectrum(researchTools: researchTools) {
                 throw .invalidRequestStructure(details: "model_tensor spectrum requires --research-tools or an enabled experiment tool")
             }
             return try await parsed.run(on: model).text
         }
+    }
+
+    private static func extraXRayDefinitions(
+        interventions: Bool,
+        filter: MCPToolFilter,
+        researchTools: Bool
+    ) -> [ToolDefinition] {
+        guard interventions else { return [] }
+        var extra: [ToolDefinition] = []
+        if filter.allows("depth_diagnostics", researchTools: researchTools) {
+            extra.append(MCPToolCatalog.depthDiagnosticsToolDefinition)
+        }
+        if filter.allows(MCPToolCatalog.outlierProfileToolName, researchTools: researchTools) {
+            extra.append(MCPToolCatalog.outlierProfileDescriptor.asToolDefinition)
+        }
+        if filter.allows("causal_sweep", researchTools: researchTools) {
+            extra.append(MCPToolCatalog.causalSweepToolDefinition)
+        }
+        return extra
+    }
+
+    private static func runExtraXRay(_ call: ToolCallOutput, on model: any ModelResearch) async throws(BasaltError) -> String? {
+        switch call.name {
+        case "depth_diagnostics":
+            let request: DepthDiagnosticsRequest
+            do throws(MCPFailure) {
+                let args = try MCPArguments.arguments(call.arguments.isEmpty ? nil : call.arguments)
+                request = try MCPToolCatalog.parseDepthDiagnosticsRequest(args)
+            } catch {
+                throw .invalidRequestStructure(details: error.message)
+            }
+            return ToolResult.json(try await ResearchCall.lab(model).runDepthDiagnostics(request)).text
+        case MCPToolCatalog.outlierProfileToolName:
+            let request: OutlierProfileRequest
+            do throws(MCPFailure) {
+                request = try OutlierProfileRequest(mcp: MCPArguments.arguments(call.arguments.isEmpty ? nil : call.arguments))
+            } catch {
+                throw .invalidRequestStructure(details: error.message)
+            }
+            return ToolResult.json(try await ResearchCall.lab(model).runOutlierProfile(request)).text
+        case "causal_sweep":
+            let request: CausalSweepRequest
+            do throws(MCPFailure) {
+                request = try CausalSweepRequest(mcp: MCPArguments.arguments(call.arguments.isEmpty ? nil : call.arguments))
+            } catch {
+                throw .invalidRequestStructure(details: error.message)
+            }
+            return ToolResult.json(try await ResearchCall.lab(model).runCausalSweep(request)).text
+        default:
+            return nil
+        }
+    }
+}
+
+private extension MCPToolDescriptor {
+    var asToolDefinition: ToolDefinition {
+        let json = (try? MCPWire.encoder.encode(inputSchema)).map { String(decoding: $0, as: UTF8.self) }
+        return ToolDefinition(name: name, description: description, parametersJSON: json)
     }
 }
 

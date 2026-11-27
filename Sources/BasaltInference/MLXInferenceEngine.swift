@@ -107,7 +107,7 @@ public actor MLXInferenceEngine: InferenceEngine {
             do {
                 launch = try await launching(prompt.input, cached, options: options, container: container)
             } catch {
-                keep(tokens: prompt.tokens, namespace: namespace, releasing: claim.leaseID, epoch: epoch)
+                await keep(tokens: prompt.tokens, namespace: namespace, releasing: claim.leaseID, epoch: epoch)
                 throw error
             }
             launches[claim.leaseID] = launch
@@ -229,25 +229,31 @@ extension MLXInferenceEngine {
         return leaseCount
     }
 
-    func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) {
+    func keep(tokens prompt: [Int], namespace: String?, releasing lease: Int, epoch: ModelEpoch) async {
         leases[lease] = nil
         let launch = launches.removeValue(forKey: lease)
-        guard epoch == modelEpoch, lease > modelFacts.cacheFence, faults.point != .keep, let namespace, let launch else { return }
-        let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
-        for anchor in anchors {
-            promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
-        }
-        if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
-            logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes.rawValue >> 10) KB each")
-        }
-        if let cache = launch.cache {
-            let keptTokens = Array(tokens.prefix(cache.tokenCount))
-            promptCaches.store(namespace, tokens: keptTokens, cache: cache, drainSource: true)
-            if let mtpPrefix = launch.mtpPrefix {
-                mtpPrefixes.removeAll { $0.namespace == namespace }
-                mtpPrefixes.append((namespace, keptTokens, mtpPrefix))
-                mtpPrefixes = Array(mtpPrefixes.suffix(Self.mtpPrefixLimit))
+        guard epoch == modelEpoch, lease > modelFacts.cacheFence, faults.point != .keep, let launch else { return }
+        let stateHealth = telemetry != nil ? (launch.stateLayers ?? launch.cache?.layers).map { RecurrentStateInspector.inspect($0) } : nil
+        if let namespace {
+            let (tokens, anchors) = (Array(prompt.prefix(launch.exactTokens.rawValue)), launch.anchors)
+            for anchor in anchors {
+                promptCaches.store(namespace, tokens: Array(tokens.prefix(anchor.tokenCount)), cache: anchor)
             }
+            if let bytes = anchors.first.flatMap(RecurrentSnapshot.init(of:))?.bytes {
+                logger.info("Recurrent snapshots before the boundary at prompt tokens \(anchors.map(\.tokenCount)): \(bytes.rawValue >> 10) KB each")
+            }
+            if let cache = launch.cache {
+                let keptTokens = Array(tokens.prefix(cache.tokenCount))
+                promptCaches.store(namespace, tokens: keptTokens, cache: cache, drainSource: true)
+                if let mtpPrefix = launch.mtpPrefix {
+                    mtpPrefixes.removeAll { $0.namespace == namespace }
+                    mtpPrefixes.append((namespace, keptTokens, mtpPrefix))
+                    mtpPrefixes = Array(mtpPrefixes.suffix(Self.mtpPrefixLimit))
+                }
+            }
+        }
+        if let telemetry, let stateHealth, !stateHealth.layers.isEmpty {
+            await telemetry.recordStateHealth(stateHealth)
         }
     }
 }

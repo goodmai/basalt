@@ -36,6 +36,7 @@ struct GRPORoundsOutcome: Sendable {
     let meanKL: Float
     let updatesApplied: Int
     let skippedGroups: Int
+    let stabilitySummary: TrainingStabilitySummary?
 }
 
 public enum GRPOTrainer {
@@ -104,6 +105,7 @@ public enum GRPOTrainer {
         report.updatesApplied = outcome.updatesApplied
         report.skippedGroups = outcome.skippedGroups
         report.gatePassed = gateReport.passed
+        report.stabilitySummary = outcome.stabilitySummary
         return report
     }
 }
@@ -232,34 +234,43 @@ extension GRPOTrainer {
         let promptCache = try practice.map { try MLXInferenceEngine.labPrompt($0.prompt, context) }
         var (losses, meanRewards) = ([Float](), [Float]())
         meanRewards.reserveCapacity(config.rounds)
-        var (klSum, klCount, updatesApplied, skippedGroups) = (Float(0), 0, 0, 0)
+        let monitor = TrainingStabilityMonitor(sampleEvery: config.stabilityTelemetryEvery ?? 0)
+        var stability = TrainingStabilityAccumulator()
+        var allRewards: [Double] = []
+        var (klSum, klCount, updatesApplied, skippedGroups, clippedTokens, totalTokens) = (Float(0), 0, 0, 0, 0, 0)
         for round in 0 ..< config.rounds {
             try Task.checkCancellation()
             var (roundRewardSum, roundRewardCount) = (Float(0), 0)
             for (taskIndex, task) in practice.enumerated() {
                 let promptIds = promptCache[taskIndex]
-                guard !promptIds.isEmpty, promptIds.allSatisfy({ $0 >= 0 && $0 < vocab }) else {
-                    skippedGroups += 1; continue
-                }
+                guard !promptIds.isEmpty, promptIds.allSatisfy({ $0 >= 0 && $0 < vocab }) else { skippedGroups += 1; continue }
                 let slot = GRPOTaskSlot(task: task, promptIds: promptIds, round: round, taskIndex: taskIndex)
                 let rollouts = try sampleGroup(slot, config: config, stops: stops, context: context, score: score)
                 let rewards = rollouts.map(\.reward)
+                if monitor.isEnabled { allRewards.append(contentsOf: rewards.map(Double.init)) }
                 roundRewardSum += rewards.reduce(Float(0), +)
                 roundRewardCount += rewards.count
                 let advantages = GRPOAdvantage.normalize(rewards: rewards)
                 guard advantages.contains(where: { $0 != 0 }) else { skippedGroups += 1; continue }
                 let group = prepareGroup(promptIds: promptIds, rollouts: rollouts, advantages: advantages, model: context.model)
                 guard !group.rollouts.isEmpty else { skippedGroups += 1; continue }
-                let step = try stepGroup(group, config: config, optimizer: optimizer, model: context.model)
-                losses.append(step.loss)
-                klSum += max(0, step.kl); klCount += 1; updatesApplied += step.updates
+                let step = try stepGroup(group, config: config, optimizer: optimizer, model: context.model, monitor: monitor, stepIndex: klCount)
+                if let stepTelemetry = step.telemetry { stability.record(stepTelemetry) }
+                clippedTokens += step.clippedTokens; totalTokens += step.totalTokens
+                losses.append(step.loss); klSum += max(0, step.kl); klCount += 1; updatesApplied += step.updates
             }
             meanRewards.append(roundRewardCount > 0 ? roundRewardSum / Float(roundRewardCount) : 0)
         }
+        let meanKL = klCount > 0 ? klSum / Float(klCount) : 0
+        if monitor.isEnabled {
+            stability.setGRPO(TrainingStabilityMath.grpoMetrics(
+                updatesApplied: klCount, skippedGroups: skippedGroups, clippedTokenCount: clippedTokens,
+                totalTokenCount: totalTokens, meanKL: Double(meanKL), rewards: allRewards))
+        }
         return GRPORoundsOutcome(
-            losses: losses, meanRewards: meanRewards,
-            meanKL: klCount > 0 ? klSum / Float(klCount) : 0,
-            updatesApplied: updatesApplied, skippedGroups: skippedGroups
+            losses: losses, meanRewards: meanRewards, meanKL: meanKL,
+            updatesApplied: updatesApplied, skippedGroups: skippedGroups,
+            stabilitySummary: monitor.isEnabled ? stability.finalize() : nil
         )
     }
 
@@ -267,27 +278,36 @@ extension GRPOTrainer {
         _ group: PreparedGRPOGroup,
         config: GRPOConfig,
         optimizer: any Optimizer,
-        model: any LanguageModel
-    ) throws -> (loss: Float, kl: Float, updates: Int) {
+        model: any LanguageModel,
+        monitor: TrainingStabilityMonitor = TrainingStabilityMonitor(),
+        stepIndex: Int = 0
+    ) throws -> (loss: Float, kl: Float, updates: Int, clippedTokens: Int, totalTokens: Int, telemetry: TrainingStepTelemetry?) {
         if let trainingOpt = optimizer as? TrainingOptimizer, trainingOpt.usesQKClip {
             try QKClipController.validateTrainableSupport(for: model, prefix: "grpo")
         }
         let epochs = max(1, config.ppoEpochs)
+        let trackClip = monitor.isEnabled
         let stepFn = valueAndGrad(model: model as Module) { _, activeGroup in
-            groupObjective(model: model, group: activeGroup, config: config)
+            groupObjective(model: model, group: activeGroup, config: config, trackClip: trackClip)
         }
-        var lastLoss: Float = 0
-        var lastKL: Float = 0
-        for _ in 0 ..< epochs {
+        var (lastLoss, lastKL, clippedTotal, tokenTotal) = (Float(0), Float(0), 0, 0)
+        var stepTelemetry: TrainingStepTelemetry?
+        let groupTokens = group.rollouts.reduce(0) { $0 + $1.responseIds.count }
+        for epoch in 0 ..< epochs {
             try Task.checkCancellation()
+            let sampleNow = epoch == 0 && monitor.shouldSample(step: stepIndex)
+            let before = sampleNow ? TrainingStabilityMonitor.snapshotWeights(model.trainableParameters()) : [:]
             let (values, gradients) = stepFn(model as Module, group)
             let (clipped, _) = clipGradNorm(gradients: gradients, maxNorm: config.maxGradNorm)
             optimizer.update(model: model as Module, gradients: clipped)
             eval(model as Module, optimizer, values)
-            let loss = values[0].item(Float.self)
-            let kl = values[1].item(Float.self)
+            let (loss, kl) = (values[0].item(Float.self), values[1].item(Float.self))
             guard loss.isFinite, kl.isFinite else {
                 throw BasaltError.inferenceError("grpo: policy gradient loss or KL became non-finite")
+            }
+            if trackClip && values.count > 2 {
+                clippedTotal += Int(values[2].item(Float.self).rounded())
+                tokenTotal += groupTokens
             }
             if let trainingOpt = optimizer as? TrainingOptimizer, trainingOpt.usesQKClip {
                 let seqs = group.rollouts.compactMap { rollout -> MLXArray? in
@@ -296,26 +316,32 @@ extension GRPOTrainer {
                 }
                 QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: trainingOpt.options)
             }
-            lastLoss = loss
-            lastKL = kl
+            if sampleNow {
+                stepTelemetry = TrainingStabilityMonitor.computeStepTelemetry(
+                    step: stepIndex, before: before, after: model.trainableParameters(), gradients: gradients, topK: monitor.topK)
+            }
+            (lastLoss, lastKL) = (loss, kl)
         }
-        return (lastLoss, lastKL, epochs)
+        return (lastLoss, lastKL, epochs, clippedTotal, tokenTotal, stepTelemetry)
     }
 
     static func groupObjective(
         model: any LanguageModel,
         group: PreparedGRPOGroup,
-        config: GRPOConfig
+        config: GRPOConfig,
+        trackClip: Bool = false
     ) -> [MLXArray] {
         var losses: [MLXArray] = []
         var kls: [MLXArray] = []
+        var clippedCounts: [MLXArray] = []
         losses.reserveCapacity(group.rollouts.count)
         kls.reserveCapacity(group.rollouts.count)
         for item in group.rollouts {
             let logPi = ADPOTrainer.tokenLogProbs(model: model, promptIds: group.promptIds, responseIds: item.responseIds)
+            let logOld = MLXArray(item.oldLogProbs)
             let (loss, kl) = surrogateLoss(
                 logPolicy: logPi,
-                logOld: MLXArray(item.oldLogProbs),
+                logOld: logOld,
                 logReference: MLXArray(item.refLogProbs),
                 advantage: item.advantage,
                 clipEpsilon: config.clipEpsilon,
@@ -323,6 +349,13 @@ extension GRPOTrainer {
             )
             losses.append(loss)
             kls.append(kl)
+            if trackClip {
+                clippedCounts.append(TrainingStabilityMonitor.grpoClippedTokenCount(
+                    logPolicy: logPi, logOld: logOld, advantage: item.advantage, clipEpsilon: config.clipEpsilon).clipped)
+            }
+        }
+        if trackClip {
+            return [stacked(losses).mean(), stacked(kls).mean(), stacked(clippedCounts).sum()]
         }
         return [stacked(losses).mean(), stacked(kls).mean()]
     }

@@ -20,12 +20,16 @@ extension MLXInferenceEngine {
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0
         for row in rows.heldOut { before += try await steps.read { context in nll([row], context.model) } }
+        let monitor = TrainingStabilityMonitor(sampleEvery: request.stabilityTelemetryEvery ?? 0)
+        var stability = TrainingStabilityAccumulator()
         while progress.step < request.iterations {
-            let next = try await steps.section(&state) { [progress, rows] context, state in
-                progress.advanced(by: try steps.withAdapter(&state, context: context) { context, optimizer, _ in
-                    try distillStep(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model)
-                })
+            let (next, stepTelemetry) = try await steps.section(&state) { [progress, rows] context, state in
+                let stepOut = try steps.withAdapter(&state, context: context) { context, optimizer, _ in
+                    try distillStepMonitored(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model, monitor: monitor)
+                }
+                return (progress.advanced(by: stepOut.loss), stepOut.telemetry)
             }
+            if let stepTelemetry { stability.record(stepTelemetry) }
             try await steps.confirm()
             guard next.losses.last?.isFinite != false else {
                 AdapterCheckpoint.discard(in: directory)
@@ -39,7 +43,8 @@ extension MLXInferenceEngine {
         try await steps.trainedAdapter(&state) { context, _, configuration in try saveConfiguredAdapter(configuration, model: context.model, to: directory) }
         AdapterCheckpoint.discard(in: directory)
         let count = Float(rows.heldOut.count)
-        return DistillRun(losses: reported(progress.losses), nllBefore: before / count, nllAfter: after / count, tooLong: rows.tooLong, resumedAt: resumedAt)
+        let summary = monitor.isEnabled ? stability.finalize() : nil
+        return DistillRun(losses: reported(progress.losses), nllBefore: before / count, nllAfter: after / count, tooLong: rows.tooLong, resumedAt: resumedAt, stabilitySummary: summary)
     }
 
     static func started(
@@ -128,17 +133,36 @@ extension MLXInferenceEngine {
     }
 
     static func distillStep(_ rows: [DistillRow], index: Int, batchSize: Int, optimizer: TrainingOptimizer, model: any LanguageModel) throws -> Float {
+        try distillStepMonitored(rows, index: index, batchSize: batchSize, optimizer: optimizer, model: model, monitor: TrainingStabilityMonitor()).loss
+    }
+
+    static func distillStepMonitored(
+        _ rows: [DistillRow], index: Int, batchSize: Int, optimizer: TrainingOptimizer, model: any LanguageModel, monitor: TrainingStabilityMonitor
+    ) throws -> (loss: Float, telemetry: TrainingStepTelemetry?) {
         try Task.checkCancellation()
+        let sample = monitor.shouldSample(step: index)
+        let before = sample ? TrainingStabilityMonitor.snapshotWeights(model.trainableParameters()) : [:]
         if optimizer.usesQKClip {
-            return try distillStepWithQKClip(rows, index: index, batchSize: batchSize, optimizer: optimizer, model: model)
+            let loss = try distillStepWithQKClip(rows, index: index, batchSize: batchSize, optimizer: optimizer, model: model)
+            let telemetry = sample ? TrainingStabilityMonitor.computeStepTelemetry(step: index, before: before, after: model.trainableParameters(), topK: monitor.topK) : nil
+            return (loss, telemetry)
         }
-        let step = valueAndGrad(model: model as Module) { _, arrays in [maskedLoss(model, arrays[0], arrays[1], arrays[2])] }
+        let step = valueAndGrad(model: model as Module) { _, arrays in
+            let logits = model(arrays[0], cache: nil).asType(.float32)
+            let loss = (crossEntropy(logits: logits, targets: arrays[1], reduction: .none) * arrays[2]).sum() / maximum(arrays[2].sum(), 1)
+            return sample ? [loss, stopGradient(logits)] : [loss]
+        }
         let size = min(batchSize, rows.count)
         let (inputs, targets, mask) = distillBatch((0 ..< size).map { rows[(index * size + $0) % rows.count] })
         let (values, gradients) = step(model as Module, [inputs, targets, mask])
         optimizer.update(model: model as Module, gradients: gradients)
         eval(model as Module, optimizer, values)
-        return values[0].item(Float.self)
+        let telemetry = sample
+            ? TrainingStabilityMonitor.computeStepTelemetry(
+                step: index, before: before, after: model.trainableParameters(),
+                gradients: gradients, logits: values.count > 1 ? values[1] : nil, topK: monitor.topK)
+            : nil
+        return (values[0].item(Float.self), telemetry)
     }
 }
 

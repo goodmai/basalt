@@ -16,6 +16,7 @@ struct DistillRun: Sendable {
     var nllAfter: Float
     var tooLong: Int
     var resumedAt: Int?
+    var stabilitySummary: TrainingStabilitySummary? = nil
 }
 
 extension MLXInferenceEngine {
@@ -62,6 +63,7 @@ extension MLXInferenceEngine {
             try await Self.distillAdapter(train, heldOut: heldOut, request: request, directory: directory, steps: steps)
         }
         (report.losses, report.teacherNLLBefore, report.teacherNLLAfter, report.resumedAt) = (run.losses, run.nllBefore, run.nllAfter, run.resumedAt)
+        report.stabilitySummary = run.stabilitySummary
         report.rejected["too_long", default: 0] += run.tooLong
         report.adapterDirectory = directory.path
         report.verdict = try await applyDistilled(directory, gate: request.gate, steps: steps)

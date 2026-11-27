@@ -59,7 +59,10 @@ extension MLXInferenceEngine {
         ).reporting(
             degenerate: finalResponse.degenerate, draftSource: finalResponse.draftSource,
             modelModified: finalResponse.modelModified, confidence: finalResponse.confidence
-        ).withCacheTelemetry(finalResponse.cacheTelemetry).withTokenTelemetry(finalResponse.tokenTelemetry)
+        ).withCacheTelemetry(finalResponse.cacheTelemetry)
+            .withTokenTelemetry(finalResponse.tokenTelemetry)
+            .withServingTiming(prefillSeconds: finalResponse.prefillSeconds, itlSamplesSeconds: finalResponse.itlSamplesSeconds)
+            .withReasoningTurn(finalResponse.reasoningTurn)
     }
 
     struct GenerationLaunch {
@@ -72,6 +75,7 @@ extension MLXInferenceEngine {
         var prefillSeconds: TimeInterval = 0
         var mtpPrefix: MTPPrefix?
         var onyxReasoning: OnyxReasoningBox?
+        var stateLayers: [any KVCache]?
     }
 
     static func launch(input: LMInput, prompt: CachedPrompt, options: LaunchOptions, context: ModelContext) throws -> GenerationLaunch {

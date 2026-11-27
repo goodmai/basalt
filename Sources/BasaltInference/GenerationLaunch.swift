@@ -141,10 +141,10 @@ struct GenerationLauncher {
             promptTokenCount: promptTokens, context: context, iterator: iterator, tools: tools, toolCallPolicy: params.toolCallPolicy, since: started)
     }
 
-    func uncached(_ iterator: some TokenIteratorProtocol) -> MLXInferenceEngine.GenerationLaunch {
+    func uncached(_ iterator: some TokenIteratorProtocol, layers: [any KVCache]? = nil) -> MLXInferenceEngine.GenerationLaunch {
         let (stream, task, prefill, onyx) = handing(iterator, promptTokens: input.text.tokens.dim(-1))
         return MLXInferenceEngine.GenerationLaunch(
-            stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill, onyxReasoning: onyx)
+            stream: stream, task: task, cache: nil, reusedTokens: 0, prefillSeconds: prefill, onyxReasoning: onyx, stateLayers: layers)
     }
 
     func fresh(_ plan: FreshCache, batch: BatchedDecoder?, lookup: LookupOptions) throws -> MLXInferenceEngine.GenerationLaunch {
@@ -206,7 +206,7 @@ struct GenerationLauncher {
         }
         guard lookup.requested, !MLXInferenceEngine.carriesMoreThanTokens(input),
               PromptLookupTokenIterator.supports(fresh, routesExperts: lookup.routesExperts) else {
-            return uncached(try TokenIterator(input: input, model: model, cache: fresh, parameters: launchParams, components: components))
+            return uncached(try TokenIterator(input: input, model: model, cache: fresh, parameters: launchParams, components: components), layers: fresh)
         }
         try components.validate(parameters: launchParams)
         var quantizing = lookup
@@ -214,7 +214,7 @@ struct GenerationLauncher {
         return uncached(try PromptLookupTokenIterator(
             prompt: PromptLookupTokenIterator.Prompt(input: input, history: input.text.tokens.asArray(Int.self)), model: model, cache: fresh,
             decoding: DecodingSettings(processor: components.makeProcessor(parameters: launchParams), parameters: launchParams),
-            lookup: quantizing))
+            lookup: quantizing), layers: fresh)
     }
 
     func mtp(_ request: MTPRequest, prompt: CachedPrompt, keepsCache: Bool) throws -> MLXInferenceEngine.GenerationLaunch {
@@ -305,7 +305,7 @@ struct GenerationLauncher {
             return MLXInferenceEngine.GenerationLaunch(
                 stream: stream, task: task, cache: keepable ? head.kept : nil, anchors: keepable ? head.anchors : [],
                 reusedTokens: TokenCount(reused), exactTokens: TokenCount(blended?.exactPrefix ?? Int.max), prefillSeconds: prefill,
-                onyxReasoning: onyx)
+                onyxReasoning: onyx, stateLayers: cache.layers)
         }
         if let batch, head.state == nil, let layers = BatchedTokenIterator.batchableLayers(cache.layers),
            let seat = batch.seat(in: context, kvBits: launchParams.kvBits) {

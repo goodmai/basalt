@@ -194,6 +194,10 @@ struct GenerationRelay: Sendable {
         guard let scanned = scanner?.feed(text) else { return [.text(text)] }
         return gate.admit(scanned)
     }
+    var isThinkingAtEnd: Bool { splitter.isThinking }
+    var completionTokenCount: Int { lastInfo?.generationTokenCount ?? tokenCount }
+    var finalFinishReason: GenerationResponse.FinishReason { finishReason }
+
     func attachInitial(into continuation: AsyncStream<StreamChunk>.Continuation, now: ContinuousClock.Instant) -> ContinuousClock.Instant? {
         if let echoed = setup.echoedPrefix { continuation.yield(.text(echoed)) }
         guard let box = setup.onyxReasoning else { return nil }
@@ -220,11 +224,13 @@ extension MLXInferenceEngine {
         let clock = ContinuousClock()
         let startTime = clock.now
         var firstTokenAt = relay.attachInitial(into: continuation, now: startTime)
+        var previousTokenAt = firstTokenAt
+        var itlSamples: [Double] = []
         var stoppedAfterCall = false
         var generations = inputs.stream.makeAsyncIterator()
         while let generation = await generations.next() {
             if Task.isCancelled { break }
-            if firstTokenAt == nil, case .chunk = generation { firstTokenAt = clock.now }
+            Self.recordChunkTimestamp(generation, now: clock.now, firstTokenAt: &firstTokenAt, previousTokenAt: &previousTokenAt, itlSamples: &itlSamples)
             let step = relay.step(generation)
             for chunk in step.chunks { continuation.yield(chunk) }
             guard step.stops else { continue }
@@ -245,32 +251,90 @@ extension MLXInferenceEngine {
         if !Task.isCancelled, !inputs.faults.endsStream {
             let generationTime = (clock.now - startTime).inSeconds + inputs.prefillSeconds
             let timeToFirstToken = (firstTokenAt.map { ($0 - startTime).inSeconds } ?? 0) + inputs.prefillSeconds
-            let response = await metadata(relay, inputs, generationTime: generationTime, timeToFirstToken: timeToFirstToken)
+            let response = await metadata(
+                relay, inputs, generationTime: generationTime,
+                timeToFirstToken: timeToFirstToken, itlSamplesSeconds: itlSamples)
             continuation.yield(.metadata(response))
         }
         continuation.finish()
     }
 
     private nonisolated func metadata(
-        _ relay: GenerationRelay, _ inputs: RelayInputs, generationTime: TimeInterval, timeToFirstToken: TimeInterval
+        _ relay: GenerationRelay, _ inputs: RelayInputs, generationTime: TimeInterval,
+        timeToFirstToken: TimeInterval, itlSamplesSeconds: [Double]
     ) async -> GenerationResponse {
         let mem = Memory.snapshot()
         let reasoning = relay.reasoningText
-        let reasoningTokens = reasoning.isEmpty ? nil : await inputs.container.perform {
-            $0.tokenizer.encode(text: reasoning, addSpecialTokens: false).count
+        let thinkingIDs: [Int] = reasoning.isEmpty ? [] : await inputs.container.perform {
+            $0.tokenizer.encode(text: reasoning, addSpecialTokens: false)
         }
+        let reasoningTokens = thinkingIDs.isEmpty ? nil : thinkingIDs.count
         let forcedTokens = inputs.constraint?.fastForward == true ? inputs.constraint?.session.totalForcedTokens : nil
         let modified = await self.modelModified(since: inputs.leaseID)
         let cacheTelemetry = await self.drainPromptCacheTelemetry()
         let tokenTelemetry = await Self.buildTokenTelemetry(for: relay.setup.request, container: inputs.container)
+        let reasoningTurn = Self.buildReasoningTurn(relay: relay, thinkingIDs: thinkingIDs, tokenTelemetry: tokenTelemetry)
         return relay.response(
             generationTime: generationTime, timeToFirstToken: timeToFirstToken,
             memory: GenerationResponse.MemoryUsage(peakBytes: mem.peakMemory, activeBytes: mem.activeMemory, cacheBytes: mem.cacheMemory),
             reasoningTokens: reasoningTokens, forcedTokens: forcedTokens, modelModified: modified
-        ).withCacheTelemetry(cacheTelemetry).withTokenTelemetry(tokenTelemetry)
+        ).withCacheTelemetry(cacheTelemetry)
+            .withTokenTelemetry(tokenTelemetry)
+            .withServingTiming(prefillSeconds: inputs.prefillSeconds, itlSamplesSeconds: itlSamplesSeconds)
+            .withReasoningTurn(reasoningTurn)
+    }
+}
+
+extension MLXInferenceEngine {
+    fileprivate static func buildReasoningTurn(
+        relay: GenerationRelay,
+        thinkingIDs: [Int],
+        tokenTelemetry: [OutputTokenTelemetry]?
+    ) -> ReasoningTurnRecord? {
+        guard !thinkingIDs.isEmpty || relay.isThinkingAtEnd else { return nil }
+        let answerTokens = max(0, relay.completionTokenCount - thinkingIDs.count)
+        let truncated = relay.isThinkingAtEnd && relay.finalFinishReason == .length
+        let (thinkEntropy, answerEntropy) = splitSpanEntropies(tokenTelemetry: tokenTelemetry, thinkingCount: thinkingIDs.count)
+        return ReasoningTurnRecord(
+            thinkingTokens: thinkingIDs.count,
+            answerTokens: answerTokens,
+            hitTokenBudgetBeforeClose: truncated,
+            thinkingTokenIDs: thinkingIDs,
+            meanThinkingEntropy: thinkEntropy,
+            meanAnswerEntropy: answerEntropy
+        )
     }
 
-    private static func buildTokenTelemetry(
+    private static func splitSpanEntropies(
+        tokenTelemetry: [OutputTokenTelemetry]?,
+        thinkingCount: Int
+    ) -> (thinking: Double?, answer: Double?) {
+        guard let entries = tokenTelemetry, !entries.isEmpty else { return (nil, nil) }
+        let split = min(max(0, thinkingCount), entries.count)
+        let thinkSlice = entries.prefix(split).map { Double($0.entropy) }.filter(\.isFinite)
+        let answerSlice = entries.dropFirst(split).map { Double($0.entropy) }.filter(\.isFinite)
+        let meanThink = thinkSlice.isEmpty ? nil : thinkSlice.reduce(0, +) / Double(thinkSlice.count)
+        let meanAnswer = answerSlice.isEmpty ? nil : answerSlice.reduce(0, +) / Double(answerSlice.count)
+        return (meanThink, meanAnswer)
+    }
+
+    fileprivate static func recordChunkTimestamp(
+        _ generation: Generation,
+        now: ContinuousClock.Instant,
+        firstTokenAt: inout ContinuousClock.Instant?,
+        previousTokenAt: inout ContinuousClock.Instant?,
+        itlSamples: inout [Double]
+    ) {
+        guard case .chunk = generation else { return }
+        if firstTokenAt == nil {
+            firstTokenAt = now
+        } else if let previous = previousTokenAt {
+            itlSamples.append((now - previous).inSeconds)
+        }
+        previousTokenAt = now
+    }
+
+    fileprivate static func buildTokenTelemetry(
         for request: GenerationRequest,
         container: ModelContainer
     ) async -> [OutputTokenTelemetry]? {

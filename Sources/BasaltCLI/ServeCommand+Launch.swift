@@ -78,7 +78,7 @@ extension ServeCommand {
         fputs("\n" + (lines + ["", ""]).joined(separator: "\n"), stderr)
     }
 
-    func makeEngine() throws -> MLXInferenceEngine {
+    func makeEngine(telemetry: TelemetryTracker? = nil) throws -> MLXInferenceEngine {
         var configuration = EngineConfiguration.standard
         sampling.configure(&configuration)
         promptCache.configure(&configuration)
@@ -97,7 +97,7 @@ extension ServeCommand {
         configuration.q3Kernel = experimental.q3Kernel
         configuration.kvSharedRow = experimental.kvSharedRow
         configuration.dllm = experimental.dllm
-        return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store())
+        return MLXInferenceEngine(configuration, promptCacheDisk: try promptCacheDisk.store(), telemetry: telemetry)
     }
 
     @Sendable static func announce(port: Int) {

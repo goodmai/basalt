@@ -139,7 +139,8 @@ extension ServeCommand {
         guard let model, let path else { return nil }
         var configuration = EngineConfiguration.standard
         configuration.promptCacheBytes = 0
-        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(configuration), telemetry: TelemetryTracker())
+        let telemetry = TelemetryTracker()
+        let orchestrator = ModelOrchestratorActor(engine: MLXInferenceEngine(configuration, telemetry: telemetry), telemetry: telemetry)
         guard loads, !onDemand else {
             await orchestrator.setModelId(model)
             if !onDemand { log("Serving \(model) (perceive, /v1/pipeline \(role)) sequentially: loaded for each request's \(role) stage and unloaded after it") }

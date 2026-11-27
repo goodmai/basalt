@@ -202,6 +202,7 @@ public struct CorpusTrainRequest: Sendable, Codable, Equatable {
     public var dpoPairsPath: String?
     public var quantizedBaseBits: Int?
     public var adaLoRATargetRank: Int?
+    public var stabilityTelemetryEvery: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
@@ -246,6 +247,7 @@ public struct AdapterProvenance: Sendable, Codable, Equatable {
     public var nllBefore: Float
     public var nllAfter: Float
     public var gatePassed: Bool?
+    public var stabilitySummary: TrainingStabilitySummary?
 
     public init(
         corpus: CorpusSourceSpec,
@@ -267,6 +269,7 @@ public struct AdapterProvenance: Sendable, Codable, Equatable {
         self.nllBefore = 0
         self.nllAfter = 0
         self.gatePassed = nil
+        self.stabilitySummary = nil
     }
 }
 

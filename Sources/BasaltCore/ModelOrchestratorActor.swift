@@ -472,7 +472,7 @@ extension ModelOrchestratorActor {
         await telemetry.requestStarted()
         do {
             let response = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-            await telemetry.requestFinished(with: response)
+            await telemetry.requestFinished(with: response, queueWaitSeconds: Self.durationSeconds(queueWait))
             await cloudFallback?.recordLocalOutcome(request, response: response, localModel: routingModelKey)
             return (response, queueWait)
         } catch {
@@ -507,14 +507,17 @@ extension ModelOrchestratorActor {
             await telemetry.requestFinished()
             throw Self.basaltError(error, "Stream setup error")
         }
-        return (relay(stream, ticket: ticket, request: request), queueWait)
+        return (relay(stream, ticket: ticket, request: request, queueWait: queueWait), queueWait)
     }
 
-    private func relay(_ stream: AsyncStream<StreamChunk>, ticket: Int, request: GenerationRequest) -> AsyncStream<StreamChunk> {
+    private func relay(
+        _ stream: AsyncStream<StreamChunk>, ticket: Int, request: GenerationRequest, queueWait: Duration
+    ) -> AsyncStream<StreamChunk> {
         let telemetry = self.telemetry
         let gate = self.gate
         let cloudFallback = self.cloudFallback
         let localModel = routingModelKey
+        let queueWaitSeconds = Self.durationSeconds(queueWait)
         return AsyncStream<StreamChunk> { continuation in
             let task = Task { @concurrent in
                 var result: GenerationResponse?
@@ -523,13 +526,17 @@ extension ModelOrchestratorActor {
                     continuation.yield(chunk)
                 }
                 await self.finish(ticket)
-                await telemetry.requestFinished(with: result)
+                await telemetry.requestFinished(with: result, queueWaitSeconds: queueWaitSeconds)
                 if let result { await cloudFallback?.recordLocalOutcome(request, response: result, localModel: localModel) }
                 continuation.finish()
             }
             Task { await gate.onCancel(ticket) { task.cancel() } }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    private static func durationSeconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) * 1e-18
     }
 
     private func withTimeout<T: Sendable>(

@@ -80,6 +80,7 @@ extension MLXInferenceEngine {
         (provenance.subset, provenance.split) = (fetched.subset, fetched.split)
         (provenance.trainRows, provenance.heldOutRows, provenance.rowDigest) = (split.train.count, split.heldOut.count, digest)
         (provenance.iterations, provenance.nllBefore, provenance.nllAfter) = (request.iterations, run.nllBefore, run.nllAfter)
+        provenance.stabilitySummary = run.stabilitySummary
         if request.applyOverlay {
             let verdict = try await applyDistilled(directory, gate: request.gate, steps: steps)
             report.verdict = verdict
@@ -126,12 +127,16 @@ enum CorpusAdapterRunner {
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0
         for row in rows.heldOut { before += try await steps.read { context in MLXInferenceEngine.nll([row], context.model) } }
+        let monitor = TrainingStabilityMonitor(sampleEvery: request.stabilityTelemetryEvery ?? 0)
+        var stability = TrainingStabilityAccumulator()
         while progress.step < request.iterations {
-            let next = try await steps.section(&state) { [progress, rows] context, state in
-                progress.advanced(by: try steps.withAdapter(&state, context: context) { context, optimizer, _ in
-                    try MLXInferenceEngine.distillStep(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model)
-                })
+            let (next, stepTelemetry) = try await steps.section(&state) { [progress, rows] context, state in
+                let stepOut = try steps.withAdapter(&state, context: context) { context, optimizer, _ in
+                    try MLXInferenceEngine.distillStepMonitored(rows.train, index: progress.step, batchSize: request.batchSize, optimizer: optimizer, model: context.model, monitor: monitor)
+                }
+                return (progress.advanced(by: stepOut.loss), stepOut.telemetry)
             }
+            if let stepTelemetry { stability.record(stepTelemetry) }
             try await steps.confirm()
             guard next.losses.last?.isFinite != false else {
                 AdapterCheckpoint.discard(in: directory)
@@ -149,7 +154,8 @@ enum CorpusAdapterRunner {
         }
         AdapterCheckpoint.discard(in: directory)
         let denom = Float(max(1, rows.heldOut.count))
-        return (DistillRun(losses: MLXInferenceEngine.reported(progress.losses), nllBefore: before / denom, nllAfter: after / denom, tooLong: rows.tooLong, resumedAt: resumedAt), digest)
+        let summary = monitor.isEnabled ? stability.finalize() : nil
+        return (DistillRun(losses: MLXInferenceEngine.reported(progress.losses), nllBefore: before / denom, nllAfter: after / denom, tooLong: rows.tooLong, resumedAt: resumedAt, stabilitySummary: summary), digest)
     }
 
     private static func startState(

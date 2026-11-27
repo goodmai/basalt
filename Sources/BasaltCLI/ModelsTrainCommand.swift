@@ -99,6 +99,9 @@ struct TrainSubcommand: AsyncParsableCommand {
     @Option(name: .customLong("adalora-target-rank"), help: "Optional AdaLoRA target average rank for importance-based rank pruning (#617)")
     var adaLoRATargetRank: Int?
 
+    @Option(name: .customLong("stability-telemetry-every"), help: "Sample training stability telemetry every N steps; 0 disables (#861)")
+    var stabilityTelemetryEvery: Int = 0
+
     func validate() throws {
         if adaLoRATargetRank != nil { throw ValidationError("--adalora-target-rank is not wired to corpus training yet (#617): the run would keep a fixed rank") }
         try optimizerOptions.validate()
@@ -142,6 +145,7 @@ extension TrainSubcommand {
         try requireValid(grpoBetaKL.isFinite && grpoBetaKL >= 0 && grpoBetaKL <= 100, "--grpo-beta-kl must be finite and in [0, 100]")
         try requireValid((1 ... 10_000).contains(grpoRounds), "--grpo-rounds must be in 1...10000")
         try requireValid((2 ... 10_000).contains(grpoTasks), "--grpo-tasks must be in 2...10000")
+        try requireValid(stabilityTelemetryEvery >= 0, "--stability-telemetry-every must be 0 or positive")
     }
 
     private func requireValid(_ condition: Bool, _ message: String) throws {
@@ -168,6 +172,7 @@ extension TrainSubcommand {
         request.dpoPairsPath = dpoPairs
         request.quantizedBaseBits = quantizedBaseBits
         request.adaLoRATargetRank = adaLoRATargetRank
+        request.stabilityTelemetryEvery = stabilityTelemetryEvery > 0 ? stabilityTelemetryEvery : nil
         return request
     }
 
@@ -195,6 +200,7 @@ extension TrainSubcommand {
         config.output = outputPath
         config.applyOverlay = checkGate
         config.gate = checkGate ? GateRequest(heldOut: CorpusTrainRequest.defaultHeldOutPrompts) : nil
+        config.stabilityTelemetryEvery = stabilityTelemetryEvery > 0 ? stabilityTelemetryEvery : nil
         return config
     }
 
@@ -214,6 +220,7 @@ extension TrainSubcommand {
         config.method = method
         config.output = output
         config.applyOverlay = checkGate
+        config.stabilityTelemetryEvery = stabilityTelemetryEvery > 0 ? stabilityTelemetryEvery : nil
         return config
     }
 }
@@ -283,6 +290,7 @@ extension TrainSubcommand {
             return try await engine.trainGRPO(config)
         }
         print("grpo accuracy: \(String(format: "%.3f", report.accuracyBefore)) -> \(String(format: "%.3f", report.accuracyAfter)), updates: \(report.updatesApplied), skipped: \(report.skippedGroups), mean KL: \(String(format: "%.4f", report.meanKL)), gate: \(report.gatePassed ? "passed" : "failed")")
+        if let stability = report.stabilitySummary { print(stability.formattedSummaryLine()) }
         print("adapter: \(report.outputPath)")
     }
 
@@ -290,11 +298,13 @@ extension TrainSubcommand {
         print("corpus: \(report.fetchedRows) fetched, \(report.keptRows) train, \(report.heldOutRows) held-out")
         print("held-out NLL: \(report.nllBefore.map { String(format: "%.3f", $0) } ?? "-") -> \(report.nllAfter.map { String(format: "%.3f", $0) } ?? "-")")
         if let step = report.resumedAt { print("resumed at step \(step) of \(iterations)") }
+        if let stability = report.provenance?.stabilitySummary { print(stability.formattedSummaryLine()) }
         print("adapter: \(report.adapterDirectory ?? "-")")
     }
 
     private func printDPOSummary(_ report: OfflineDPOReport) {
         print("dpo margin: \(String(format: "%.3f", report.meanMarginBefore)) -> \(String(format: "%.3f", report.meanMarginAfter)), accuracy: \(String(format: "%.3f", report.preferenceAccuracyBefore)) -> \(String(format: "%.3f", report.preferenceAccuracyAfter)), KL: \(String(format: "%.4f", report.klDivergence))")
+        if let stability = report.stabilitySummary { print(stability.formattedSummaryLine()) }
         print("adapter: \(report.outputPath)")
     }
 }
