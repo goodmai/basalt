@@ -239,7 +239,26 @@ extension MLXInferenceEngine {
         }
         return try Tokenizers.PreTrainedTokenizer(
             tokenizerConfig: compatibleChatTemplate(in: tokenizerConfig),
-            tokenizerData: try await configuration.tokenizerData)
+            tokenizerData: compatibleRegexes(in: try await configuration.tokenizerData))
+    }
+
+    static func compatibleRegexes(in tokenizerData: Config) -> Config {
+        guard var entries = tokenizerData.dictionary() else { return tokenizerData }
+        for key in ["normalizer", "pre_tokenizer", "post_processor", "decoder"] {
+            if let section = entries[BinaryDistinctString(key)] { entries[BinaryDistinctString(key)] = rewritingRegexes(section) }
+        }
+        return Config(entries)
+    }
+
+    private static func rewritingRegexes(_ config: Config) -> Config {
+        if let entries = config.dictionary() {
+            return Config(entries.reduce(into: [:]) { result, entry in
+                let regex = entry.key.string == "Regex" ? entry.value.string() : nil
+                result[entry.key] = regex.map { Config(TokenizerRegexCompatibility.compatible($0)) } ?? rewritingRegexes(entry.value)
+            })
+        }
+        if let items = config.array() { return Config(items.map(rewritingRegexes)) }
+        return config
     }
 
     static let whisperTokenizerConfig: Config = [
