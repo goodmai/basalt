@@ -98,7 +98,7 @@ package enum E8PLattice {
     }
 
     package static func isValidE8Point(_ point: [Float]) -> Bool {
-        guard point.count == 8 else { return false }
+        guard point.count == 8, point.allSatisfy({ $0.isFinite && abs($0) < 1e15 }) else { return false }
         let doubled = point.map { Int(rintf($0 * 2.0)) }
         for j in 0 ..< 8 where abs(Float(doubled[j]) * 0.5 - point[j]) > 1e-5 {
             return false
@@ -165,32 +165,43 @@ package enum E8PMetalKernels {
     }
 
     package static func quantizeWeight(_ weight: MLXArray, seed: UInt64 = 549) -> QuantizedPack {
-        let wf = weight.asType(.float32)
+        let wf = weight.dtype == .float64 && Device.defaultDevice() == .gpu
+            ? weight.asType(.float32, stream: .cpu)
+            : weight.asType(.float32)
+        precondition(wf.ndim == 2, "E8PMetalKernels.quantizeWeight requires 2D weight, got ndim=\(wf.ndim)")
         let nOut = wf.dim(0)
         let k = wf.dim(1)
-        precondition(k.isMultiple(of: 32))
+        precondition(k > 0 && k.isMultiple(of: 32), "E8PMetalKernels.quantizeWeight requires k > 0 and multiple of 32")
         var rng = seed == 0 ? 0xE850_2026_0549 : seed
         let signsHost: [Float] = (0 ..< k).map { _ in
             rng = rng &* 6364136223846793005 &+ 1442695040888963407
             return ((rng >> 63) & 1) == 0 ? 1.0 : -1.0
         }
         let signsArr = MLXArray(signsHost)
-        let wRot = MACaQFusedKernels.blockHadamard(wf, scaleVector: signsArr, blockSize: 32, isInverse: false)
+        guard nOut > 0 else {
+            return QuantizedPack(
+                packedCodes: MLXArray.zeros([0, k / 16], dtype: .uint32),
+                rowScale: MLXArray.zeros([0], dtype: .float32),
+                rhtSigns: signsArr)
+        }
+        let wRot: MLXArray
+        if Device.defaultDevice() == .gpu {
+            wRot = MACaQFusedKernels.blockHadamard(wf, scaleVector: signsArr, blockSize: 32, isInverse: false)
+        } else {
+            let scale = 1.0 / Float(32).squareRoot()
+            wRot = hadamardTransform((wf * signsArr).reshaped(-1, 32), scale: scale).reshaped(wf.shape)
+        }
         let rowRms = maximum(sqrt(mean(square(wRot), axis: 1)), Float(1e-6)) * Float(0.9)
         let wNorm = wRot / rowRms.reshaped(nOut, 1)
         eval(wNorm, rowRms)
         let normHost = wNorm.asArray(Float.self)
-        let groups8 = k / 8
-        let wordsPerRow = groups8 / 2
+        let wordsPerRow = k / 16
         var packedWords = [UInt32](repeating: 0, count: nOut * wordsPerRow)
         for r in 0 ..< nOut {
             for pair in 0 ..< wordsPerRow {
-                let g0 = pair * 2
-                let g1 = g0 + 1
-                let b0 = r * k + g0 * 8
-                let b1 = r * k + g1 * 8
+                let b0 = r * k + pair * 16
                 let c0 = UInt32(E8PLattice.nearestCode(Array(normHost[b0 ..< (b0 + 8)])))
-                let c1 = UInt32(E8PLattice.nearestCode(Array(normHost[b1 ..< (b1 + 8)])))
+                let c1 = UInt32(E8PLattice.nearestCode(Array(normHost[(b0 + 8) ..< (b0 + 16)])))
                 packedWords[r * wordsPerRow + pair] = c0 | (c1 << 16)
             }
         }
@@ -239,41 +250,95 @@ package enum E8PMetalKernels {
         return out
     }
 
+    private static func cleanDType(_ array: MLXArray) -> MLXArray {
+        if supportedDTypes.contains(array.dtype) { return array }
+        return array.asType(.float32, stream: array.dtype == .float64 ? .cpu : .default)
+    }
+
+    private static func canUseMetal(dtype: DType, pack: QuantizedPack, rows: Int, nOut: Int) -> Bool {
+        let k = pack.rhtSigns.size
+        let maxDim = Int(Int32.max) - rowsPerThreadgroup
+        return Device.defaultDevice() == .gpu
+            && supportedDTypes.contains(dtype)
+            && pack.packedCodes.dtype == .uint32
+            && rows <= maxDim
+            && nOut <= maxDim
+            && k <= maxDim
+    }
+
+    private static func cpuMatmulFallback(
+        _ x: MLXArray,
+        pack: QuantizedPack,
+        bias: MLXArray?,
+        rows: Int,
+        outShape: [Int]
+    ) -> MLXArray {
+        let nOut = pack.packedCodes.dim(0)
+        let xf = x.asType(.float32)
+        let codes = pack.packedCodes.asType(.uint32)
+        let signs = pack.rhtSigns.asType(.float32)
+        let scales = pack.rowScale.asType(.float32)
+        let biasF = bias?.asType(.float32)
+        if let biasF { eval(xf, codes, signs, scales, biasF) } else { eval(xf, codes, signs, scales) }
+        let cpuPack = CPUPack(
+            packedWords: codes.asArray(UInt32.self),
+            nOut: nOut,
+            rhtSigns: signs.asArray(Float.self),
+            rowScale: scales.asArray(Float.self),
+            bias: biasF?.asArray(Float.self))
+        let outHost = cpuMatmul(xf.asArray(Float.self), rows: rows, pack: cpuPack)
+        return MLXArray(outHost, outShape).asType(x.dtype)
+    }
+
     package static func matmul(
         _ x: MLXArray,
         pack: QuantizedPack,
         bias: MLXArray? = nil
     ) -> MLXArray {
+        precondition(x.ndim >= 1 && pack.packedCodes.ndim == 2, "E8PMetalKernels.matmul requires ndim >= 1 input and 2D packedCodes")
+        if Device.defaultDevice() == .gpu,
+           [x, pack.packedCodes, pack.rhtSigns, pack.rowScale, bias].contains(where: { $0?.dtype == .float64 }) {
+            return Device.withDefaultDevice(.cpu) { matmul(x, pack: pack, bias: bias) }
+        }
         let origType = x.dtype
         let k = pack.rhtSigns.size
-        let rows = x.size / max(1, k)
         let nOut = pack.packedCodes.dim(0)
         let wordsPerRow = pack.packedCodes.dim(1)
+        let outShape = Array(x.shape.dropLast()) + [nOut]
+        precondition(x.dim(-1) == k, "E8PMetalKernels.matmul input width \(x.dim(-1)) != rhtSigns size \(k)")
+        let rows = k > 0 ? (x.size / k) : x.shape.dropLast().reduce(1, *)
+        guard rows > 0, nOut > 0 else {
+            return MLXArray.zeros(outShape, dtype: origType)
+        }
+        if k == 0 {
+            let zeros = MLXArray.zeros(outShape, dtype: origType)
+            guard let bias else { return zeros }
+            precondition(bias.size == nOut, "E8PMetalKernels.matmul bias size mismatch")
+            return (zeros.asType(.float32) + bias.reshaped(nOut).asType(.float32)).asType(origType)
+        }
+        precondition(k.isMultiple(of: 32) && wordsPerRow == k / 16, "E8PMetalKernels.matmul requires k%32==0 and wordsPerRow==k/16")
+        precondition(pack.rowScale.size == nOut, "E8PMetalKernels.matmul rowScale size mismatch")
+        if let bias { precondition(bias.size == nOut, "E8PMetalKernels.matmul bias size mismatch") }
+        guard canUseMetal(dtype: origType, pack: pack, rows: rows, nOut: nOut) else {
+            return cpuMatmulFallback(x, pack: pack, bias: bias, rows: rows, outShape: outShape)
+        }
         let mTile = MACaQFusedMatmul.selectMTile(rows: rows)
         let mBlocks = (rows + mTile - 1) / mTile
         let nGroups = (nOut + rowsPerThreadgroup - 1) / rowsPerThreadgroup
         let dummy = MLXArray.zeros([2], dtype: origType)
-        let signsClean = supportedDTypes.contains(pack.rhtSigns.dtype) ? pack.rhtSigns : pack.rhtSigns.asType(.float32)
-        let rsClean = supportedDTypes.contains(pack.rowScale.dtype) ? pack.rowScale : pack.rowScale.asType(.float32)
-        let biasClean = bias.map { supportedDTypes.contains($0.dtype) ? $0 : $0.asType(.float32) } ?? dummy
-        let shellArr = MLXArray(E8PLattice.baseShellHalfUnits, [256, 8])
+        let signsClean = cleanDType(pack.rhtSigns)
+        let rsClean = cleanDType(pack.rowScale)
+        let biasClean = bias.map(cleanDType) ?? dummy
         let shapes = MLXArray([Int32(rows), Int32(nOut), Int32(k), Int32(wordsPerRow)])
         let out = e8pFusedKernel(
-            [x.reshaped(rows, k), pack.packedCodes, shellArr, signsClean.reshaped(k), rsClean.reshaped(nOut), biasClean.reshaped(biasClean.size), shapes],
-            template: [
-                ("T", origType),
-                ("TS", signsClean.dtype),
-                ("TRS", rsClean.dtype),
-                ("TB", biasClean.dtype),
-                ("HAS_BIAS", bias != nil),
-                ("MTILE", mTile),
-            ],
+            [x.reshaped(rows, k), pack.packedCodes, signsClean.reshaped(k), rsClean.reshaped(nOut), biasClean.reshaped(biasClean.size), shapes],
+            template: [("T", origType), ("HAS_BIAS", bias != nil), ("MTILE", mTile)],
             grid: (32, nGroups * rowsPerThreadgroup, mBlocks),
             threadGroup: (32, rowsPerThreadgroup, 1),
             outputShapes: [[rows, nOut]],
             outputDTypes: [origType]
         )[0]
-        return out.reshaped(Array(x.shape.dropLast()) + [nOut])
+        return out.reshaped(outShape)
     }
 }
 
@@ -281,6 +346,7 @@ package final class E8PLinear: Linear, Quantized {
     public let groupSize: Int = 32
     public let bits: Int = 2
     public let mode: QuantizationMode = .affine
+    public override var shape: (Int, Int) { (weight.dim(0), rhtSigns.size) }
     @ParameterInfo(key: "row_scale") package var rowScale: MLXArray
     @ParameterInfo(key: "rht_signs") package var rhtSigns: MLXArray
 
@@ -289,6 +355,7 @@ package final class E8PLinear: Linear, Quantized {
         self._rhtSigns.wrappedValue = pack.rhtSigns
         super.init(weight: pack.packedCodes, bias: bias)
         freeze()
+        train(false)
     }
 
     override public func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -296,6 +363,11 @@ package final class E8PLinear: Linear, Quantized {
         return E8PMetalKernels.matmul(x, pack: pack, bias: bias)
     }
 }
+
+private let e8pShellHeader: String = {
+    let values = E8PLattice.baseShellHalfUnits.map(String.init).joined(separator: ",")
+    return "constant uint8_t e8p_shell_const[2048] = {\(values)};\n"
+}()
 
 private let e8pSource = """
     const int M = int(shapes[0]);
@@ -307,20 +379,20 @@ private let e8pSource = """
     const int tid = sg * 32 + lane;
     threadgroup uint8_t tg_shell[2048];
     for (int idx = tid; idx < 2048; idx += 128) {
-        tg_shell[idx] = e8_shell[idx];
+        tg_shell[idx] = e8p_shell_const[idx];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const int n = int(threadgroup_position_in_grid.y) * 4 + sg;
     const int m0 = int(threadgroup_position_in_grid.z) * MTILE;
     if (n >= N || m0 >= M) { return; }
-    const device uint32_t* w_row = packed_codes + size_t(n) * size_t(WPR);
+    const size_t row_base = size_t(n) * size_t(WPR);
     float acc[MTILE];
     for (int r = 0; r < MTILE; ++r) { acc[r] = 0.0f; }
     for (int base = 0; base < K; base += 32) {
         const int col = base + lane;
         const int vec_idx = col >> 3;
         const int elem_in_vec = col & 7;
-        const uint32_t word = w_row[vec_idx >> 1];
+        const uint32_t word = packed_codes[row_base + size_t(vec_idx >> 1)];
         const uint code16 = ((vec_idx & 1) == 0) ? (word & 0xffffu) : (word >> 16u);
         const uint base_id = code16 & 255u;
         const uint sign_mask = (code16 >> 8u) & 255u;
@@ -346,8 +418,8 @@ private let e8pSource = """
 
 private let e8pFusedKernel = MLXFast.metalKernel(
     name: "iq_e8p_fused_qmm",
-    inputNames: ["x", "packed_codes", "e8_shell", "rht_signs", "row_scale", "bias", "shapes"],
+    inputNames: ["x", "packed_codes", "rht_signs", "row_scale", "bias", "shapes"],
     outputNames: ["out"],
     source: e8pSource,
-    header: BasaltMetalSubstrate.combinedHeader
+    header: BasaltMetalSubstrate.combinedHeader + e8pShellHeader
 )

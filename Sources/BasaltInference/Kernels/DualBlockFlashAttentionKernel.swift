@@ -72,11 +72,12 @@ package enum DualBlockFlashAttentionKernel {
         mask: MLXFast.ScaledDotProductAttentionMaskMode,
         mode: DualBlockFlashKernelMode = environmentDefaultMode
     ) -> Bool {
-        guard mode != .disabled else { return false }
+        guard mode != .disabled, Device.defaultDevice() == .gpu else { return false }
         guard case .none = mask else { return false }
         guard let dims = validated(queries: queries, segments: segments) else { return false }
-        if mode == .forced { return true }
         let totalK = dims.prefixLen + dims.activeLen + dims.suffixLen
+        guard dims.qLen > 0, totalK > 0 else { return false }
+        if mode == .forced { return true }
         return dims.qLen >= minDispatchQueryLen || totalK >= minDispatchTotalK
     }
 
@@ -85,39 +86,21 @@ package enum DualBlockFlashAttentionKernel {
         segments: Segments,
         scale: Float
     ) -> MLXArray {
-        guard let dims = validated(queries: queries, segments: segments) else {
-            preconditionFailure("DualBlockFlashAttentionKernel received unsupported shapes or dtypes")
+        if queries.shape.contains(0) {
+            let dV = segments.activeValues.ndim >= 1 ? segments.activeValues.dim(-1) : (queries.ndim >= 1 ? queries.dim(-1) : 0)
+            let outShape = queries.ndim >= 1 ? Array(queries.shape.dropLast()) + [dV] : queries.shape
+            return MLXArray.zeros(outShape, dtype: queries.dtype, stream: queries.dtype == .float64 ? .cpu : .default)
+        }
+        guard Device.defaultDevice() == .gpu,
+              let dims = validated(queries: queries, segments: segments)
+        else {
+            return referenceAttention(queries: queries, segments: segments, scale: scale)
         }
         let totalK = dims.prefixLen + dims.activeLen + dims.suffixLen
-        if dims.qLen == 0 || totalK == 0 {
+        guard totalK > 0 else {
             return MLXArray.zeros([dims.batch, dims.qHeads, dims.qLen, dims.headDim], dtype: dims.dtype)
         }
-        let dummy = MLXArray.zeros([1, 1, 1, dims.headDim], dtype: dims.dtype)
-        let kPre = dims.prefixLen > 0 ? (segments.prefixKeys ?? dummy) : dummy
-        let vPre = dims.prefixLen > 0 ? (segments.prefixValues ?? dummy) : dummy
-        let kSuf = dims.suffixLen > 0 ? (segments.suffixKeys ?? dummy) : dummy
-        let vSuf = dims.suffixLen > 0 ? (segments.suffixValues ?? dummy) : dummy
-        let bq = blockQ(for: dims.qLen)
-        let threads = (bq / 8) * 64
-        let nQ = (dims.qLen + bq - 1) / bq
-        let shapes = MLXArray([
-            Int32(dims.batch), Int32(dims.qHeads), Int32(dims.kvHeads), Int32(dims.qLen),
-            Int32(dims.prefixLen), Int32(dims.activeLen), Int32(dims.suffixLen), Int32(nQ),
-        ])
-        return dualBlockFlashAttnMetalKernel(
-            [queries, kPre, vPre, segments.activeKeys, segments.activeValues, kSuf, vSuf, MLXArray([scale]), shapes],
-            template: [
-                ("T", dims.dtype),
-                ("D", dims.headDim),
-                ("BQ", bq),
-                ("BK", blockK(for: dims.dtype)),
-                ("PAD_KV", padKV(for: dims.dtype)),
-            ],
-            grid: (threads, nQ, dims.batch * dims.qHeads),
-            threadGroup: (threads, 1, 1),
-            outputShapes: [[dims.batch, dims.qHeads, dims.qLen, dims.headDim]],
-            outputDTypes: [dims.dtype]
-        )[0]
+        return launchKernel(queries: queries, segments: segments, dims: dims, scale: scale)
     }
 }
 
@@ -169,6 +152,82 @@ extension DualBlockFlashAttentionKernel {
             && keys.dtype == dtype && values.dtype == dtype
     }
 
+    private static func launchKernel(
+        queries: MLXArray,
+        segments: Segments,
+        dims: ValidatedDims,
+        scale: Float
+    ) -> MLXArray {
+        let dummy = MLXArray.zeros([1, 1, 1, dims.headDim], dtype: dims.dtype)
+        let kPre = dims.prefixLen > 0 ? (segments.prefixKeys ?? dummy) : dummy
+        let vPre = dims.prefixLen > 0 ? (segments.prefixValues ?? dummy) : dummy
+        let kAct = dims.activeLen > 0 ? segments.activeKeys : dummy
+        let vAct = dims.activeLen > 0 ? segments.activeValues : dummy
+        let kSuf = dims.suffixLen > 0 ? (segments.suffixKeys ?? dummy) : dummy
+        let vSuf = dims.suffixLen > 0 ? (segments.suffixValues ?? dummy) : dummy
+        let bq = blockQ(for: dims.qLen)
+        let threads = (bq / 8) * 64
+        let nQ = (dims.qLen + bq - 1) / bq
+        let shapes = MLXArray([
+            Int32(dims.batch), Int32(dims.qHeads), Int32(dims.kvHeads), Int32(dims.qLen),
+            Int32(dims.prefixLen), Int32(dims.activeLen), Int32(dims.suffixLen), Int32(nQ),
+        ])
+        return dualBlockFlashAttnMetalKernel(
+            [queries, kPre, vPre, kAct, vAct, kSuf, vSuf, MLXArray([scale]), shapes],
+            template: [
+                ("T", dims.dtype),
+                ("D", dims.headDim),
+                ("BQ", bq),
+                ("BK", blockK(for: dims.dtype)),
+                ("PAD_KV", padKV(for: dims.dtype)),
+            ],
+            grid: (threads, nQ, dims.batch * dims.qHeads),
+            threadGroup: (threads, 1, 1),
+            outputShapes: [[dims.batch, dims.qHeads, dims.qLen, dims.headDim]],
+            outputDTypes: [dims.dtype]
+        )[0]
+    }
+
+    private static func referenceAttention(
+        queries: MLXArray,
+        segments: Segments,
+        scale: Float
+    ) -> MLXArray {
+        let usesFloat64 = [
+            queries, segments.activeKeys, segments.activeValues,
+            segments.prefixKeys, segments.prefixValues, segments.suffixKeys, segments.suffixValues,
+        ].compactMap { $0 }.contains { $0.dtype == .float64 }
+        if usesFloat64 && Device.defaultDevice() == .gpu {
+            return Device.withDefaultDevice(.cpu) {
+                referenceAttention(queries: queries, segments: segments, scale: scale)
+            }
+        }
+        let keyParts = [segments.prefixKeys, segments.activeKeys, segments.suffixKeys]
+            .compactMap { $0 }
+            .filter { $0.dim(2) > 0 }
+        let valueParts = [segments.prefixValues, segments.activeValues, segments.suffixValues]
+            .compactMap { $0 }
+            .filter { $0.dim(2) > 0 }
+        guard !keyParts.isEmpty, !valueParts.isEmpty, !queries.shape.contains(0) else {
+            let dV = segments.activeValues.ndim >= 1 ? segments.activeValues.dim(-1) : (queries.ndim >= 1 ? queries.dim(-1) : 0)
+            let outShape = queries.ndim >= 1 ? Array(queries.shape.dropLast()) + [dV] : queries.shape
+            return MLXArray.zeros(outShape, dtype: queries.dtype)
+        }
+        let keys = keyParts.count == 1 ? keyParts[0] : concatenated(keyParts, axis: 2)
+        let values = valueParts.count == 1 ? valueParts[0] : concatenated(valueParts, axis: 2)
+        let isRealFloat: (DType) -> Bool = { $0.isFloatingPoint && !$0.isComplex }
+        if isRealFloat(queries.dtype) && isRealFloat(keys.dtype) && isRealFloat(values.dtype) {
+            return MLXFast.scaledDotProductAttention(
+                queries: queries, keys: keys, values: values, scale: scale, mask: .none
+            )
+        }
+        let cType: DType = usesFloat64 ? .float64 : .float32
+        return MLXFast.scaledDotProductAttention(
+            queries: queries.asType(cType), keys: keys.asType(cType), values: values.asType(cType),
+            scale: scale, mask: .none
+        ).asType(queries.dtype)
+    }
+
     private static func optionalSegmentLength(
         _ keys: MLXArray?,
         _ values: MLXArray?,
@@ -194,6 +253,9 @@ private enum DualBlockFlashAttentionMSL {
         #include <metal_simdgroup>
         #include <metal_simdgroup_matrix>
 
+        static inline float dual_nan_max(float a, float b) {
+            return (isnan(a) || isnan(b)) ? NAN : max(a, b);
+        }
         """
 
     static let source = """
@@ -267,8 +329,6 @@ private enum DualBlockFlashAttentionMSL {
             const int seg_len = (seg == 0) ? N_pre : ((seg == 1) ? N_act : N_suf);
             if (seg_len <= 0) { continue; }
 
-            const device T* k_ptr = (seg == 0) ? k_pre : ((seg == 1) ? k_act : k_suf);
-            const device T* v_ptr = (seg == 0) ? v_pre : ((seg == 1) ? v_act : v_suf);
             const int64_t k_head_base = (seg == 0)
                 ? (int64_t(b) * k_pre_strides[0] + int64_t(h_kv) * k_pre_strides[1])
                 : ((seg == 1)
@@ -295,7 +355,7 @@ private enum DualBlockFlashAttentionMSL {
                     if (k_idx < seg_len) {
                         int64_t src = k_head_base + int64_t(k_idx) * k_s2 + int64_t(lane) * k_s3;
                         for (int c = lane; c < D; c += 32) {
-                            kv_smem[dst_row + c] = k_ptr[src];
+                            kv_smem[dst_row + c] = (seg == 0) ? k_pre[src] : ((seg == 1) ? k_act[src] : k_suf[src]);
                             src += k_step;
                         }
                     } else {
@@ -342,19 +402,20 @@ private enum DualBlockFlashAttentionMSL {
                     if (k_col0 + 1 >= seg_len) { v1 = -INFINITY; }
                     s_full[ik][0] = v0;
                     s_full[ik][1] = v1;
-                    tile_max = max(tile_max, max(v0, v1));
+                    tile_max = dual_nan_max(tile_max, dual_nan_max(v0, v1));
                 }
 
-                tile_max = max(tile_max, simd_shuffle_xor(tile_max, ushort(1)));
-                tile_max = max(tile_max, simd_shuffle_xor(tile_max, ushort(8)));
-                const float m_new = max(m_run, tile_max);
-                const bool active_row = (m_new > -INFINITY);
-                const float alpha = (m_run > -INFINITY && active_row) ? exp2(m_run - m_new) : 0.0f;
+                tile_max = dual_nan_max(tile_max, simd_shuffle_xor(tile_max, ushort(1)));
+                tile_max = dual_nan_max(tile_max, simd_shuffle_xor(tile_max, ushort(8)));
+                const float m_new = dual_nan_max(m_run, tile_max);
+                const bool bad_row = isnan(m_new);
+                const bool active_row = bad_row || (m_new != -INFINITY);
+                const float alpha = bad_row ? NAN : ((m_run != -INFINITY && active_row) ? exp2(m_run - m_new) : 0.0f);
                 float tile_sum = 0.0f;
                 simdgroup_float8x8 p_mat[TK];
                 for (int ik = 0; ik < TK; ++ik) {
-                    const float p0 = (active_row && s_full[ik][0] > -INFINITY) ? exp2(s_full[ik][0] - m_new) : 0.0f;
-                    const float p1 = (active_row && s_full[ik][1] > -INFINITY) ? exp2(s_full[ik][1] - m_new) : 0.0f;
+                    const float p0 = bad_row ? NAN : ((active_row && s_full[ik][0] != -INFINITY) ? exp2(s_full[ik][0] - m_new) : 0.0f);
+                    const float p1 = bad_row ? NAN : ((active_row && s_full[ik][1] != -INFINITY) ? exp2(s_full[ik][1] - m_new) : 0.0f);
                     p_mat[ik].thread_elements()[0] = p0;
                     p_mat[ik].thread_elements()[1] = p1;
                     tile_sum += p0 + p1;
@@ -374,7 +435,7 @@ private enum DualBlockFlashAttentionMSL {
                     if (k_idx < seg_len) {
                         int64_t src = v_head_base + int64_t(k_idx) * v_s2 + int64_t(lane) * v_s3;
                         for (int c = lane; c < D; c += 32) {
-                            kv_smem[dst_row + c] = v_ptr[src];
+                            kv_smem[dst_row + c] = (seg == 0) ? v_pre[src] : ((seg == 1) ? v_act[src] : v_suf[src]);
                             src += v_step;
                         }
                     } else {
@@ -400,12 +461,12 @@ private enum DualBlockFlashAttentionMSL {
         }
 
         if (valid_q) {
-            const float inv_l = (l_run > 0.0f) ? (1.0f / l_run) : 0.0f;
-            device T* o_row = out + (size_t(bh) * size_t(N_q) + size_t(q_row)) * size_t(D);
+            const float inv_l = (isnan(l_run) || isnan(m_run)) ? NAN : ((l_run > 0.0f) ? (1.0f / l_run) : 0.0f);
+            const size_t o_base = (size_t(bh) * size_t(N_q) + size_t(q_row)) * size_t(D);
             for (int dd = 0; dd < TDH; ++dd) {
                 const int d_col = d_part * DH + dd * 8 + sn;
-                o_row[d_col] = static_cast<T>(o_acc[dd].thread_elements()[0] * inv_l);
-                o_row[d_col + 1] = static_cast<T>(o_acc[dd].thread_elements()[1] * inv_l);
+                out[o_base + size_t(d_col)] = static_cast<T>(o_acc[dd].thread_elements()[0] * inv_l);
+                out[o_base + size_t(d_col + 1)] = static_cast<T>(o_acc[dd].thread_elements()[1] * inv_l);
             }
         }
         """

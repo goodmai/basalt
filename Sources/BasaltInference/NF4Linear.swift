@@ -11,7 +11,7 @@ open class NF4Linear: Linear {
     open override var shape: (Int, Int) { (weight.dim(0), weight.dim(1) * 8) }
 
     public init(weight: MLXArray, bias: MLXArray? = nil, scales: MLXArray, groupSize: Int? = nil) throws(NF4Error) {
-        let columns = weight.dim(-1) * 8
+        let columns = weight.ndim > 0 ? weight.dim(-1) * 8 : 0
         guard weight.ndim == 2, scales.ndim == 2, scales.dim(0) == weight.dim(0), scales.dim(1) > 0,
             columns % scales.dim(1) == 0
         else {
@@ -25,6 +25,7 @@ open class NF4Linear: Linear {
         self._scales.wrappedValue = scales
         super.init(weight: weight, bias: bias)
         self.freeze()
+        self.train(false)
     }
 
     public init(dense: MLXArray, bias: MLXArray? = nil, groupSize: Int = 32) {
@@ -33,6 +34,7 @@ open class NF4Linear: Linear {
         self._scales.wrappedValue = scales
         super.init(weight: codes, bias: bias)
         self.freeze()
+        self.train(false)
     }
 
     open override func unfreeze(recursive: Bool = true, keys: [String]? = nil, strict: Bool = false) throws {
@@ -41,8 +43,11 @@ open class NF4Linear: Linear {
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let out = NF4Metal.matmul(x, codes: weight, scales: scales, groupSize: groupSize)
+        let out = NF4Metal.matmul(x, codes: weight, scales: scales, groupSize: groupSize, training: training)
         guard let bias else { return out }
+        if Device.defaultDevice() == .gpu, (out.dtype == .float64 || bias.dtype == .float64) {
+            return Device.withDefaultDevice(.cpu) { out + bias }
+        }
         return out + bias
     }
 }
@@ -55,7 +60,7 @@ open class NF4SwitchLinear: SwitchLinear {
         inputDims: Int, outputDims: Int, numExperts: Int,
         weight: MLXArray, bias: MLXArray? = nil, scales: MLXArray, groupSize: Int? = nil
     ) throws(NF4Error) {
-        let columns = weight.dim(-1) * 8
+        let columns = weight.ndim > 0 ? weight.dim(-1) * 8 : 0
         guard weight.ndim == 3, scales.ndim == 3,
             weight.dim(0) == numExperts, weight.dim(1) == outputDims, columns == inputDims,
             scales.dim(0) == numExperts, scales.dim(1) == outputDims, scales.dim(2) > 0,
@@ -71,6 +76,7 @@ open class NF4SwitchLinear: SwitchLinear {
         self._scales.wrappedValue = scales
         super.init(inputDims: inputDims, outputDims: outputDims, numExperts: numExperts, weight: weight, bias: bias)
         self.freeze()
+        self.train(false)
     }
 
     public init(_ other: SwitchLinear, groupSize: Int = 32) {
@@ -83,16 +89,26 @@ open class NF4SwitchLinear: SwitchLinear {
             inputDims: dense.dim(2), outputDims: dense.dim(1), numExperts: dense.dim(0),
             weight: codes, bias: params["bias"])
         self.freeze()
+        self.train(false)
     }
 
     open override func callAsFunction(_ x: MLXArray, _ indices: MLXArray, sortedIndices: Bool = false) -> MLXArray {
         let params = parameters()
         guard case .value(let codes)? = params["weight"] else { return x }
-        var out = NF4Metal.gatherMatmul(x, codes: codes, scales: scales, rhsIndices: indices, groupSize: groupSize)
-        if case .value(let bias)? = params["bias"] {
-            out = out + expandedDimensions(bias[indices], axis: -2)
+        let out = NF4Metal.gatherMatmul(x, codes: codes, scales: scales, rhsIndices: indices, groupSize: groupSize, training: training)
+        guard case .value(let bias)? = params["bias"], out.size > 0, bias.ndim >= 1, bias.dim(0) > 0 else {
+            return out
         }
-        return out
+        let addBias = {
+            let idx64 = indices.asType(.int64)
+            let valid = (idx64 .>= Int64(0)) .&& (idx64 .< Int64(bias.dim(0)))
+            let safeIdx = which(valid, idx64, Int64(0)).asType(.int32)
+            let gathered = expandedDimensions(bias[safeIdx], axis: -2)
+            let masked = which(valid.reshaped(indices.shape + [1, 1]), gathered, MLXArray.zeros(gathered.shape, dtype: gathered.dtype))
+            return out + masked
+        }
+        let needsCPU = Device.defaultDevice() == .gpu && (out.dtype == .float64 || bias.dtype == .float64 || indices.dtype == .float64)
+        return needsCPU ? Device.withDefaultDevice(.cpu, addBias) : addBias()
     }
 }
 

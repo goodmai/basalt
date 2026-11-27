@@ -33,111 +33,167 @@ public enum NF4Metal {
 
     public static let midpoints: [Float] = zip(codebook, codebook.dropFirst()).map { ($0 + $1) * 0.5 }
 
+    private static func onCPUIfFloat64<T>(_ dtypes: [DType?], _ body: () -> T) -> T {
+        Device.defaultDevice() == .gpu && dtypes.contains(.float64) ? Device.withDefaultDevice(.cpu, body) : body()
+    }
+
     public static func quantized(_ weight: MLXArray, groupSize: Int = 32) -> (wq: MLXArray, scales: MLXArray) {
-        precondition(groupSizes.contains(groupSize), "NF4 groupSize must be 32, 64, or 128")
-        let columns = weight.dim(-1)
-        precondition(weight.ndim >= 2 && columns % groupSize == 0, "NF4 input dimension \(columns) must be divisible by \(groupSize)")
-        let leading = Array(weight.shape.dropLast())
-        let groups = weight.asType(.float32).reshaped(-1, groupSize)
-        let scales = abs(groups).max(axis: -1, keepDims: true).asType(.float16)
-        let scale = scales.asType(.float32)
-        let normalized = groups / which(scale .> 0, scale, 1)
-        var codes = MLXArray.zeros(normalized.shape, dtype: .uint32)
-        for mid in midpoints {
-            codes = codes + (normalized .> mid).asType(.uint32)
+        onCPUIfFloat64([weight.dtype]) {
+            precondition(groupSizes.contains(groupSize), "NF4 groupSize must be 32, 64, or 128")
+            let columns = weight.dim(-1)
+            precondition(weight.ndim >= 2 && columns % groupSize == 0, "NF4 input dimension \(columns) must be divisible by \(groupSize)")
+            let leading = Array(weight.shape.dropLast())
+            let groups = weight.asType(.float32).reshaped(-1, groupSize)
+            let scales = minimum(
+                abs(groups).max(axis: -1, keepDims: true),
+                Float(Float16.greatestFiniteMagnitude)
+            ).asType(.float16)
+            let scale = scales.asType(.float32)
+            let normalized = groups / which(scale .> 0, scale, 1)
+            var codes = MLXArray.zeros(normalized.shape, dtype: .uint32)
+            for mid in midpoints {
+                codes = codes + (normalized .> mid).asType(.uint32)
+            }
+            let shifts = MLXArray((0 ..< 8).map { UInt32(1) << UInt32(4 * $0) })
+            let packed = (codes.reshaped(-1, 8) * shifts).sum(axis: -1).asType(.uint32)
+            return (
+                wq: packed.reshaped(leading + [columns / 8]),
+                scales: scales.reshaped(leading + [columns / groupSize])
+            )
         }
-        let shifts = MLXArray((0 ..< 8).map { UInt32(1) << UInt32(4 * $0) })
-        let packed = (codes.reshaped(-1, 8) * shifts).sum(axis: -1).asType(.uint32)
-        return (
-            wq: packed.reshaped(leading + [columns / 8]),
-            scales: scales.reshaped(leading + [columns / groupSize])
-        )
     }
 
     public static func dequantized(
         _ codes: MLXArray, scales: MLXArray, groupSize: Int = 32, dtype: DType? = nil
     ) -> MLXArray {
-        let leading = Array(codes.shape.dropLast())
-        let words = codes.dim(-1)
-        let columns = words * 8
-        let groups = columns / groupSize
-        let shifts = MLXArray((0 ..< 8).map { UInt32(4 * $0) }).reshaped(Array(repeating: 1, count: codes.ndim) + [8])
-        let nibbles = ((codes.expandedDimensions(axis: -1) >> shifts) & UInt32(15))
-            .asType(.int32)
-            .reshaped(leading + [groups, groupSize])
-        let values = MLXArray(codebook).take(nibbles)
-        let restored = (values * scales.asType(.float32).expandedDimensions(axis: -1))
-            .reshaped(leading + [columns])
-        return restored.asType(dtype ?? scales.dtype)
+        onCPUIfFloat64([codes.dtype, scales.dtype, dtype]) {
+            let leading = codes.ndim > 0 ? Array(codes.shape.dropLast()) : []
+            let words = codes.ndim > 0 ? codes.dim(-1) : 0
+            let columns = words * 8
+            guard codes.size > 0, columns > 0, groupSize > 0 else {
+                return MLXArray.zeros(leading + [columns], dtype: dtype ?? scales.dtype)
+            }
+            let groups = columns / groupSize
+            let shifts = MLXArray((0 ..< 8).map { UInt32(4 * $0) }).reshaped(Array(repeating: 1, count: codes.ndim) + [8])
+            let nibbles = ((codes.expandedDimensions(axis: -1) >> shifts) & UInt32(15))
+                .asType(.int32)
+                .reshaped(leading + [groups, groupSize])
+            let values = MLXArray(codebook).take(nibbles)
+            let restored = (values * scales.asType(.float32).expandedDimensions(axis: -1))
+                .reshaped(leading + [columns])
+            return restored.asType(dtype ?? scales.dtype)
+        }
+    }
+
+    private static func rowsPerSimd(for rows: Int) -> Int {
+        rows <= 8 ? 4 : 1
     }
 
     public static func matmul(
-        _ x: MLXArray, codes: MLXArray, scales: MLXArray, groupSize: Int = 32
+        _ x: MLXArray, codes: MLXArray, scales: MLXArray, groupSize: Int = 32, training: Bool = false
     ) -> MLXArray {
-        let inputs = codes.dim(-1) * 8
-        let outputs = codes.dim(0)
-        let leading = Array(x.shape.dropLast())
-        guard inputs > 0, outputs > 0, x.dim(-1) == inputs, scales.dim(-1) * groupSize == inputs else {
-            return outputs == 0 ? MLXArray.zeros(leading + [0], dtype: x.dtype) : MLX.matmul(x, dequantized(codes, scales: scales, groupSize: groupSize, dtype: x.dtype).T)
+        onCPUIfFloat64([x.dtype, codes.dtype, scales.dtype]) {
+            let inputs = codes.ndim > 0 ? codes.dim(-1) * 8 : 0
+            let outputs = codes.ndim > 0 ? codes.dim(0) : 0
+            let leading = x.ndim > 0 ? Array(x.shape.dropLast()) : []
+            guard x.ndim >= 1, inputs > 0, outputs > 0, x.size > 0 else {
+                return MLXArray.zeros(leading + [max(0, outputs)], dtype: x.dtype)
+            }
+            guard x.dim(-1) == inputs, scales.ndim >= 2, scales.dim(-1) * groupSize == inputs else {
+                return fallbackDenseMatmul(x, codes: codes, scales: scales, groupSize: groupSize)
+            }
+            let rows = x.size / inputs
+            if Device.defaultDevice() == .gpu, !training, rows <= maxKernelRows, groupSizes.contains(groupSize),
+               dtypes.contains(x.dtype), codes.dtype == .uint32, dtypes.contains(scales.dtype),
+               codes.ndim == 2, scales.ndim == 2, scales.dim(0) == outputs {
+                let r = rowsPerSimd(for: rows)
+                let rowGroups = (outputs + r - 1) / r
+                let tgRows = min(max(1, rowGroups), 2)
+                let paddedGroups = ((rowGroups + tgRows - 1) / tgRows) * tgRows
+                let out = nf4QmvKernel(
+                    [x.reshaped(rows, inputs), codes, scales],
+                    template: [("T", x.dtype), ("G", groupSize), ("M", rows)],
+                    grid: (32, paddedGroups, 1),
+                    threadGroup: (32, tgRows, 1),
+                    outputShapes: [[rows, outputs]],
+                    outputDTypes: [x.dtype]
+                )[0]
+                return out.reshaped(leading + [outputs])
+            }
+            return fallbackDenseMatmul(x, codes: codes, scales: scales, groupSize: groupSize)
         }
-        let rows = x.size / inputs
-        guard rows > 0 else {
-            return MLXArray.zeros(leading + [outputs], dtype: x.dtype)
-        }
-        if rows <= maxKernelRows, groupSizes.contains(groupSize), dtypes.contains(x.dtype), codes.ndim == 2 {
-            let rowGroups = (outputs + 3) / 4
-            let tgRows = min(max(1, rowGroups), 2)
-            let paddedGroups = ((rowGroups + tgRows - 1) / tgRows) * tgRows
-            let out = nf4QmvKernel(
-                [x.reshaped(rows, inputs), codes, scales],
-                template: [("T", x.dtype), ("G", groupSize), ("M", rows)],
-                grid: (32, paddedGroups, 1),
-                threadGroup: (32, tgRows, 1),
-                outputShapes: [[rows, outputs]],
-                outputDTypes: [x.dtype]
-            )[0]
-            return out.reshaped(leading + [outputs])
-        }
-        let dense = dequantized(codes, scales: scales, groupSize: groupSize, dtype: x.dtype)
-        return MLX.matmul(x, dense.T)
     }
 
     public static func gatherMatmul(
-        _ x: MLXArray, codes: MLXArray, scales: MLXArray, rhsIndices: MLXArray, groupSize: Int = 32
+        _ x: MLXArray, codes: MLXArray, scales: MLXArray, rhsIndices: MLXArray, groupSize: Int = 32, training: Bool = false
+    ) -> MLXArray {
+        onCPUIfFloat64([x.dtype, codes.dtype, scales.dtype, rhsIndices.dtype]) {
+            let xBatch = x.ndim >= 2 ? Array(x.shape.dropLast(2)) : []
+            let batchShape = BasaltMetalSubstrate.broadcastShape(xBatch, rhsIndices.shape) ?? rhsIndices.shape
+            let batch = batchShape.reduce(1, *)
+            let inputs = codes.ndim > 0 ? codes.dim(-1) * 8 : 0
+            let outputs = codes.ndim >= 2 ? codes.dim(1) : 0
+            let rows = x.ndim >= 2 ? x.dim(-2) : 0
+            guard batch > 0, x.size > 0, rhsIndices.size > 0, rows > 0, outputs > 0, inputs > 0,
+                  BasaltMetalSubstrate.broadcastShape(xBatch, rhsIndices.shape) != nil,
+                  codes.ndim == 3, scales.ndim == 3,
+                  codes.dim(0) > 0, x.dim(-1) == inputs, scales.dim(-1) * groupSize == inputs else {
+                return MLXArray.zeros(batchShape + [max(0, rows), max(0, outputs)], dtype: x.dtype)
+            }
+            let xExpanded = x.shape == (batchShape + [rows, inputs]) ? x : broadcast(x, to: batchShape + [rows, inputs])
+            let idxExpanded = rhsIndices.shape == batchShape ? rhsIndices : broadcast(rhsIndices, to: batchShape)
+            if Device.defaultDevice() == .gpu, !training, rows <= maxKernelRows, groupSizes.contains(groupSize),
+               dtypes.contains(x.dtype), codes.dtype == .uint32, dtypes.contains(scales.dtype),
+               scales.dim(0) == codes.dim(0), scales.dim(1) == outputs {
+                let r = rowsPerSimd(for: rows)
+                let rowGroups = (outputs + r - 1) / r
+                let tgRows = min(max(1, rowGroups), 2)
+                let paddedGroups = ((rowGroups + tgRows - 1) / tgRows) * tgRows
+                let out = nf4GatherQmvKernel(
+                    [xExpanded.reshaped(batch, rows, inputs), codes, scales, idxExpanded.asType(.int64).reshaped(batch)],
+                    template: [("T", x.dtype), ("G", groupSize), ("M", rows)],
+                    grid: (32, paddedGroups, batch),
+                    threadGroup: (32, tgRows, 1),
+                    outputShapes: [[batch, rows, outputs]],
+                    outputDTypes: [x.dtype]
+                )[0]
+                return out.reshaped(batchShape + [rows, outputs])
+            }
+            return gatherMatmulFallback(xExpanded, codes: codes, scales: scales, rhsIndices: idxExpanded, groupSize: groupSize)
+        }
+    }
+}
+
+private extension NF4Metal {
+    static func fallbackDenseMatmul(_ x: MLXArray, codes: MLXArray, scales: MLXArray, groupSize: Int) -> MLXArray {
+        let inexact = x.dtype.isFloatingPoint || x.dtype.isComplex
+        let cType: DType = inexact ? x.dtype : .float32
+        let dense = dequantized(codes, scales: scales, groupSize: groupSize, dtype: cType)
+        let out = MLX.matmul(inexact ? x : x.asType(.float32), dense.T)
+        return inexact ? out : out.asType(x.dtype)
+    }
+
+    static func gatherMatmulFallback(
+        _ xExpanded: MLXArray,
+        codes: MLXArray,
+        scales: MLXArray,
+        rhsIndices: MLXArray,
+        groupSize: Int
     ) -> MLXArray {
         let batchShape = rhsIndices.shape
         let batch = rhsIndices.size
-        let inputs = codes.dim(-1) * 8
-        let outputs = codes.dim(1)
-        let rows = x.ndim >= 2 ? x.dim(-2) : 0
-        guard batch > 0, rows > 0, outputs > 0, inputs > 0, x.dim(-1) == inputs, scales.dim(-1) * groupSize == inputs else {
-            return MLXArray.zeros(batchShape + [max(0, rows), max(0, outputs)], dtype: x.dtype)
-        }
-        let xExpanded = x.shape == (batchShape + [rows, inputs]) ? x : broadcast(x, to: batchShape + [rows, inputs])
-        if rows <= maxKernelRows, groupSizes.contains(groupSize), dtypes.contains(x.dtype), codes.ndim == 3 {
-            let rowGroups = (outputs + 3) / 4
-            let tgRows = min(max(1, rowGroups), 2)
-            let paddedGroups = ((rowGroups + tgRows - 1) / tgRows) * tgRows
-            let out = nf4GatherQmvKernel(
-                [xExpanded.reshaped(batch, rows, inputs), codes, scales, rhsIndices.reshaped(batch)],
-                template: [("T", x.dtype), ("G", groupSize), ("M", rows)],
-                grid: (32, paddedGroups, batch),
-                threadGroup: (32, tgRows, 1),
-                outputShapes: [[batch, rows, outputs]],
-                outputDTypes: [x.dtype],
-                initValue: 0
-            )[0]
-            return out.reshaped(batchShape + [rows, outputs])
-        }
+        let rows = xExpanded.dim(-2)
         let numExperts = codes.dim(0)
-        let picks = rhsIndices.reshaped(batch).asType(.int32).asArray(Int32.self)
+        let outputs = codes.dim(1)
+        let inputs = codes.dim(2) * 8
+        let picks = rhsIndices.reshaped(batch).asType(.int64).asArray(Int64.self)
         let x3D = xExpanded.reshaped(batch, rows, inputs)
         let pieces = picks.enumerated().map { idx, expert -> MLXArray in
-            guard expert >= 0, Int(expert) < numExperts else {
-                return MLXArray.zeros([1, rows, outputs], dtype: x.dtype)
+            guard expert >= 0, expert < Int64(numExperts) else {
+                return MLXArray.zeros([1, rows, outputs], dtype: xExpanded.dtype)
             }
-            let dense = dequantized(codes[Int(expert)], scales: scales[Int(expert)], groupSize: groupSize, dtype: x.dtype)
-            return MLX.matmul(x3D[idx], dense.T).expandedDimensions(axis: 0)
+            return fallbackDenseMatmul(x3D[idx], codes: codes[Int(expert)], scales: scales[Int(expert)], groupSize: groupSize)
+                .expandedDimensions(axis: 0)
         }
         return concatenated(pieces, axis: 0).reshaped(batchShape + [rows, outputs])
     }
@@ -155,7 +211,7 @@ private enum NF4MetalSource {
         """
 
     static let qmv = """
-        constexpr int R = 4;
+        constexpr int R = (M <= 8) ? 4 : 1;
         const uint lane = uint(thread_index_in_simdgroup);
         const uint n0 = uint(thread_position_in_grid.y) * uint(R);
         const uint K = uint(x_shape[1]);
@@ -208,7 +264,7 @@ private enum NF4MetalSource {
         """
 
     static let gatherQmv = """
-        constexpr int R = 4;
+        constexpr int R = (M <= 8) ? 4 : 1;
         const uint lane = uint(thread_index_in_simdgroup);
         const uint n0 = uint(thread_position_in_grid.y) * uint(R);
         const uint b = uint(thread_position_in_grid.z);
@@ -221,13 +277,25 @@ private enum NF4MetalSource {
         if (b >= B || n0 >= N) {
             return;
         }
-        const uint e = uint(indices[b]);
-        if (e >= E) {
+        const size_t outBase = size_t(b) * size_t(M) * size_t(N);
+        const int64_t eSigned = int64_t(indices[b]);
+        if (eSigned < 0 || eSigned >= int64_t(E)) {
+            if (lane == 0u) {
+                for (int m = 0; m < M; m++) {
+                    for (int r = 0; r < R; r++) {
+                        const uint n = n0 + uint(r);
+                        if (n < N) {
+                            out[outBase + size_t(m) * size_t(N) + size_t(n)] = static_cast<T>(0.0f);
+                        }
+                    }
+                }
+            }
             return;
         }
-        const device T* xb = x + size_t(b) * size_t(M) * size_t(K);
-        const device uint32_t* we = w + size_t(e) * size_t(N) * size_t(KW);
-        const size_t sBase = size_t(e) * size_t(N) * size_t(KG);
+        const size_t e = size_t(eSigned);
+        const size_t xBase = size_t(b) * size_t(M) * size_t(K);
+        const size_t wBase = e * size_t(N) * size_t(KW);
+        const size_t sBase = e * size_t(N) * size_t(KG);
         float acc[M][R];
         for (int m = 0; m < M; m++) {
             for (int r = 0; r < R; r++) {
@@ -237,9 +305,9 @@ private enum NF4MetalSource {
         for (uint k8 = lane; k8 < KW; k8 += 32u) {
             float xv[M][8];
             for (int m = 0; m < M; m++) {
-                const size_t xOff = size_t(m) * size_t(K) + size_t(k8) * 8u;
+                const size_t xOff = xBase + size_t(m) * size_t(K) + size_t(k8) * 8u;
                 for (int j = 0; j < 8; j++) {
-                    xv[m][j] = float(xb[xOff + size_t(j)]);
+                    xv[m][j] = float(x[xOff + size_t(j)]);
                 }
             }
             const uint g = (k8 * 8u) / uint(G);
@@ -248,7 +316,7 @@ private enum NF4MetalSource {
                 if (n >= N) {
                     break;
                 }
-                const uint32_t word = we[size_t(n) * size_t(KW) + size_t(k8)];
+                const uint32_t word = w[wBase + size_t(n) * size_t(KW) + size_t(k8)];
                 const float s = float(scales[sBase + size_t(n) * size_t(KG) + size_t(g)]);
                 for (int m = 0; m < M; m++) {
                     float p = 0.0f;
@@ -259,13 +327,12 @@ private enum NF4MetalSource {
                 }
             }
         }
-        device T* outb = out + size_t(b) * size_t(M) * size_t(N);
         for (int m = 0; m < M; m++) {
             for (int r = 0; r < R; r++) {
                 const float v = simd_sum(acc[m][r]);
                 const uint n = n0 + uint(r);
                 if (lane == 0u && n < N) {
-                    outb[size_t(m) * size_t(N) + size_t(n)] = static_cast<T>(v);
+                    out[outBase + size_t(m) * size_t(N) + size_t(n)] = static_cast<T>(v);
                 }
             }
         }

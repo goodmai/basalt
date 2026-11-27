@@ -226,7 +226,7 @@ package enum QTIPKernels {
         rate: QTIPRate,
         inFeatures: Int? = nil
     ) -> MLXArray {
-        let width = inFeatures ?? xRot.dim(-1)
+        let width = inFeatures ?? (xRot.ndim >= 1 ? xRot.dim(-1) : 0)
         let rows = width > 0 ? xRot.size / width : 0
         if rows == 1 {
             return qmv(xRot, packed: packed, rowScales: rowScales, tlut: tlut, rate: rate)
@@ -240,187 +240,263 @@ package enum QTIPKernels {
     package static func qmv(
         _ xRot: MLXArray, packed: MLXArray, rowScales: MLXArray, tlut: MLXArray, rate: QTIPRate
     ) -> MLXArray {
-        precondition(xRot.dim(-1) > 0 && xRot.size / xRot.dim(-1) == 1, "qmv requires M == 1")
+        precondition(xRot.ndim >= 1 && xRot.dim(-1) > 0 && xRot.size / xRot.dim(-1) == 1, "qmv requires M == 1")
         return runMatvec(xRot, packed: packed, rowScales: rowScales, tlut: tlut, rate: rate)
     }
 
     package static func smallM(
         _ xRot: MLXArray, packed: MLXArray, rowScales: MLXArray, tlut: MLXArray, rate: QTIPRate
     ) -> MLXArray {
-        let rows = xRot.dim(-1) > 0 ? xRot.size / xRot.dim(-1) : 0
+        let rows = (xRot.ndim >= 1 && xRot.dim(-1) > 0) ? xRot.size / xRot.dim(-1) : 0
         precondition(matvecRows.contains(rows), "smallM requires M in 1...8")
         return runMatvec(xRot, packed: packed, rowScales: rowScales, tlut: tlut, rate: rate)
+    }
+
+    private static func cleanFloat(_ array: MLXArray) -> MLXArray {
+        dtypes.contains(array.dtype) ? array : array.asType(.float32, stream: array.dtype == .float64 ? .cpu : .default)
+    }
+
+    private static func runOnCPUIfFloat64(_ arrays: [MLXArray], _ body: () -> MLXArray) -> MLXArray {
+        guard Device.defaultDevice() == .gpu, arrays.contains(where: { $0.dtype == .float64 }) else { return body() }
+        return Device.withDefaultDevice(.cpu, body)
     }
 
     private static func runMatvec(
         _ xRot: MLXArray, packed: MLXArray, rowScales: MLXArray, tlut: MLXArray, rate: QTIPRate
     ) -> MLXArray {
-        let inFeatures = xRot.dim(-1)
-        let packed2D = packed.ndim == 2 ? packed : packed.reshaped(packed.dim(0), -1)
-        let scales1D = rowScales.reshaped(packed2D.dim(0))
-        let tileRows = packed2D.dim(0)
-        let outFeatures = tileRows * 16
-        let leading = Array(xRot.shape.dropLast())
-        let rows = xRot.size / inFeatures
-        guard tileRows > 0 else {
-            return MLXArray.zeros(leading + [outFeatures], dtype: xRot.dtype)
+        precondition(xRot.ndim >= 1 && packed.ndim >= 2, "QTIPKernels.runMatvec requires ndim >= 1 input and ndim >= 2 packed")
+        return runOnCPUIfFloat64([xRot, packed, rowScales, tlut]) {
+            let inFeatures = xRot.dim(-1)
+            let tileRows = packed.dim(0)
+            let outFeatures = tileRows * 16
+            let leading = Array(xRot.shape.dropLast())
+            let rows = inFeatures > 0 ? xRot.size / inFeatures : 0
+            guard rows > 0, tileRows > 0, inFeatures > 0 else {
+                return MLXArray.zeros(leading + [outFeatures], dtype: xRot.dtype)
+            }
+            precondition(inFeatures.isMultiple(of: 16), "QTIPKernels.runMatvec requires inFeatures multiple of 16")
+            let tileCols = inFeatures / 16
+            precondition(packed.size == tileRows * tileCols * rate.wordsPerTile, "QTIPKernels.runMatvec packed size mismatch")
+            precondition(rowScales.size == tileRows, "QTIPKernels.runMatvec rowScales size mismatch")
+            precondition(tlut.size == 1024, "QTIPKernels.runMatvec requires 1024-element tlut")
+            let packed2D = packed.ndim == 2 ? packed : packed.reshaped(tileRows, tileCols * rate.wordsPerTile)
+            let scales1D = rowScales.reshaped(tileRows)
+            let rowGroups = (tileRows + simdgroups - 1) / simdgroups
+            guard Device.defaultDevice() == .gpu,
+                  packed2D.dtype == .uint32,
+                  simdgroups * rowGroups <= Int(Int32.max)
+            else {
+                return qmmTiled(xRot, packed: packed2D, rowScales: scales1D, tlut: tlut, rate: rate)
+            }
+            let computeDType = dtypes.contains(xRot.dtype) ? xRot.dtype : .float32
+            let xFlat = (xRot.dtype == computeDType ? xRot : xRot.asType(computeDType)).reshaped(rows, inFeatures)
+            let out = qtipMatvecKernel(
+                [xFlat, packed2D, cleanFloat(scales1D), cleanFloat(tlut)],
+                template: [
+                    ("K", rate.stepBits), ("WORDS", rate.wordsPerTile),
+                    ("M", rows), ("SG", simdgroups), ("T", computeDType)
+                ],
+                grid: (32, simdgroups * rowGroups, 1),
+                threadGroup: (32, simdgroups, 1),
+                outputShapes: [[rows, outFeatures]],
+                outputDTypes: [computeDType]
+            )[0]
+            let casted = out.dtype == xRot.dtype ? out : out.asType(xRot.dtype)
+            return casted.reshaped(leading + [outFeatures])
         }
-        let computeDType = dtypes.contains(xRot.dtype) ? xRot.dtype : .float32
-        let xFlat = (xRot.dtype == computeDType ? xRot : xRot.asType(computeDType)).reshaped(rows, inFeatures)
-        let rowGroups = (tileRows + simdgroups - 1) / simdgroups
-        let out = qtipMatvecKernel(
-            [xFlat, packed2D, scales1D, tlut],
-            template: [
-                ("K", rate.stepBits), ("WORDS", rate.wordsPerTile),
-                ("M", rows), ("SG", simdgroups), ("T", computeDType)
-            ],
-            grid: (32, simdgroups * rowGroups, 1),
-            threadGroup: (32, simdgroups, 1),
-            outputShapes: [[rows, outFeatures]],
-            outputDTypes: [computeDType]
-        )[0]
-        let casted = out.dtype == xRot.dtype ? out : out.asType(xRot.dtype)
-        return casted.reshaped(leading + [outFeatures])
     }
 
     package static func qmmTiled(
-        _ xRot: MLXArray,
-        packed: MLXArray,
-        rowScales: MLXArray,
-        tlut: MLXArray,
-        rate: QTIPRate,
-        tileBytes: Int = tileBytes
+        _ xRot: MLXArray, packed: MLXArray, rowScales: MLXArray, tlut: MLXArray,
+        rate: QTIPRate, tileBytes: Int = tileBytes
     ) -> MLXArray {
-        let inFeatures = xRot.dim(-1)
-        let packed2D = packed.ndim == 2 ? packed : packed.reshaped(packed.dim(0), -1)
-        let scales1D = rowScales.reshaped(packed2D.dim(0))
-        let tileRows = packed2D.dim(0)
-        let outFeatures = tileRows * 16
-        let leading = Array(xRot.shape.dropLast())
-        let rows = inFeatures > 0 ? xRot.size / inFeatures : 0
-        guard rows > 0, tileRows > 0 else {
-            return MLXArray.zeros(leading + [outFeatures], dtype: xRot.dtype)
+        precondition(xRot.ndim >= 1 && packed.ndim >= 2, "QTIPKernels.qmmTiled requires ndim >= 1 input and ndim >= 2 packed")
+        return runOnCPUIfFloat64([xRot, packed, rowScales, tlut]) {
+            let inFeatures = xRot.dim(-1)
+            let tileRows = packed.dim(0)
+            let outFeatures = tileRows * 16
+            let leading = Array(xRot.shape.dropLast())
+            let rows = inFeatures > 0 ? xRot.size / inFeatures : 0
+            guard rows > 0, tileRows > 0, inFeatures > 0 else {
+                return MLXArray.zeros(leading + [outFeatures], dtype: xRot.dtype)
+            }
+            precondition(inFeatures.isMultiple(of: 16), "QTIPKernels.qmmTiled requires inFeatures multiple of 16")
+            let tileCols = inFeatures / 16
+            let packed2D = packed.ndim == 2 ? packed : packed.reshaped(tileRows, tileCols * rate.wordsPerTile)
+            let scales1D = rowScales.reshaped(tileRows)
+            let computeDType = dtypes.contains(xRot.dtype) ? xRot.dtype : .float32
+            let xCompute = xRot.dtype == computeDType ? xRot : xRot.asType(computeDType)
+            let bytesPerTileRow = max(1, 16 * inFeatures * computeDType.size)
+            let rowsPerChunk = max(1, max(1, tileBytes) / bytesPerTileRow)
+            var parts: [MLXArray] = []
+            for start in stride(from: 0, to: tileRows, by: rowsPerChunk) {
+                let end = min(tileRows, start + rowsPerChunk)
+                let wChunk = QTIPMetal.decode(
+                    packed: packed2D[start ..< end], rowScales: scales1D[start ..< end],
+                    tlut: tlut, rate: rate, tileCols: tileCols, dtype: computeDType)
+                parts.append(matmul(xCompute, wChunk.T))
+            }
+            let out = parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
+            return out.dtype == xRot.dtype ? out : out.asType(xRot.dtype)
         }
-        let computeDType = dtypes.contains(xRot.dtype) ? xRot.dtype : .float32
-        let xCompute = xRot.dtype == computeDType ? xRot : xRot.asType(computeDType)
-        let tileCols = inFeatures / 16
-        let bytesPerTileRow = max(1, 16 * inFeatures * computeDType.size)
-        let rowsPerChunk = max(1, max(1, tileBytes) / bytesPerTileRow)
-        var parts: [MLXArray] = []
-        for start in stride(from: 0, to: tileRows, by: rowsPerChunk) {
-            let end = min(tileRows, start + rowsPerChunk)
-            let wChunk = QTIPMetal.decode(
-                packed: packed2D[start ..< end],
-                rowScales: scales1D[start ..< end],
-                tlut: tlut,
-                rate: rate,
-                tileCols: tileCols,
-                dtype: computeDType
-            )
-            parts.append(matmul(xCompute, wChunk.T))
-        }
-        let out = parts.count == 1 ? parts[0] : concatenated(parts, axis: -1)
-        return out.dtype == xRot.dtype ? out : out.asType(xRot.dtype)
     }
 }
 
 extension QTIPKernels {
     package static func gatherQmv(
-        _ xRot: MLXArray,
-        packedExperts: MLXArray,
-        rowScales: MLXArray,
-        tlut: MLXArray,
-        indices: MLXArray,
-        rate: QTIPRate
+        _ xRot: MLXArray, packedExperts: MLXArray, rowScales: MLXArray,
+        tlut: MLXArray, indices: MLXArray, rate: QTIPRate
     ) -> MLXArray {
-        gatherMatmul(
-            x: xRot, packedExperts: packedExperts, rowScales: rowScales,
-            tlut: tlut, indices: indices, rate: rate)
+        gatherMatmul(x: xRot, packedExperts: packedExperts, rowScales: rowScales, tlut: tlut, indices: indices, rate: rate)
     }
 
     package static func gatherMatmul(
-        x: MLXArray,
-        packedExperts: MLXArray,
-        rowScales: MLXArray,
-        tlut: MLXArray,
-        indices: MLXArray,
-        rate: QTIPRate
+        x: MLXArray, packedExperts: MLXArray, rowScales: MLXArray,
+        tlut: MLXArray, indices: MLXArray, rate: QTIPRate
     ) -> MLXArray {
-        let inFeatures = x.dim(-1)
-        let numExperts = packedExperts.dim(0)
-        let tileRows = packedExperts.dim(1)
-        let outFeatures = tileRows * 16
-        guard indices.size > 0, x.size > 0, inFeatures > 0, numExperts > 0, tileRows > 0 else {
-            return MLXArray.zeros(gatherOutputShape(x: x, indices: indices, outFeatures: outFeatures), dtype: x.dtype)
+        precondition(x.ndim >= 1 && packedExperts.ndim >= 3, "QTIPKernels.gatherMatmul requires ndim >= 1 input and ndim >= 3 packedExperts")
+        return runOnCPUIfFloat64([x, packedExperts, rowScales, tlut, indices]) {
+            let inFeatures = x.dim(-1)
+            let numExperts = packedExperts.dim(0)
+            let tileRows = packedExperts.dim(1)
+            let outFeatures = tileRows * 16
+            guard indices.size > 0, x.size > 0, inFeatures > 0, numExperts > 0, tileRows > 0 else {
+                return MLXArray.zeros(gatherOutputShape(x: x, indices: indices, outFeatures: outFeatures), dtype: x.dtype)
+            }
+            precondition(inFeatures.isMultiple(of: 16), "QTIPKernels.gatherMatmul requires inFeatures multiple of 16")
+            let expectedRowWords = (inFeatures / 16) * rate.wordsPerTile
+            precondition(packedExperts.size == numExperts * tileRows * expectedRowWords, "QTIPKernels.gatherMatmul packedExperts size mismatch")
+            precondition(rowScales.size == numExperts * tileRows, "QTIPKernels.gatherMatmul rowScales size mismatch")
+            precondition(tlut.size == 1024, "QTIPKernels.gatherMatmul requires 1024-element tlut")
+            let prep = prepareGatherInputs(x: x, indices: indices, inFeatures: inFeatures, outFeatures: outFeatures)
+            let assignments = prep.flatIndices.size
+            let packed3D = packedExperts.ndim == 3 ? packedExperts : packedExperts.reshaped(numExperts, tileRows, expectedRowWords)
+            let scales2D = rowScales.reshaped(numExperts, tileRows)
+            let rowGroups = (tileRows + simdgroups - 1) / simdgroups
+            guard Device.defaultDevice() == .gpu, packed3D.dtype == .uint32,
+                  simdgroups * rowGroups <= Int(Int32.max), assignments <= Int(Int32.max)
+            else {
+                let idx64 = prep.flatIndices.asType(.int64)
+                let nExp = Int64(numExperts)
+                let safeFlatIndices = which((idx64 .>= Int64(0)) .&& (idx64 .< nExp), idx64, Int64(nExp - 1))
+                let cpuOut = cpuGatherMatmul(
+                    flatX: prep.flatX, packed3D: packed3D, scales2D: scales2D,
+                    tlut: tlut, flatIndices: safeFlatIndices, rate: rate)
+                return cpuOut.asType(x.dtype).reshaped(prep.outShape)
+            }
+            let computeDType = dtypes.contains(x.dtype) ? x.dtype : .float32
+            let xCompute = prep.flatX.dtype == computeDType ? prep.flatX : prep.flatX.asType(computeDType)
+            let uintIndices = prep.flatIndices.asType(.uint32)
+            let out = qtipGatherQmvKernel(
+                [xCompute, packed3D, cleanFloat(scales2D), cleanFloat(tlut), uintIndices],
+                template: [("K", rate.stepBits), ("WORDS", rate.wordsPerTile), ("SG", simdgroups), ("T", computeDType)],
+                grid: (32, simdgroups * rowGroups, assignments), threadGroup: (32, simdgroups, 1),
+                outputShapes: [[assignments, outFeatures]], outputDTypes: [computeDType])[0]
+            return (out.dtype == x.dtype ? out : out.asType(x.dtype)).reshaped(prep.outShape)
         }
-        let prep = prepareGatherInputs(x: x, indices: indices, inFeatures: inFeatures, outFeatures: outFeatures)
-        let assignments = prep.flatIndices.size
-        let computeDType = dtypes.contains(x.dtype) ? x.dtype : .float32
-        let xCompute = prep.flatX.dtype == computeDType ? prep.flatX : prep.flatX.asType(computeDType)
-        let packed3D = packedExperts.ndim == 3 ? packedExperts : packedExperts.reshaped(numExperts, tileRows, -1)
-        let scales2D = rowScales.reshaped(numExperts, tileRows)
-        let uintIndices = prep.flatIndices.dtype == .uint32 ? prep.flatIndices : prep.flatIndices.asType(.uint32)
-        let rowGroups = (tileRows + simdgroups - 1) / simdgroups
-        let out = qtipGatherQmvKernel(
-            [xCompute, packed3D, scales2D, tlut, uintIndices],
-            template: [
-                ("K", rate.stepBits), ("WORDS", rate.wordsPerTile),
-                ("SG", simdgroups), ("T", computeDType)
-            ],
-            grid: (32, simdgroups * rowGroups, assignments),
-            threadGroup: (32, simdgroups, 1),
-            outputShapes: [[assignments, outFeatures]],
-            outputDTypes: [computeDType]
-        )[0]
-        let casted = out.dtype == x.dtype ? out : out.asType(x.dtype)
-        return casted.reshaped(prep.outShape)
     }
 
-    private static func gatherOutputShape(x: MLXArray, indices: MLXArray, outFeatures: Int) -> [Int] {
+    static func broadcastDim(_ a: Int, _ b: Int) -> Int {
+        (a == 0 || b == 0) ? 0 : max(a, b)
+    }
+
+    static func gatherOutputShape(x: MLXArray, indices: MLXArray, outFeatures: Int) -> [Int] {
         if x.ndim == indices.ndim + 2 {
-            let bShape = zip(Array(x.shape.dropLast(2)), indices.shape).map(max)
-            return bShape + [x.dim(-2), outFeatures]
+            return zip(Array(x.shape.dropLast(2)), indices.shape).map(broadcastDim) + [x.dim(-2), outFeatures]
         }
-        return indices.shape + [outFeatures]
+        if x.ndim == indices.ndim + 1 {
+            return zip(Array(x.shape.dropLast()), indices.shape).map(broadcastDim) + [outFeatures]
+        }
+        guard indices.ndim >= 1 else { return [outFeatures] }
+        let idxLead = Array(indices.shape.dropLast())
+        let xLead = Array(x.shape.dropLast())
+        let pad = max(0, idxLead.count - xLead.count)
+        let b = Array(idxLead.prefix(pad)) + zip(idxLead.dropFirst(pad), xLead).map(broadcastDim)
+        return b + [indices.dim(-1), outFeatures]
     }
 
-    private static func prepareGatherInputs(
-        x: MLXArray,
-        indices: MLXArray,
-        inFeatures: Int,
-        outFeatures: Int
+    static func prepareGatherInputs(
+        x: MLXArray, indices: MLXArray, inFeatures: Int, outFeatures: Int
     ) -> (flatX: MLXArray, flatIndices: MLXArray, outShape: [Int]) {
         let assignments = indices.size
         if x.ndim == indices.ndim + 2 {
             let lhsBatch = Array(x.shape.dropLast(2))
             let mInner = x.dim(-2)
-            let bShape = zip(lhsBatch, indices.shape).map(max)
+            let bShape = zip(lhsBatch, indices.shape).map(broadcastDim)
             if mInner == 1, lhsBatch == indices.shape {
                 return (x.reshaped(assignments, inFeatures), indices.reshaped(assignments), bShape + [1, outFeatures])
             }
             if mInner == 1, lhsBatch.last == 1, Array(lhsBatch.dropLast()) == Array(indices.shape.dropLast()) {
-                return (
-                    x.reshaped(x.size / inFeatures, inFeatures),
-                    indices.reshaped(assignments),
-                    bShape + [1, outFeatures]
-                )
+                return (x.reshaped(x.size / inFeatures, inFeatures), indices.reshaped(assignments), bShape + [1, outFeatures])
             }
             let xBroad = broadcast(x, to: bShape + [mInner, inFeatures])
             let idxBroad = repeated(expandedDimensions(broadcast(indices, to: bShape), axis: -1), count: mInner, axis: -1)
-            let total = idxBroad.size
-            return (xBroad.reshaped(total, inFeatures), idxBroad.reshaped(total), bShape + [mInner, outFeatures])
+            return (xBroad.reshaped(idxBroad.size, inFeatures), idxBroad.reshaped(idxBroad.size), bShape + [mInner, outFeatures])
         }
-        let outShape = indices.shape + [outFeatures]
         let xLead = Array(x.shape.dropLast())
-        if xLead == indices.shape {
-            return (x.reshaped(assignments, inFeatures), indices.reshaped(assignments), outShape)
+        if x.ndim == indices.ndim + 1 {
+            let bShape = zip(xLead, indices.shape).map(broadcastDim)
+            if xLead == indices.shape {
+                return (x.reshaped(assignments, inFeatures), indices.reshaped(assignments), bShape + [outFeatures])
+            }
+            if xLead.last == 1, Array(xLead.dropLast()) == Array(indices.shape.dropLast()) {
+                return (x.reshaped(x.size / inFeatures, inFeatures), indices.reshaped(assignments), bShape + [outFeatures])
+            }
+            let total = bShape.reduce(1, *)
+            return (
+                broadcast(x, to: bShape + [inFeatures]).reshaped(total, inFeatures),
+                broadcast(indices, to: bShape).reshaped(total),
+                bShape + [outFeatures])
         }
-        if x.size == inFeatures {
-            return (x.reshaped(1, inFeatures), indices.reshaped(assignments), outShape)
-        }
+        precondition(x.ndim <= indices.ndim && indices.ndim >= 1, "QTIPKernels.gatherMatmul incompatible input and index ranks")
         let idxLead = Array(indices.shape.dropLast())
-        let xAligned = xLead == idxLead ? x : broadcast(x, to: idxLead + [inFeatures])
-        return (xAligned.reshaped(xAligned.size / inFeatures, inFeatures), indices.reshaped(assignments), outShape)
+        let pad = idxLead.count - xLead.count
+        let bShape = Array(idxLead.prefix(pad)) + zip(idxLead.dropFirst(pad), xLead).map(broadcastDim)
+        let kDim = indices.dim(-1)
+        let xBroad = x.shape == bShape + [inFeatures] ? x : broadcast(x, to: bShape + [inFeatures])
+        let idxBroad = indices.shape == bShape + [kDim] ? indices : broadcast(indices, to: bShape + [kDim])
+        return (xBroad.reshaped(bShape.reduce(1, *), inFeatures), idxBroad.reshaped(idxBroad.size), bShape + [kDim, outFeatures])
+    }
+}
+
+private extension QTIPKernels {
+    static func cpuGatherMatmul(
+        flatX: MLXArray,
+        packed3D: MLXArray,
+        scales2D: MLXArray,
+        tlut: MLXArray,
+        flatIndices: MLXArray,
+        rate: QTIPRate
+    ) -> MLXArray {
+        let numExperts = packed3D.dim(0)
+        let tileCols = flatX.dim(1) / 16
+        let assignments = flatIndices.size
+        let xRows = flatX.dim(0)
+        let xF32 = flatX.asType(.float32)
+        let idxArr = flatIndices.asType(.int32)
+        eval(xF32, idxArr)
+        let idxHost = idxArr.asArray(Int32.self)
+        var decodedCache: [Int: MLXArray] = [:]
+        var rowsOut: [MLXArray] = []
+        rowsOut.reserveCapacity(assignments)
+        let groupSize = max(1, assignments / max(1, xRows))
+        for a in 0 ..< assignments {
+            let rawE = Int(idxHost[a])
+            let e = (rawE >= 0 && rawE < numExperts) ? rawE : (numExperts - 1)
+            let wExpert: MLXArray
+            if let cached = decodedCache[e] {
+                wExpert = cached
+            } else {
+                let dec = QTIPMetal.decode(
+                    packed: packed3D[e], rowScales: scales2D[e], tlut: tlut,
+                    rate: rate, tileCols: tileCols, dtype: .float32)
+                decodedCache[e] = dec
+                wExpert = dec
+            }
+            let xRow = xRows == assignments ? a : (a / groupSize)
+            rowsOut.append(matmul(xF32[xRow ..< (xRow + 1)], wExpert.T)[0])
+        }
+        return stacked(rowsOut, axis: 0)
     }
 }
 
@@ -470,32 +546,48 @@ package final class QTIPSwitchLinear: Module, Quantized {
         self._bias.wrappedValue = bias
         super.init()
         freeze()
+        train(false)
     }
 }
 
 extension QTIPSwitchLinear {
     package func callAsFunction(_ x: MLXArray, _ indices: MLXArray, sortedIndices: Bool = false) -> MLXArray {
         _ = sortedIndices
-        guard x.size > 0, indices.size > 0 else {
-            return QTIPKernels.gatherMatmul(
-                x: x, packedExperts: weight, rowScales: rowScales, tlut: tlut, indices: indices, rate: rate)
+        if Device.defaultDevice() == .gpu,
+           [x, indices, weight, rowScales, tlut, bias].contains(where: { $0?.dtype == .float64 }) {
+            return Device.withDefaultDevice(.cpu) { self(x, indices, sortedIndices: sortedIndices) }
         }
-        let xRot = inBuffers.map { FusedKroneckerRHT.forward(x, buffers: $0, outputDType: x.dtype) } ?? x
-        var y = QTIPKernels.gatherMatmul(
-            x: xRot, packedExperts: weight, rowScales: rowScales,
-            tlut: tlut, indices: indices, rate: rate)
-        if let outBuffers {
-            y = FusedKroneckerRHT.inverse(y, buffers: outBuffers, outputDType: x.dtype)
+        precondition(x.ndim >= 1 && weight.ndim >= 3, "QTIPSwitchLinear requires ndim >= 1 input and ndim >= 3 weight")
+        var y: MLXArray
+        if x.size > 0, indices.size > 0, weight.size > 0 {
+            let xRot = inBuffers.map { FusedKroneckerRHT.forward(x, buffers: $0, outputDType: x.dtype) } ?? x
+            y = QTIPKernels.gatherMatmul(
+                x: xRot, packedExperts: weight, rowScales: rowScales, tlut: tlut, indices: indices, rate: rate)
+            if let outBuffers { y = FusedKroneckerRHT.inverse(y, buffers: outBuffers, outputDType: x.dtype) }
+            if y.dtype != x.dtype { y = y.asType(x.dtype) }
+        } else {
+            let outFeat = weight.ndim >= 2 ? weight.dim(1) * 16 : 0
+            y = MLXArray.zeros(QTIPKernels.gatherOutputShape(x: x, indices: indices, outFeatures: outFeat), dtype: x.dtype)
         }
-        if let bias {
-            let castBias = bias.dtype == x.dtype ? bias : bias.asType(x.dtype)
-            if x.ndim == indices.ndim + 2 {
-                let bShape = zip(Array(x.shape.dropLast(2)), indices.shape).map(max)
-                y = y + expandedDimensions(castBias[broadcast(indices, to: bShape)], axis: -2)
-            } else {
-                y = y + castBias[indices]
-            }
+        return addBiasIfNeeded(y, x: x, indices: indices)
+    }
+
+    private func addBiasIfNeeded(_ y: MLXArray, x: MLXArray, indices: MLXArray) -> MLXArray {
+        guard let bias, y.size > 0, weight.dim(0) > 0, bias.ndim >= 1, bias.dim(0) > 0, bias.size > 0 else { return y }
+        let castBias = bias.dtype == x.dtype ? bias : bias.asType(x.dtype)
+        if bias.ndim == 1 {
+            precondition(bias.dim(0) == y.dim(-1), "QTIPSwitchLinear 1D bias size mismatch")
+            return y + castBias
         }
-        return y
+        let idx64 = indices.asType(.int64)
+        let nBias = Int64(bias.dim(0))
+        let safeIdx = which((idx64 .>= Int64(0)) .&& (idx64 .< nBias), idx64, Int64(nBias - 1)).asType(.int32)
+        if x.ndim == indices.ndim + 2 {
+            let bShape = zip(Array(x.shape.dropLast(2)), indices.shape).map(QTIPKernels.broadcastDim)
+            return y + expandedDimensions(castBias[broadcast(safeIdx, to: bShape)], axis: -2)
+        }
+        let targetLead = Array(y.shape.dropLast())
+        let alignedIdx = safeIdx.shape == targetLead ? safeIdx : broadcast(safeIdx, to: targetLead)
+        return y + castBias[alignedIdx]
     }
 }

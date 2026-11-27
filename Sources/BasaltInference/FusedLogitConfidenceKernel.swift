@@ -35,10 +35,16 @@ public struct FusedLogitConfidence {
                 top2Margin: emptyFloat,
                 entropy: emptyFloat)
         }
-        let input = dtypes.contains(logits.dtype) ? logits : logits.asType(.float32)
+        guard Device.defaultDevice() == .gpu,
+              dtypes.contains(logits.dtype),
+              rows <= Int(Int32.max),
+              vocab <= Int(Int32.max)
+        else {
+            return reference(logits)
+        }
         let outputs = fusedLogitConfidenceKernel(
-            [input.reshaped(rows, vocab)],
-            template: [("T", input.dtype)],
+            [logits.reshaped(rows, vocab)],
+            template: [("T", logits.dtype)],
             grid: (threadsPerRow, rows, 1),
             threadGroup: (threadsPerRow, 1, 1),
             outputShapes: [[rows], [rows], [rows], [rows]],
@@ -62,7 +68,7 @@ public struct FusedLogitConfidence {
                 top2Margin: emptyFloat,
                 entropy: emptyFloat)
         }
-        let z = logits.reshaped(rows, vocab).asType(.float32)
+        let z = logits.asType(.float32, stream: logits.dtype == .float64 ? .cpu : .default).reshaped(rows, vocab)
         let max1 = z.max(axis: -1)
         let usable = logicalNot(isNaN(z).any(axis: -1)) .&& isFinite(max1)
         let safeZ = MLX.where(expandedDimensions(usable, axis: -1), z, MLXArray(Float(0)))
@@ -93,7 +99,9 @@ public struct FusedLogitConfidence {
 
     public static func statistics(logits: MLXArray) -> (probability: Double, entropy: Double, margin: Double)? {
         guard logits.size > 0 else { return nil }
-        let out = compute(logits.reshaped(1, -1))
+        let clean = (Device.defaultDevice() == .gpu && logits.dtype == .float64)
+            ? logits.asType(.float32, stream: .cpu) : logits
+        let out = compute(clean.reshaped(1, -1))
         let scalars = concatenated([out.top1Logprob, out.top2Margin, out.entropy], axis: 0).asArray(Float.self)
         guard scalars.count == 3, scalars[0].isFinite, scalars[2].isFinite, !scalars[1].isNaN else { return nil }
         let first = Foundation::exp(Double(scalars[0]))
@@ -106,7 +114,9 @@ public struct FusedLogitConfidence {
         let vocab = logits.ndim > 0 ? logits.dim(-1) : 0
         let rows = vocab > 0 ? logits.size / vocab : 0
         guard rows > 0, vocab > 0 else { return nil }
-        let out = compute(logits.reshaped(rows, vocab))
+        let clean = (Device.defaultDevice() == .gpu && logits.dtype == .float64)
+            ? logits.asType(.float32, stream: .cpu) : logits
+        let out = compute(clean.reshaped(rows, vocab))
         let table = stacked([out.top1Logprob, out.top2Margin, out.entropy], axis: -1).asArray(Float.self)
         var probabilities: [Double] = []
         var entropies: [Double] = []
@@ -152,7 +162,7 @@ private enum FusedLogitConfidenceMetal {
         float wy = 0.0f;
         int bad = 0;
 
-        for (int col = tid; col < V; col += THREADS) {
+        for (uint col = uint(tid); col < uint(V); col += uint(THREADS)) {
             const float x = float(logits[row_base + size_t(col)]);
             if (isnan(x) || x == INFINITY) {
                 bad = 1;
@@ -160,7 +170,7 @@ private enum FusedLogitConfidenceMetal {
                 if (x > m1) {
                     m2 = m1;
                     m1 = x;
-                    idx1 = col;
+                    idx1 = int(col);
                 } else if (x > m2) {
                     m2 = x;
                 }

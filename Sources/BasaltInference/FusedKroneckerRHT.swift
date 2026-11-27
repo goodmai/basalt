@@ -128,15 +128,23 @@ extension FusedKroneckerRHT {
         return dtypes.contains(candidate) ? candidate : .float32
     }
 
+    private static func cast(_ a: MLXArray, to dtype: DType) -> MLXArray {
+        a.asType(dtype, stream: (a.dtype == .float64 || dtype == .float64) ? .cpu : .default)
+    }
+
+    private static func cleanMetalInput(_ a: MLXArray) -> MLXArray {
+        dtypes.contains(a.dtype) ? a : cast(a, to: .float32)
+    }
+
     package static func forward(_ x: MLXArray, buffers: Buffers, outputDType: DType? = nil) -> MLXArray {
         let outType = resolvedOutDType(x, requested: outputDType)
         precondition(x.ndim > 0 && x.dim(-1) == buffers.dimension, "FusedKroneckerRHT.forward shape mismatch")
         let rows = x.size / buffers.dimension
-        guard rows > 0 else { return x.asType(outType) }
-        guard buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
+        guard rows > 0 else { return cast(x, to: outType) }
+        guard Device.defaultDevice() == .gpu, buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
             return referenceForward(x, spec: buffers.spec, signs: buffers.fallbackSigns, qMatrix: buffers.fallbackQ, outputDType: outType)
         }
-        let input = dtypes.contains(x.dtype) ? x : x.asType(.float32)
+        let input = cleanMetalInput(x)
         let threads = threadsPerRow(hadamardWidth: buffers.hadamardWidth)
         let out = kroneckerForwardKernel(
             [input.reshaped(rows, buffers.dimension), buffers.packedSigns, buffers.qMatrix, buffers.placeholder, buffers.scaleParams],
@@ -156,12 +164,16 @@ extension FusedKroneckerRHT {
         let outType = resolvedOutDType(x, requested: outputDType)
         precondition(x.ndim > 0 && x.dim(-1) == buffers.dimension && normWeight.size == buffers.dimension)
         let rows = x.size / buffers.dimension
-        guard rows > 0 else { return x.asType(outType) }
-        guard buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
-            return referenceRMSNormForward(x, normWeight: normWeight, eps: eps, spec: buffers.spec, outputDType: outType)
+        guard rows > 0 else { return cast(x, to: outType) }
+        guard Device.defaultDevice() == .gpu, buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
+            let xf = cast(x, to: .float32)
+            let normed = xf * rsqrt((xf * xf).mean(axis: -1, keepDims: true) + eps)
+                * cast(normWeight, to: .float32).reshaped(buffers.dimension)
+            return referenceForward(
+                normed, spec: buffers.spec, signs: buffers.fallbackSigns, qMatrix: buffers.fallbackQ, outputDType: outType)
         }
-        let input = dtypes.contains(x.dtype) ? x : x.asType(.float32)
-        let nw = dtypes.contains(normWeight.dtype) ? normWeight : normWeight.asType(.float32)
+        let input = cleanMetalInput(x)
+        let nw = cleanMetalInput(normWeight)
         let params = MLXArray([buffers.spec.hadamardScale, eps])
         let threads = threadsPerRow(hadamardWidth: buffers.hadamardWidth)
         let out = kroneckerForwardKernel(
@@ -183,12 +195,14 @@ extension FusedKroneckerRHT {
         precondition(y.ndim > 0 && y.dim(-1) == buffers.dimension, "FusedKroneckerRHT.inverse shape mismatch")
         if let bias { precondition(bias.size == buffers.dimension, "FusedKroneckerRHT.inverse bias mismatch") }
         let rows = y.size / buffers.dimension
-        guard rows > 0 else { return y.asType(outType) }
-        guard buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
-            return referenceInverse(y, spec: buffers.spec, bias: bias, outputDType: outType)
+        guard rows > 0 else { return cast(y, to: outType) }
+        guard Device.defaultDevice() == .gpu, buffers.usesMetalKernel, rows <= Int(Int32.max / 2) else {
+            return referenceInverse(
+                y, spec: buffers.spec, bias: bias,
+                signs: buffers.fallbackSigns, qMatrix: buffers.fallbackQ, outputDType: outType)
         }
-        let input = dtypes.contains(y.dtype) ? y : y.asType(.float32)
-        let biasBuf = bias.map { (dtypes.contains($0.dtype) ? $0 : $0.asType(.float32)).reshaped(buffers.dimension) } ?? buffers.placeholder
+        let input = cleanMetalInput(y)
+        let biasBuf = bias.map { cleanMetalInput($0).reshaped(buffers.dimension) } ?? buffers.placeholder
         let threads = threadsPerRow(hadamardWidth: buffers.hadamardWidth)
         let out = kroneckerInverseKernel(
             [input.reshaped(rows, buffers.dimension), buffers.packedSigns, buffers.qMatrix, biasBuf, buffers.scaleParams],
@@ -206,7 +220,7 @@ extension FusedKroneckerRHT {
         _ rotatedOutputs: MLXArray, weights: MLXArray, buffers: Buffers, bias: MLXArray? = nil, outputDType: DType? = nil
     ) -> MLXArray {
         let outType = resolvedOutDType(rotatedOutputs, requested: outputDType)
-        let weighted = (rotatedOutputs.asType(.float32) * expandedDimensions(weights.asType(.float32), axis: -1)).sum(axis: -2)
+        let weighted = (cast(rotatedOutputs, to: .float32) * expandedDimensions(cast(weights, to: .float32), axis: -1)).sum(axis: -2)
         return inverse(weighted, buffers: buffers, bias: bias, outputDType: outType)
     }
 }
@@ -220,11 +234,30 @@ extension FusedKroneckerRHT {
         blockHadamard(y, signs: signs, blockSize: blockSize, isInverse: true)
     }
 
+    private static func isRowBroadcastSigns(_ signs: MLXArray, for x: MLXArray) -> Bool {
+        x.ndim > 0 && signs.ndim > 0 && signs.ndim <= x.ndim
+            && signs.size == x.dim(-1) && signs.dim(-1) == x.dim(-1)
+    }
+
     private static func blockHadamard(_ x: MLXArray, signs: MLXArray, blockSize: Int, isInverse: Bool) -> MLXArray {
-        if MACaQFusedKernels.supportsSingleSimdHadamard(blockSize: blockSize, dtype: x.dtype) {
+        if Device.defaultDevice() == .gpu,
+           isRowBroadcastSigns(signs, for: x),
+           MACaQFusedKernels.supportsSingleSimdHadamard(blockSize: blockSize, dtype: x.dtype) {
             return MACaQFusedKernels.blockHadamard(x, scaleVector: signs, blockSize: blockSize, isInverse: isInverse)
         }
         return blockHadamardFallback(x, signs: signs, blockSize: blockSize, isInverse: isInverse)
+    }
+
+    private static func canUseBlockHadamardMetal(
+        x: MLXArray, signs: MLXArray, width: Int, blockSize: Int, totalBlocks: Int, dtype: DType
+    ) -> Bool {
+        Device.defaultDevice() == .gpu
+            && isRowBroadcastSigns(signs, for: x)
+            && width <= Int(Int32.max)
+            && blockSize <= maxMetalHadamardWidth
+            && (blockSize & (blockSize - 1)) == 0
+            && dtypes.contains(dtype)
+            && totalBlocks <= Int(Int32.max / 2)
     }
 
     package static func blockHadamardFallback(_ x: MLXArray, signs: MLXArray, blockSize: Int, isInverse: Bool) -> MLXArray {
@@ -233,29 +266,33 @@ extension FusedKroneckerRHT {
         let width = x.dim(-1)
         let rows = width > 0 ? x.size / width : 0
         guard rows > 0, width > 0, width.isMultiple(of: blockSize) else { return x }
-        if blockSize == 1 { return (x.asType(.float32) * signs.asType(.float32)).asType(origType) }
+        if Device.defaultDevice() == .gpu, (origType == .float64 || signs.dtype == .float64) {
+            return Device.withDefaultDevice(.cpu) {
+                blockHadamardFallback(x, signs: signs, blockSize: blockSize, isInverse: isInverse)
+            }
+        }
+        if blockSize == 1 { return cast(cast(x, to: .float32) * cast(signs, to: .float32), to: origType) }
         let numBlocks = width / blockSize
         let totalBlocks = rows * numBlocks
-        guard blockSize <= maxMetalHadamardWidth,
-              blockSize & (blockSize - 1) == 0,
-              dtypes.contains(origType),
-              totalBlocks <= Int(Int32.max / 2) else {
+        guard canUseBlockHadamardMetal(
+            x: x, signs: signs, width: width, blockSize: blockSize, totalBlocks: totalBlocks, dtype: origType) else {
             let scale = 1.0 / Float(blockSize).squareRoot()
             if isInverse {
-                let h = hadamardTransform(x.asType(.float32).reshaped(-1, blockSize), scale: scale).reshaped(x.shape)
-                return (h * signs.asType(.float32)).asType(origType)
+                let h = hadamardTransform(cast(x, to: .float32).reshaped(-1, blockSize), scale: scale).reshaped(x.shape)
+                return cast(h * cast(signs, to: .float32), to: origType)
             }
-            let xs = x.asType(.float32) * signs.asType(.float32)
-            return hadamardTransform(xs.reshaped(-1, blockSize), scale: scale).reshaped(x.shape).asType(origType)
+            let xs = cast(x, to: .float32) * cast(signs, to: .float32)
+            guard xs.size > 0 else { return cast(xs, to: origType) }
+            return cast(hadamardTransform(xs.reshaped(-1, blockSize), scale: scale).reshaped(xs.shape), to: origType)
         }
-        let cleanSigns = dtypes.contains(signs.dtype) ? signs : signs.asType(.float32)
+        let cleanSigns = cleanMetalInput(signs)
         let scaleParam = MLXArray([1.0 / Float(blockSize).squareRoot()])
         let threads = threadsPerRow(hadamardWidth: blockSize)
         let out = blockHadamardKernel(
             [x.reshaped(totalBlocks, blockSize), cleanSigns.reshaped(width), scaleParam],
             template: [
                 ("T", origType), ("TS", cleanSigns.dtype),
-                ("N", blockSize), ("NUM_BLOCKS", numBlocks), ("THREADS", threads), ("IS_INV", isInverse)
+                ("N", blockSize), ("THREADS", threads), ("IS_INV", isInverse)
             ],
             grid: (threads, totalBlocks, 1), threadGroup: (threads, 1, 1),
             outputShapes: [[totalBlocks, blockSize]], outputDTypes: [origType]
@@ -267,39 +304,44 @@ extension FusedKroneckerRHT {
         _ x: MLXArray, spec: Spec, signs: MLXArray? = nil, qMatrix: MLXArray? = nil, outputDType: DType? = nil
     ) -> MLXArray {
         let outType = resolvedOutDType(x, requested: outputDType)
-        let sArr = signs ?? MLXArray(spec.signsValues)
-        let qArr = qMatrix ?? spec.qValues.map { MLXArray($0, [spec.outer, spec.outer]) }
-        var y = hadamardTransform((x.asType(.float32) * sArr).reshaped(-1, spec.hadamardWidth), scale: spec.hadamardScale)
+        guard x.size > 0 else { return cast(x, to: outType) }
+        let sArr = signs.map { cast($0, to: .float32) } ?? MLXArray(spec.signsValues)
+        let qArr = qMatrix.map { cast($0, to: .float32) } ?? spec.qValues.map { MLXArray($0, [spec.outer, spec.outer]) }
+        var y = hadamardTransform((cast(x, to: .float32) * sArr).reshaped(-1, spec.hadamardWidth), scale: spec.hadamardScale)
         if let qArr, spec.outer > 1 {
             let batch = y.size / spec.dimension
             y = matmul(y.reshaped(batch, spec.outer, spec.hadamardWidth).transposed(0, 2, 1), qArr.T).transposed(0, 2, 1)
         }
-        return y.reshaped(x.shape).asType(outType)
+        return cast(y.reshaped(x.shape), to: outType)
     }
 
     package static func referenceRMSNormForward(
         _ x: MLXArray, normWeight: MLXArray, eps: Float, spec: Spec, outputDType: DType? = nil
     ) -> MLXArray {
         let outType = resolvedOutDType(x, requested: outputDType)
-        let xf = x.asType(.float32)
-        let normed = xf * rsqrt((xf * xf).mean(axis: -1, keepDims: true) + eps) * normWeight.asType(.float32)
+        guard x.size > 0 else { return cast(x, to: outType) }
+        let xf = cast(x, to: .float32)
+        let normed = xf * rsqrt((xf * xf).mean(axis: -1, keepDims: true) + eps)
+            * cast(normWeight, to: .float32).reshaped(spec.dimension)
         return referenceForward(normed, spec: spec, outputDType: outType)
     }
 
     package static func referenceInverse(
-        _ y: MLXArray, spec: Spec, bias: MLXArray? = nil, outputDType: DType? = nil
+        _ y: MLXArray, spec: Spec, bias: MLXArray? = nil,
+        signs: MLXArray? = nil, qMatrix: MLXArray? = nil, outputDType: DType? = nil
     ) -> MLXArray {
         let outType = resolvedOutDType(y, requested: outputDType)
-        let sArr = MLXArray(spec.signsValues)
-        let qArr = spec.qValues.map { MLXArray($0, [spec.outer, spec.outer]) }
-        var z = y.asType(.float32)
+        guard y.size > 0 else { return cast(y, to: outType) }
+        let sArr = signs.map { cast($0, to: .float32) } ?? MLXArray(spec.signsValues)
+        let qArr = qMatrix.map { cast($0, to: .float32) } ?? spec.qValues.map { MLXArray($0, [spec.outer, spec.outer]) }
+        var z = cast(y, to: .float32)
         if let qArr, spec.outer > 1 {
             let batch = z.size / spec.dimension
             z = matmul(z.reshaped(batch, spec.outer, spec.hadamardWidth).transposed(0, 2, 1), qArr).transposed(0, 2, 1)
         }
         var res = hadamardTransform(z.reshaped(-1, spec.hadamardWidth), scale: spec.hadamardScale).reshaped(y.shape) * sArr
-        if let bias { res = res + bias.asType(.float32) }
-        return res.asType(outType)
+        if let bias { res = res + cast(bias, to: .float32).reshaped(spec.dimension) }
+        return cast(res, to: outType)
     }
 }
 
@@ -504,8 +546,9 @@ private enum FusedKroneckerRHTMetal {
         const int tid = int(thread_position_in_threadgroup.x);
         const int lane = int(thread_index_in_simdgroup);
         const int sg = int(simdgroup_index_in_threadgroup);
+        const int num_blocks = max(1, int(signs_shape[0]) / N);
         const size_t base = size_t(blk_idx) * size_t(N);
-        const size_t sign_base = size_t(blk_idx % NUM_BLOCKS) * size_t(N);
+        const size_t sign_base = size_t(blk_idx % num_blocks) * size_t(N);
         const float scale = float(params[0]);
         threadgroup float tg_buf[TG_M * 33];
         float vals[E];

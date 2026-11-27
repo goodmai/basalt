@@ -145,9 +145,9 @@ package struct STAExecutionOptions: Sendable, Equatable {
 }
 
 package struct CPUAttentionShape: Sendable, Equatable {
-    package let batch: Int, qHeads: Int, kvHeads: Int, headDim: Int, sinkTokens: Int
-    package init(batch: Int, qHeads: Int, kvHeads: Int, headDim: Int, sinkTokens: Int = 0) {
-        (self.batch, self.qHeads, self.kvHeads, self.headDim, self.sinkTokens) = (batch, qHeads, kvHeads, headDim, sinkTokens)
+    package let batch: Int, qHeads: Int, kvHeads: Int, headDim: Int, sinkTokens: Int, scale: Float?
+    package init(batch: Int, qHeads: Int, kvHeads: Int, headDim: Int, sinkTokens: Int = 0, scale: Float? = nil) {
+        (self.batch, self.qHeads, self.kvHeads, self.headDim, self.sinkTokens, self.scale) = (batch, qHeads, kvHeads, headDim, sinkTokens, scale)
     }
 }
 
@@ -156,10 +156,8 @@ package enum SlidingTileAttention3D {
     package static let maxKernelHeadDim = 256
 
     package static func buildPlan(
-        grid: SpatioTemporalGrid,
-        brick: BrickShape = .appleDefault,
-        window: WindowRadiusBricks,
-        radial: RadialDecaySchedule = .disabled
+        grid: SpatioTemporalGrid, brick: BrickShape = .appleDefault,
+        window: WindowRadiusBricks, radial: RadialDecaySchedule = .disabled
     ) -> BrickSparsePlan {
         let extents = BrickIndex3D(
             (grid.frames + brick.t - 1) / brick.t,
@@ -178,16 +176,14 @@ package enum SlidingTileAttention3D {
     }
 
     package static func packIntoBricks(_ x: MLXArray, plan: BrickSparsePlan) -> MLXArray {
+        if x.dtype == .float64 && Device.defaultDevice() == .gpu { return Device.withDefaultDevice(.cpu) { packIntoBricks(x, plan: plan) } }
         let b = x.dim(0), h = x.dim(1), d = x.dim(3), bh = b * h
         var gridView = x.reshaped(bh, plan.grid.frames, plan.grid.height, plan.grid.width, d)
         if !plan.isExactGrid {
             let padT = plan.bricksT * plan.brick.t - plan.grid.frames
             let padH = plan.bricksH * plan.brick.h - plan.grid.height
             let padW = plan.bricksW * plan.brick.w - plan.grid.width
-            gridView = padded(
-                gridView,
-                widths: [IntOrPair(0), IntOrPair((0, padT)), IntOrPair((0, padH)), IntOrPair((0, padW)), IntOrPair(0)]
-            )
+            gridView = padded(gridView, widths: [IntOrPair(0), IntOrPair((0, padT)), IntOrPair((0, padH)), IntOrPair((0, padW)), IntOrPair(0)])
         }
         return gridView
             .reshaped([bh, plan.bricksT, plan.brick.t, plan.bricksH, plan.brick.h, plan.bricksW, plan.brick.w, d])
@@ -196,6 +192,7 @@ package enum SlidingTileAttention3D {
     }
 
     package static func unpackFromBricks(_ packed: MLXArray, plan: BrickSparsePlan) -> MLXArray {
+        if packed.dtype == .float64 && Device.defaultDevice() == .gpu { return Device.withDefaultDevice(.cpu) { unpackFromBricks(packed, plan: plan) } }
         let b = packed.dim(0), h = packed.dim(1), d = packed.dim(-1), bh = b * h
         var gridView = packed
             .reshaped([bh, plan.bricksT, plan.bricksH, plan.bricksW, plan.brick.t, plan.brick.h, plan.brick.w, d])
@@ -208,32 +205,26 @@ package enum SlidingTileAttention3D {
     }
 
     package static func attention(
-        queries: MLXArray,
-        keys: MLXArray,
-        values: MLXArray,
-        plan: BrickSparsePlan,
-        globalKV: GlobalConditioningKV? = nil,
-        options: STAExecutionOptions = .init()
+        queries: MLXArray, keys: MLXArray, values: MLXArray,
+        plan: BrickSparsePlan, globalKV: GlobalConditioningKV? = nil, options: STAExecutionOptions = .init()
     ) -> MLXArray {
+        let usesFloat64 = [queries, keys, values, globalKV?.keys, globalKV?.values].compactMap { $0 }.contains { $0.dtype == .float64 }
+        if usesFloat64 && Device.defaultDevice() == .gpu {
+            return Device.withDefaultDevice(.cpu) { attention(queries: queries, keys: keys, values: values, plan: plan, globalKV: globalKV, options: options) }
+        }
+        if queries.shape.contains(0) { return MLXArray.zeros(queries.shape, dtype: queries.dtype) }
         let scale = options.scale ?? (1.0 / Float(max(1, queries.dim(3))).squareRoot())
         if plan.coversFullGrid && !options.forceMetalKernel {
             return denseAttention(queries: queries, keys: keys, values: values, globalKV: globalKV, scale: scale)
         }
         guard supportsMetalKernel(queries: queries, keys: keys, values: values, globalKV: globalKV) else {
-            return sparseFallback(
-                queries: queries, keys: keys, values: values, plan: plan, globalKV: globalKV, scale: scale
-            )
+            return sparseFallback(queries: queries, keys: keys, values: values, plan: plan, globalKV: globalKV, scale: scale)
         }
-        return metalBrickAttention(
-            queries: queries, keys: keys, values: values, plan: plan, globalKV: globalKV, scale: scale
-        )
+        return metalBrickAttention(queries: queries, keys: keys, values: values, plan: plan, globalKV: globalKV, scale: scale)
     }
 
     package static func evaluateStepWithTeaCache(
-        step: Int,
-        modulatedInput: MLXArray,
-        teaCache: inout TeaCacheState,
-        computeVelocity: () -> MLXArray
+        step: Int, modulatedInput: MLXArray, teaCache: inout TeaCacheState, computeVelocity: () -> MLXArray
     ) -> MLXArray {
         teaCache.resolveVelocity(step: step, modulatedInput: modulatedInput, compute: computeVelocity)
     }
@@ -263,9 +254,9 @@ extension SlidingTileAttention3D {
         query q: BrickIndex3D, extents: BrickIndex3D,
         window: WindowRadiusBricks, radial: RadialDecaySchedule, into cols: inout [Int32]
     ) {
-        let tRange = max(0, q.t - window.t) ... min(extents.t - 1, q.t + window.t)
-        let hRange = max(0, q.h - window.h) ... min(extents.h - 1, q.h + window.h)
-        let wRange = max(0, q.w - window.w) ... min(extents.w - 1, q.w + window.w)
+        let tRange = max(0, q.t - window.t) ... min(extents.t - 1, q.t + min(window.t, extents.t))
+        let hRange = max(0, q.h - window.h) ... min(extents.h - 1, q.h + min(window.h, extents.h))
+        let wRange = max(0, q.w - window.w) ... min(extents.w - 1, q.w + min(window.w, extents.w))
         for kbt in tRange {
             for kbh in hRange {
                 for kbw in wRange where radial.retains(queryBrick: q, keyBrick: BrickIndex3D(kbt, kbh, kbw)) {
@@ -299,30 +290,48 @@ extension SlidingTileAttention3D {
         return flags
     }
 
-    private static func supportsMetalKernel(
+    package static func supportsMetalKernel(
         queries: MLXArray, keys: MLXArray, values: MLXArray, globalKV: GlobalConditioningKV?
     ) -> Bool {
-        let dtype = queries.dtype, headDim = queries.dim(3)
-        let qHeads = queries.dim(1), kvHeads = keys.dim(1)
-        guard supportedDTypes.contains(dtype), keys.dtype == dtype, values.dtype == dtype,
-              headDim >= 1, headDim <= maxKernelHeadDim, values.dim(3) == headDim,
+        guard Device.defaultDevice() == .gpu, queries.ndim == 4, keys.ndim == 4, values.ndim == 4 else { return false }
+        let batch = queries.dim(0), qHeads = queries.dim(1), tokens = queries.dim(2), headDim = queries.dim(3)
+        let kvHeads = keys.dim(1), dtype = queries.dtype
+        guard batch >= 1, tokens >= 1, headDim >= 1, headDim <= maxKernelHeadDim,
+              supportedDTypes.contains(dtype), keys.dtype == dtype, values.dtype == dtype,
+              keys.shape == [batch, kvHeads, tokens, headDim], values.shape == keys.shape,
               kvHeads >= 1, qHeads >= kvHeads, qHeads.isMultiple(of: kvHeads)
         else { return false }
         guard let globalKV else { return true }
-        return globalKV.keys.dtype == dtype && globalKV.values.dtype == dtype
-            && globalKV.keys.dim(1) == kvHeads && globalKV.keys.dim(3) == headDim
-            && globalKV.values.shape == globalKV.keys.shape
+        guard globalKV.keys.ndim == 4, globalKV.keys.dtype == dtype, globalKV.values.dtype == dtype,
+              globalKV.keys.dim(0) == batch, globalKV.keys.dim(1) == kvHeads,
+              globalKV.keys.dim(3) == headDim, globalKV.values.shape == globalKV.keys.shape
+        else { return false }
+        return true
+    }
+
+    private static func alignedBatch(_ x: MLXArray, to batch: Int) -> MLXArray {
+        (x.dim(0) == 1 && batch > 1) ? broadcast(x, to: [batch, x.dim(1), x.dim(2), x.dim(3)]) : x
+    }
+
+    private static func alignedGlobalKV(_ globalKV: GlobalConditioningKV?, batch: Int) -> GlobalConditioningKV? {
+        guard let g = globalKV, g.keys.dim(2) > 0 else { return nil }
+        return GlobalConditioningKV(keys: alignedBatch(g.keys, to: batch), values: alignedBatch(g.values, to: batch))
     }
 
     private static func denseAttention(
         queries: MLXArray, keys: MLXArray, values: MLXArray, globalKV: GlobalConditioningKV?, scale: Float
     ) -> MLXArray {
-        if let globalKV, globalKV.keys.dim(2) > 0 {
-            let fullK = concatenated([keys, globalKV.keys], axis: 2)
-            let fullV = concatenated([values, globalKV.values], axis: 2)
-            return MLXFast.scaledDotProductAttention(queries: queries, keys: fullK, values: fullV, scale: scale, mask: .none)
+        let batch = queries.dim(0), qT = queries.dtype
+        var (k, v) = (alignedBatch(keys, to: batch), alignedBatch(values, to: batch))
+        if let s = alignedGlobalKV(globalKV, batch: batch) {
+            (k, v) = (concatenated([k, s.keys], axis: 2), concatenated([v, s.values], axis: 2))
         }
-        return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: .none)
+        let sameReal = qT.isFloatingPoint && !qT.isComplex && k.dtype == qT && v.dtype == qT
+        let cT: DType = sameReal ? qT : ([queries, k, v].contains { $0.dtype == .float64 } ? .float64 : .float32)
+        let out = MLXFast.scaledDotProductAttention(
+            queries: qT == cT ? queries : queries.asType(cT), keys: k.dtype == cT ? k : k.asType(cT),
+            values: v.dtype == cT ? v : v.asType(cT), scale: scale, mask: .none)
+        return out.dtype == qT ? out : out.asType(qT)
     }
 
     private static func metalBrickAttention(
@@ -335,8 +344,8 @@ extension SlidingTileAttention3D {
         let qPacked = packIntoBricks(queries, plan: plan)
         let kPacked = packIntoBricks(keys, plan: plan)
         let vPacked = packIntoBricks(values, plan: plan)
-        let sinkK = sinkCount > 0 ? globalKV!.keys : MLXArray.zeros([1], dtype: dtype)
-        let sinkV = sinkCount > 0 ? globalKV!.values : MLXArray.zeros([1], dtype: dtype)
+        let sinkK = (sinkCount > 0 ? globalKV?.keys : nil) ?? MLXArray.zeros([1], dtype: dtype)
+        let sinkV = (sinkCount > 0 ? globalKV?.values : nil) ?? MLXArray.zeros([1], dtype: dtype)
         let csrOffsets = MLXArray(plan.csrRowOffsets)
         let csrIndices = MLXArray(plan.csrColIndices.isEmpty ? [Int32(0)] : plan.csrColIndices)
         let validFlags = MLXArray(plan.validTokenFlags)
@@ -365,7 +374,7 @@ private struct CPUPackedQKV {
 }
 
 private struct CPUOnlineSoftmaxState {
-    var rowMax: Float = -.greatestFiniteMagnitude
+    var rowMax: Float = -.infinity
     var rowSum: Float = 0.0
     var acc: [Float]
 
@@ -375,9 +384,11 @@ private struct CPUOnlineSoftmaxState {
         var dot: Float = 0.0
         for c in 0 ..< acc.count { dot += q[qOff + c] * k[kvOff + c] }
         let score = dot * scale
-        let nextMax = max(rowMax, score)
-        let alpha = Foundation.exp(rowMax - nextMax)
-        let beta = Foundation.exp(score - nextMax)
+        let bad = rowMax.isNaN || score.isNaN
+        let nextMax: Float = bad ? .nan : max(rowMax, score)
+        let active = bad || nextMax != -.infinity
+        let alpha: Float = bad ? .nan : ((rowMax != -.infinity && active) ? Foundation.exp(rowMax - nextMax) : 0.0)
+        let beta: Float = bad ? .nan : ((active && score != -.infinity) ? Foundation.exp(score - nextMax) : 0.0)
         rowMax = nextMax
         rowSum = rowSum * alpha + beta
         for c in 0 ..< acc.count { acc[c] = acc[c] * alpha + beta * v[kvOff + c] }
@@ -389,30 +400,26 @@ extension SlidingTileAttention3D {
         queries: MLXArray, keys: MLXArray, values: MLXArray,
         plan: BrickSparsePlan, globalKV: GlobalConditioningKV?, scale: Float
     ) -> MLXArray {
-        let q32 = queries.asType(.float32), k32 = keys.asType(.float32), v32 = values.asType(.float32)
-        let sinkCount = globalKV?.keys.dim(2) ?? 0
-        let defaultScale = 1.0 / Float(max(1, queries.dim(3))).squareRoot()
-        let qAdjusted = abs(scale - defaultScale) > 1e-7 ? (q32 * (scale / defaultScale)) : q32
-        let cpuSinks = globalKV.map {
+        let batch = queries.dim(0), headDim = queries.dim(3)
+        let kAligned = alignedBatch(keys, to: batch), vAligned = alignedBatch(values, to: batch)
+        let q32 = queries.asType(.float32), k32 = kAligned.asType(.float32), v32 = vAligned.asType(.float32)
+        let sinks = alignedGlobalKV(globalKV, batch: batch)
+        let cpuSinks = sinks.map {
             CPUGlobalKV(keys: $0.keys.asType(.float32).asArray(Float.self), values: $0.values.asType(.float32).asArray(Float.self))
         }
         let shape = CPUAttentionShape(
-            batch: queries.dim(0), qHeads: queries.dim(1), kvHeads: keys.dim(1), headDim: queries.dim(3), sinkTokens: sinkCount
+            batch: batch, qHeads: queries.dim(1), kvHeads: kAligned.dim(1), headDim: headDim, sinkTokens: sinks?.keys.dim(2) ?? 0, scale: scale
         )
         let out = cpuReferenceBrickAttention(
-            queries: qAdjusted.asArray(Float.self), keys: k32.asArray(Float.self), values: v32.asArray(Float.self),
+            queries: q32.asArray(Float.self), keys: k32.asArray(Float.self), values: v32.asArray(Float.self),
             shape: shape, plan: plan, globalKV: cpuSinks
         )
         return MLXArray(out, queries.shape).asType(queries.dtype)
     }
 
     package static func cpuReferenceBrickAttention(
-        queries: [Float],
-        keys: [Float],
-        values: [Float],
-        shape: CPUAttentionShape,
-        plan: BrickSparsePlan,
-        globalKV: CPUGlobalKV? = nil
+        queries: [Float], keys: [Float], values: [Float],
+        shape: CPUAttentionShape, plan: BrickSparsePlan, globalKV: CPUGlobalKV? = nil
     ) -> [Float] {
         let packed = CPUPackedQKV(
             q: cpuTransferBricks(queries, batch: shape.batch, heads: shape.qHeads, headDim: shape.headDim, plan: plan, pack: true),
@@ -422,7 +429,7 @@ extension SlidingTileAttention3D {
         let packedTokens = plan.brickCount * plan.brickVolume
         var outPacked = [Float](repeating: 0, count: shape.batch * shape.qHeads * packedTokens * shape.headDim)
         let groupSize = max(1, shape.qHeads / max(1, shape.kvHeads))
-        let scale = 1.0 / Float(max(1, shape.headDim)).squareRoot()
+        let scale = shape.scale ?? (1.0 / Float(max(1, shape.headDim)).squareRoot())
         for b in 0 ..< shape.batch {
             for qh in 0 ..< shape.qHeads {
                 let task = CPUHeadTask(
@@ -458,7 +465,7 @@ extension SlidingTileAttention3D {
                         state.update(q: packed.q, qOff: qOff, k: globalKV.keys, v: globalKV.values, kvOff: kvOff, scale: task.scale)
                     }
                 }
-                let inv = state.rowSum > 0 ? (1.0 / state.rowSum) : 0.0
+                let inv: Float = (state.rowSum.isNaN || state.rowMax.isNaN) ? .nan : (state.rowSum > 0 ? (1.0 / state.rowSum) : 0.0)
                 for c in 0 ..< d { outPacked[qOff + c] = state.acc[c] * inv }
             }
         }
@@ -494,7 +501,7 @@ private enum STA3DMetal {
         inline void sta_attend_tile(
             int tile_len, int lane, bool check_valid, const threadgroup uint8_t* valid_tile,
             const thread float* qr, const threadgroup float* k_tile, const threadgroup float* v_tile,
-            thread float& row_max, thread float& row_sum, thread float* acc
+            float attn_scale, thread float& row_max, thread float& row_sum, thread float* acc
         ) {
             for (int t_local = 0; t_local < tile_len; ++t_local) {
                 if (check_valid && valid_tile[t_local] == 0) { continue; }
@@ -504,9 +511,12 @@ private enum STA3DMetal {
                     const int d = e * 32 + lane;
                     if (d < D) { score += qr[e] * k_tile[base_off + d]; }
                 }
-                score = simd_sum(score);
-                const float next_max = max(row_max, score);
-                const float alpha = exp(row_max - next_max), beta = exp(score - next_max);
+                score = simd_sum(score) * attn_scale;
+                const bool bad = isnan(row_max) || isnan(score);
+                const float next_max = bad ? NAN : max(row_max, score);
+                const bool active = bad || (next_max != -INFINITY);
+                const float alpha = bad ? NAN : ((row_max != -INFINITY && active) ? exp(row_max - next_max) : 0.0f);
+                const float beta = bad ? NAN : ((active && score != -INFINITY) ? exp(score - next_max) : 0.0f);
                 row_max = next_max;
                 row_sum = row_sum * alpha + beta;
                 for (int e = 0; e < E; ++e) {
@@ -529,15 +539,15 @@ private enum STA3DMetal {
         const int qb = tg_x / q_tiles, qt = (tg_x % q_tiles) * SG + sg;
         if (qb >= brick_count) { return; }
         const int bkvh = (bqh / q_heads) * kv_heads + ((bqh % q_heads) / (q_heads / kv_heads));
-        const bool active_q = (qt < brick_vol) && (EXACT_GRID || (valid_flags[qb * brick_vol + qt] != 0));
+        const bool active_q = (qt < brick_vol) && (EXACT_GRID || (valid_flags[size_t(qb) * size_t(brick_vol) + size_t(qt)] != 0));
         const size_t q_base = ((size_t(bqh) * size_t(brick_count) + size_t(qb)) * size_t(brick_vol) + size_t(min(qt, brick_vol - 1))) * size_t(D);
         float qr[E], acc[E];
         for (int e = 0; e < E; ++e) {
             const int d = e * 32 + lane;
-            qr[e] = (active_q && d < D) ? (attn_scale * float(q[q_base + size_t(d)])) : 0.0f;
+            qr[e] = (active_q && d < D) ? float(q[q_base + size_t(d)]) : 0.0f;
             acc[e] = 0.0f;
         }
-        float row_max = -FLT_MAX, row_sum = 0.0f;
+        float row_max = -INFINITY, row_sum = 0.0f;
         threadgroup float k_tile[TILE_KV * D], v_tile[TILE_KV * D];
         threadgroup uint8_t valid_tile[TILE_KV];
         const int row_start = csr_offsets[qb], row_end = csr_offsets[qb + 1];
@@ -551,9 +561,9 @@ private enum STA3DMetal {
                     k_tile[idx] = float(k[src]);
                     v_tile[idx] = float(v[src]);
                 }
-                if (!EXACT_GRID && tid < tile_len) { valid_tile[tid] = valid_flags[kb * brick_vol + kt_base + tid]; }
+                if (!EXACT_GRID && tid < tile_len) { valid_tile[tid] = valid_flags[size_t(kb) * size_t(brick_vol) + size_t(kt_base + tid)]; }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
-                if (active_q) { sta_attend_tile<D, E>(tile_len, lane, !EXACT_GRID, valid_tile, qr, k_tile, v_tile, row_max, row_sum, acc); }
+                if (active_q) { sta_attend_tile<D, E>(tile_len, lane, !EXACT_GRID, valid_tile, qr, k_tile, v_tile, attn_scale, row_max, row_sum, acc); }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
             }
         }
@@ -567,12 +577,12 @@ private enum STA3DMetal {
                     v_tile[idx] = float(sink_v[src]);
                 }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
-                if (active_q) { sta_attend_tile<D, E>(tile_len, lane, false, valid_tile, qr, k_tile, v_tile, row_max, row_sum, acc); }
+                if (active_q) { sta_attend_tile<D, E>(tile_len, lane, false, valid_tile, qr, k_tile, v_tile, attn_scale, row_max, row_sum, acc); }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
             }
         }
         if (qt < brick_vol) {
-            const float inv_sum = (active_q && row_sum > 0.0f) ? (1.0f / row_sum) : 0.0f;
+            const float inv_sum = active_q ? ((isnan(row_sum) || isnan(row_max)) ? NAN : ((row_sum > 0.0f) ? (1.0f / row_sum) : 0.0f)) : 0.0f;
             for (int e = 0; e < E; ++e) {
                 const int d = e * 32 + lane;
                 if (d < D) { out[q_base + size_t(d)] = static_cast<T>(active_q ? (acc[e] * inv_sum) : 0.0f); }

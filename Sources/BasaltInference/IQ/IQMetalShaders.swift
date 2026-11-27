@@ -39,7 +39,7 @@ enum IQMetalShaders {
         let loadCall = lutLoadCall(for: type)
         let lutArgs = lutExtraArgs(for: type)
         return """
-            const uint GPR = uint(K) / 32u, SUB = uint(BE) / 32u, ROW = (uint(K) / uint(BE)) * uint(BB);
+            constexpr uint GPR = uint(K) / 32u, SUB = uint(BE) / 32u, ROW = (uint(K) / uint(BE)) * uint(BB);
             const uint N = uint(w_shape[0]);
             const uint tid = thread_index_in_threadgroup;
             const uint lane = thread_index_in_simdgroup;
@@ -51,10 +51,10 @@ enum IQMetalShaders {
             for (uint gBase = 0u; gBase < GPR; gBase += 32u) {
                 const uint tileG = min(32u, GPR - gBase);
                 const uint vecCount = tileG * 8u;
-                device const T* xBase = x + gBase * 32u;
+                const uint xTileBase = gBase * 32u;
                 for (uint idx = tid; idx < vecCount; idx += 64u) {
-                    device const T* xs = xBase + idx * 4u;
-                    x_tg[idx] = float4(xs[0], xs[1], xs[2], xs[3]);
+                    const uint xOff = xTileBase + idx * 4u;
+                    x_tg[idx] = float4(float(x[xOff]), float(x[xOff + 1u]), float(x[xOff + 2u]), float(x[xOff + 3u]));
                 }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
                 if (lane < tileG) {
@@ -63,16 +63,17 @@ enum IQMetalShaders {
                     for (uint j = 0u; j < 8u; ++j) {
                         xr[j] = x_tg[lane * 8u + j];
                     }
-                    uint blkOff = (g / SUB) * uint(BB), sub = g % SUB;
+                    const uint blkOff = (g / SUB) * uint(BB);
+                    const uint sub = g % SUB;
                     for (uint r = 0u; r < 4u; ++r) {
-                        acc[r] += iq_dot32(w + min(row0 + r, N - 1u) * ROW + blkOff, sub, xr\(lutArgs));
+                        acc[r] += iq_dot32(w + size_t(min(row0 + r, N - 1u)) * size_t(ROW) + blkOff, sub, xr\(lutArgs));
                     }
                 }
                 threadgroup_barrier(mem_flags::mem_threadgroup);
             }
             for (uint r = 0u; r < 4u && row0 + r < N; ++r) {
                 float s = simd_sum(acc[r]);
-                if (lane == 0u) out[row0 + r] = static_cast<T>(s);
+                if (lane == 0u) out[size_t(row0 + r)] = static_cast<T>(s);
             }
             """
     }
@@ -82,7 +83,8 @@ enum IQMetalShaders {
         let loadCall = lutLoadCall(for: type)
         let lutArgs = lutExtraArgs(for: type)
         return """
-            const uint GPR = uint(K) / 32u, SUB = uint(BE) / 32u, ROW = (uint(K) / uint(BE)) * uint(BB);
+            constexpr uint GPR = uint(K) / 32u, SUB = uint(BE) / 32u;
+            const size_t ROW = size_t(w_shape[1]);
             const uint N = uint(w_shape[0]);
             const uint tid = thread_index_in_threadgroup;
             const uint lane = thread_index_in_simdgroup;
@@ -93,15 +95,18 @@ enum IQMetalShaders {
             for (uint r = 0u; r < 4u; ++r)
                 for (uint m = 0u; m < uint(M); ++m) acc[r][m] = 0.0f;
             for (uint g = lane; g < GPR; g += 32u) {
-                uint blkOff = (g / SUB) * uint(BB), sub = g % SUB;
+                const size_t blkOff = size_t(g / SUB) * size_t(BB);
+                const uint sub = g % SUB;
                 for (uint r = 0u; r < 4u; ++r) {
                     float4 wv[8];
-                    float scale = iq_unpack32(w + min(row0 + r, N - 1u) * ROW + blkOff, sub, wv\(lutArgs));
+                    const size_t wOff = size_t(min(row0 + r, N - 1u)) * ROW + blkOff;
+                    float scale = iq_unpack32(w + wOff, sub, wv\(lutArgs));
                     for (uint m = 0u; m < uint(M); ++m) {
-                        device const T* xs = x + m * uint(K) + g * 32u;
+                        const size_t xOff = size_t(m) * size_t(K) + size_t(g) * size_t(32);
                         float s = 0.0f;
                         for (uint j = 0u; j < 8u; ++j) {
-                            s += dot(wv[j], float4(xs[4u * j], xs[4u * j + 1u], xs[4u * j + 2u], xs[4u * j + 3u]));
+                            const size_t xj = xOff + size_t(4u * j);
+                            s += dot(wv[j], float4(float(x[xj]), float(x[xj + size_t(1)]), float(x[xj + size_t(2)]), float(x[xj + size_t(3)])));
                         }
                         acc[r][m] += scale * s;
                     }
@@ -110,7 +115,7 @@ enum IQMetalShaders {
             for (uint r = 0u; r < 4u && row0 + r < N; ++r) {
                 for (uint m = 0u; m < uint(M); ++m) {
                     float sum = simd_sum(acc[r][m]);
-                    if (lane == 0u) out[m * N + row0 + r] = static_cast<T>(sum);
+                    if (lane == 0u) out[size_t(m) * size_t(N) + size_t(row0 + r)] = static_cast<T>(sum);
                 }
             }
             """

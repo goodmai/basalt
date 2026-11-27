@@ -105,7 +105,7 @@ package enum DSALightningIndexerMetal {
             let lK = scores.dim(2)
             let kSel = min(max(0, topK), lK)
             guard kSel > 0, lQ > 0, batch > 0 else {
-                return MLXArray.zeros([batch, lQ, 0], type: Int32.self)
+                return MLXArray.zeros([batch, lQ, kSel], type: Int32.self)
             }
             guard causal else {
                 return BlockSparseRoutingMetal.deterministicTopIndices(scores, k: kSel)
@@ -265,7 +265,7 @@ extension DSALightningIndexerMetal {
                 pe.qPe,
                 contiguous(inputs.cKV.asType(origType).reshaped(batch, lK, dc)),
                 pe.kPe,
-                contiguous(inputs.topIndices.asType(.int32).reshaped(batch, lQ, topK)),
+                contiguous(BlockSparseRoutingMetal.sanitizeInt32Indices(inputs.topIndices, upperBound: lK).reshaped(batch, lQ, topK)),
                 vGateArg,
                 params,
                 shapes,
@@ -298,7 +298,7 @@ extension DSALightningIndexerMetal {
         let topK = inputs.topIndices.dim(-1)
         let effectiveOffset = options.qOffset ?? max(0, lK - lQ)
 
-        let idx = inputs.topIndices.asType(.int32)
+        let idx = BlockSparseRoutingMetal.sanitizeInt32Indices(inputs.topIndices, upperBound: lK).reshaped(batch, lQ, topK)
         var valid = (idx .>= Int32(0)) .&& (idx .< Int32(lK))
         if options.causal {
             let qPos = MLXArray(Int32(effectiveOffset) ..< Int32(effectiveOffset + lQ)).reshaped(1, lQ, 1)
