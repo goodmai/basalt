@@ -36,6 +36,7 @@ package struct WeightConverter: Sendable {
         package var shards = 0
         package var plan: BitPlan?
         package var sinq: SINQSummary?
+        package var groupMisfits: [String: GroupMisfit] = [:]
     }
 
     package var precision: Precision
@@ -147,6 +148,7 @@ extension WeightConverter {
                 guard let tensor = arrays.removeValue(forKey: key) else { continue }
                 let packed = try layout.packed(key, taking: &arrays)
                 let outputs = try convert(key, tensor, packed: packed, lora: lora, sourceQuantized: layout.quantization != nil)
+                noteGroupMisfit(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, into: &summary)
                 let inputs = [tensor, packed?.scales, packed?.biases, packed?.globalScale].compactMap { $0 }
                 summary.tensors += inputs.count
                 summary.bytesBefore += inputs.reduce(0) { $0 + $1.nbytes }
@@ -156,6 +158,7 @@ extension WeightConverter {
             }
         }
         summary.shards = try writer.finish()
+        warnGroupMisfits(summary)
         return summary
     }
 

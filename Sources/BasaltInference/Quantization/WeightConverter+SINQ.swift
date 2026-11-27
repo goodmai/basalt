@@ -89,6 +89,7 @@ extension WeightConverter {
                 let packed = try layout.packed(key, taking: &arrays)
                 let outputs = try stagedOutputs.removeValue(forKey: key)
                     ?? convert(key, tensor, packed: packed, lora: inputs.lora, sourceQuantized: layout.quantization != nil)
+                noteGroupMisfit(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, into: &summary)
                 let rawInputs = [tensor, packed?.scales, packed?.biases].compactMap { $0 }
                 summary.tensors += rawInputs.count
                 summary.bytesBefore += rawInputs.reduce(0) { $0 + $1.nbytes }
@@ -98,6 +99,7 @@ extension WeightConverter {
             }
         }
         summary.shards = try writer.finish()
+        warnGroupMisfits(summary)
         let finalSINQ = sinqAcc.finalize(elapsed: ContinuousClock.now - startClock)
         summary.sinq = finalSINQ
         return (summary, finalSINQ)
