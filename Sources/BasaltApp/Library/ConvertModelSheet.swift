@@ -145,6 +145,10 @@ extension ConvertModelSheet {
                 Text("FP16").tag(true)
             }
             .pickerStyle(.segmented)
+        case .gaugeRoPE:
+            Text("Copies the weights unchanged and stores a calibrated KV codec for --kv-bits gaugerope (Qwen 3.5, 3.6 and 3.8).")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 

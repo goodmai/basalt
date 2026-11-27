@@ -46,6 +46,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
     case qtip(bpw: Double)
     case qtipBudget(bpw: Double)
     case gsqRCO(bpw: Double)
+    case gaugeRoPE
 
     public var specString: String {
         switch self {
@@ -64,6 +65,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .qtip(let bpw): String(format: "qtip:%.1f", bpw)
         case .qtipBudget(let bpw): String(format: "qtip-budget:%.2f", bpw)
         case .gsqRCO(let bpw): String(format: "gsq-rco:%.2f", bpw)
+        case .gaugeRoPE: "gaugerope"
         }
     }
 
@@ -84,6 +86,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
         case .qtip(let bpw): String(format: "QTIP-%.1fbpw", bpw)
         case .qtipBudget(let bpw): String(format: "QTIP-%.2fbpw", bpw)
         case .gsqRCO(let bpw): String(format: "GSQ-%.2fbpw", bpw)
+        case .gaugeRoPE: "GaugeRoPE"
         }
     }
 
@@ -96,14 +99,14 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
 
     public var supportsPVTune: Bool {
         switch self {
-        case .denseBF16, .denseFP16, .gsqRCO: false
+        case .denseBF16, .denseFP16, .gsqRCO, .gaugeRoPE: false
         default: true
         }
     }
 
     public var effectiveBitsPerWeight: Double {
         switch self {
-        case .denseBF16, .denseFP16: 16.0
+        case .denseBF16, .denseFP16, .gaugeRoPE: 16.0
         case .affine(let b, let g): Double(b) + 32.0 / Double(g)
         case .mixed(let lo, let hi, let g): Double(lo + hi) * 0.5 + 32.0 / Double(g)
         case .mxfp4: 4.25
@@ -124,7 +127,7 @@ public enum QuantizationTarget: Sendable, Equatable, Codable {
             "macaq:affine:2:64", "macaq:affine:3:64", "macaq:affine:4:64", "macaq:mxfp4", "macaq:moe:2.8",
             "flatquant:3:64", "flatquant:4:64", "lirquant:3:64:128", "lirquant:4:64:128",
             "qtip:2.0", "qtip:2.5", "qtip:3.0", "qtip-budget:2.75", "gsq-rco:3.0",
-            "dense:bf16", "dense:f16",
+            "dense:bf16", "dense:f16", "gaugerope",
         ]
     }
 }
@@ -161,6 +164,8 @@ extension QuantizationTarget {
             let k = parts.count == 4 ? Int(parts[3]) : 128
             guard let k, [32, 64, 128, 256].contains(k) else { return nil }
             return .lirQuant(bits: b, groupSize: g, subspaceDim: k)
+        case "gaugerope" where parts.count == 1:
+            return .gaugeRoPE
         default:
             return nil
         }

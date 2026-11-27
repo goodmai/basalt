@@ -255,6 +255,8 @@
 "QTIP Mixed Budget" = "QTIP Mixed Budget";
 "GSQ-RCO Mixed" = "GSQ-RCO Mixed";
 "Dense (BF16 / FP16)" = "Dense (BF16 / FP16)";
+"GaugeRoPE KV Codec (Weights Unchanged)" = "GaugeRoPE KV Codec (Weights Unchanged)";
+"Copies the weights unchanged and stores a calibrated KV codec for --kv-bits gaugerope (Qwen 3.5, 3.6 and 3.8)." = "Copies the weights unchanged and stores a calibrated KV codec for --kv-bits gaugerope (Qwen 3.5, 3.6 and 3.8).";
 "Use OCP MXFP4 Microscaling (E2M1 + E8M0)" = "Use OCP MXFP4 Microscaling (E2M1 + E8M0)";
 "Bit-width" = "Bit-width";
 "Group Size" = "Group Size";

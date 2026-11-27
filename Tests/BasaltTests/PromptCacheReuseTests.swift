@@ -13,7 +13,7 @@ struct ByteTokenizer: MLXLMCommon.Tokenizer {
     func encode(text: String, addSpecialTokens: Bool) -> [Int] {
         text.unicodeScalars.map { scalar in
             let value = Int(scalar.value)
-            return value >= Self.generatedTokenBase ? value - Self.generatedTokenBase : value % Self.endOfUserTurn
+            return value >= Self.generatedTokenBase ? (value - Self.generatedTokenBase) % 256 : value % Self.endOfUserTurn
         }
     }
 

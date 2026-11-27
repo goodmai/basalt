@@ -36,7 +36,7 @@ extension UniversalModelConverter {
 
     static func needsAdapterPreFuse(target: QuantizationTarget) -> Bool {
         switch target {
-        case .denseBF16, .denseFP16, .affine, .mixed, .mxfp4, .nvfp4, .nf4:
+        case .denseBF16, .denseFP16, .affine, .mixed, .mxfp4, .nvfp4, .nf4, .gaugeRoPE:
             return false
         case .macaqAffine, .macaqMXFP4, .macaqMoEBudget, .flatQuant, .lirQuant, .qtip, .qtipBudget, .gsqRCO:
             return true

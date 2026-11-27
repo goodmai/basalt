@@ -53,7 +53,7 @@ package struct UniversalModelConverter: ModelConversionService, Sendable {
         if case .mixed = target, let budgetGB, budgetGB > 0 {
             estBytes = Int64(budgetGB * 1_000_000_000)
         } else {
-            let ratio = target.effectiveBitsPerWeight / srcBPW
+            let ratio = target == .gaugeRoPE ? 1 : target.effectiveBitsPerWeight / srcBPW
             estBytes = max(1_048_576, Int64((Double(detected.totalBytes) * ratio).rounded()))
         }
         let resources = await SystemProfiler().detectResources()
@@ -137,6 +137,10 @@ extension UniversalModelConverter {
         do {
             if detected.format.hasPrefix("modelopt:"), resolvedRequest.target == .nvfp4, !resolvedRequest.pvTune, !resolvedRequest.macaqRefine, resolvedRequest.adapter == nil {
                 return try await importModelOpt(request: resolvedRequest, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
+            }
+            if resolvedRequest.target == .gaugeRoPE {
+                return try await exportGaugeRoPE(
+                    request: resolvedRequest, detected: detected, sourceURL: sourceURL, outputURL: outputURL, onProgress: onProgress)
             }
             if resolvedRequest.target.isDense {
                 return try await exportDenseTarget(
@@ -312,7 +316,7 @@ extension UniversalModelConverter {
         onProgress: @escaping @Sendable (ModelConversionProgress) -> Void
     ) async throws -> (shards: Int, bytesAfter: Int64) {
         switch request.target {
-        case .denseBF16, .denseFP16:
+        case .denseBF16, .denseFP16, .gaugeRoPE:
             return (1, 0)
         case .affine, .mixed, .mxfp4, .nvfp4, .nf4:
             return try await encodeSINQTarget(request: request, workingSource: workingSource, outputURL: outputURL)
