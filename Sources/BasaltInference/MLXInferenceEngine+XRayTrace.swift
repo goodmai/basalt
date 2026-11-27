@@ -41,7 +41,9 @@ extension MLXInferenceEngine {
         let input = LMInput.Text(tokens: MLXArray(ids.map(Int32.init)).reshaped(1, -1))
         let cache = try context.model.newCache(parameters: nil)
         let logits = withForwardProbe(recorder) { context.model(input, cache: cache, state: nil).logits }
-        return try recorder.report(logits: logits, readout: readout(of: context.model), ids: ids, tokenizer: context.tokenizer)
+        var report = try recorder.report(logits: logits, readout: readout(of: context.model), ids: ids, tokenizer: context.tokenizer)
+        report.loopPasses = try LoopExit.passesPerToken(ids, model: context.model)
+        return report
     }
 
     static func readout(of model: Module) -> ((MLXArray) -> MLXArray)? {

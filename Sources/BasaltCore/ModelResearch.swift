@@ -171,6 +171,7 @@ public struct TraceReport: Sendable, Codable {
     public var lateLayerFlipRate: Double? = nil
     public var evidencePair: EvidencePair? = nil
     public var evidenceState: BelnapState? = nil
+    public var loopPasses: [Int]? = nil
 
     public init(
         tokens: [String],

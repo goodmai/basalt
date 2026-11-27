@@ -16,3 +16,32 @@ enum LoopExit {
         return [keys, values]
     }
 }
+
+protocol LoopExitCounting: AnyObject {
+    var loopExitThreshold: Float? { get set }
+    var exitSteps: Int { get }
+    var exitPasses: Int { get }
+}
+
+extension OuroInner: LoopExitCounting {}
+extension Inkling2TextModel: LoopExitCounting {}
+extension HuginnTransformer: LoopExitCounting {}
+
+extension LoopExit {
+    static func counter(of model: any LanguageModel) -> (any LoopExitCounting)? {
+        if let ouro = model as? OuroModel { return ouro.model }
+        if let inkling = model as? Inkling2Model { return inkling.model.languageModel }
+        if let huginn = model as? HuginnModel { return huginn.transformer }
+        return nil
+    }
+
+    static func passesPerToken(_ ids: [Int], model: any LanguageModel) throws -> [Int]? {
+        guard let counter = counter(of: model), counter.loopExitThreshold != nil else { return nil }
+        let cache = try model.newCache(parameters: nil)
+        return ids.map { id in
+            let before = counter.exitPasses
+            eval(model(MLXArray([Int32(id)])[.newAxis], cache: cache))
+            return counter.exitPasses - before
+        }
+    }
+}
