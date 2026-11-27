@@ -87,6 +87,7 @@ extension MLXInferenceEngine {
         await registry.registerModelType(LLaDAModel.modelType) { data in try LLaDAModel(configurationData: data) }
         await registry.registerModelType(OuroModel.modelType) { data in try OuroModel(configurationData: data) }
         await registry.registerModelType(HuginnModel.modelType) { data in try HuginnModel(configurationData: data) }
+        await registry.registerModelType(PLTModel.modelType) { data in try PLTModel(configurationData: data) }
         await registry.registerModelType(RWKV7Model.modelType) { data in try RWKV7Model(configurationData: data) }
         await registry.registerModelType(XLSTMModel.modelType) { data in try XLSTMModel(configurationData: data) }
         await registry.registerModelType(PrismHadamard.modelType) { data in
@@ -246,9 +247,18 @@ extension MLXInferenceEngine {
         guard let tokenizerConfig = try await configuration.tokenizerConfig ?? fallback else {
             throw Tokenizers.TokenizerError.missingConfig
         }
-        return try Tokenizers.PreTrainedTokenizer(
-            tokenizerConfig: compatibleChatTemplate(in: tokenizerConfig),
-            tokenizerData: compatibleRegexes(in: try await configuration.tokenizerData))
+        let (config, data) = (compatibleChatTemplate(in: tokenizerConfig), compatibleRegexes(in: try await configuration.tokenizerData))
+        do {
+            return try Tokenizers.PreTrainedTokenizer(tokenizerConfig: config, tokenizerData: data)
+        } catch Tokenizers.TokenizerError.unsupportedTokenizer(_) where data.model.type.string() == "BPE" {
+            return try Tokenizers.PreTrainedTokenizer(tokenizerConfig: standardBPEClass(in: config), tokenizerData: data)
+        }
+    }
+
+    static func standardBPEClass(in tokenizerConfig: Config) -> Config {
+        guard var entries = tokenizerConfig.dictionary() else { return tokenizerConfig }
+        entries["tokenizer_class"] = Config("PreTrainedTokenizer")
+        return Config(entries)
     }
 
     static func compatibleRegexes(in tokenizerData: Config) -> Config {

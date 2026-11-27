@@ -178,6 +178,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([FlintModel.modelType], flint),
             ([OuroModel.modelType], flint),
             ([HuginnModel.modelType], flint),
+            ([PLTModel.modelType], ModelCapabilities(verified: [.speculativeLookup, .promptCacheReuse, .grammarJumpForward])),
             (HyperConnectionModel.modelTypes, hyperConnection),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),

@@ -36,3 +36,22 @@ struct TokenizerRegexCompatibilityTests {
         #expect(rewritten?["model"]?.dictionary()?["vocab"]?.dictionary()?["Regex"]?.string() == "{|}")
     }
 }
+
+@Suite("A tokenizer whose class lives in remote code loads as the standard BPE tokenizer when tokenizer.json is BPE (LoopCoder-V2, #820)")
+struct RemoteCodeTokenizerClassTests {
+    @Test("tokenizer_class IQuestCoderTokenizer with a BPE tokenizer.json loads and encodes; the rename touches only the class")
+    func loadsUnknownBPEClass() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("remote-tok-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data(#"{"model_type": "llama"}"#.utf8).write(to: directory.appendingPathComponent("config.json"))
+        try Data(#"{"tokenizer_class": "IQuestCoderTokenizer", "unk_token": "<unk>", "bos_token": "<s>", "eos_token": "</s>"}"#.utf8)
+            .write(to: directory.appendingPathComponent("tokenizer_config.json"))
+        let tokenizer = #"{"version": "1.0", "added_tokens": [{"id": 0, "content": "<unk>", "special": true}], "normalizer": null, "pre_tokenizer": null, "decoder": null, "model": {"type": "BPE", "unk_token": "<unk>", "vocab": {"<unk>": 0, "a": 1, "b": 2, "ab": 3}, "merges": ["a b"]}}"#
+        try Data(tokenizer.utf8).write(to: directory.appendingPathComponent("tokenizer.json"))
+        let loaded = try await MLXInferenceEngine.upstreamTokenizer(at: directory)
+        #expect(loaded.encode(text: "ab", addSpecialTokens: false) == [3])
+        let renamed = MLXInferenceEngine.standardBPEClass(in: Config(["tokenizer_class": Config("IQuestCoderTokenizer"), "unk_token": Config("<unk>")]))
+        #expect(renamed.tokenizerClass.string() == "PreTrainedTokenizer" && renamed.unkToken.string() == "<unk>")
+    }
+}
