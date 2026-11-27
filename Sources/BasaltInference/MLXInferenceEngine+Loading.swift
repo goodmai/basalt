@@ -40,7 +40,8 @@ struct TokenizerBridge: MLXLMCommon.Tokenizer {
 
 struct DefaultTokenizerLoader: TokenizerLoader {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
-        TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory))
+        if let rwkv = try RWKVWorldTokenizer.load(from: directory) { return rwkv }
+        return BOSInsertingTokenizer.wrapping(TokenizerBridge(try await MLXInferenceEngine.upstreamTokenizer(at: directory)), directory: directory)
     }
 }
 
