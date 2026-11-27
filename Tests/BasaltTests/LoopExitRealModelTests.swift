@@ -23,24 +23,10 @@ struct LoopExitRealModelTests {
     static var prefix: Int { Int(env["BASALT_E2E_LOOP_PREFIX"] ?? "") ?? 1536 }
 
     static func setThreshold(_ threshold: Float?, on model: any LanguageModel) -> () -> (steps: Int, passes: Int) {
-        if let ouro = model as? OuroModel {
-            ouro.model.loopExitThreshold = threshold
-            let base = (ouro.model.exitSteps, ouro.model.exitPasses)
-            return { (ouro.model.exitSteps - base.0, ouro.model.exitPasses - base.1) }
-        }
-        if let huginn = model as? HuginnModel {
-            let core = huginn.transformer
-            core.loopExitThreshold = threshold
-            let base = (core.exitSteps, core.exitPasses)
-            return { (core.exitSteps - base.0, core.exitPasses - base.1) }
-        }
-        if let inkling = model as? Inkling2Model {
-            let text = inkling.model.languageModel
-            text.loopExitThreshold = threshold
-            let base = (text.exitSteps, text.exitPasses)
-            return { (text.exitSteps - base.0, text.exitPasses - base.1) }
-        }
-        return { (0, 0) }
+        guard let counter = LoopExit.counter(of: model) else { return { (0, 0) } }
+        counter.loopExitThreshold = threshold
+        let base = (counter.exitSteps, counter.exitPasses)
+        return { (counter.exitSteps - base.0, counter.exitPasses - base.1) }
     }
 
     static func measure(_ tokens: [Int], threshold: Float?, context: ModelContext) throws -> Measurement {
