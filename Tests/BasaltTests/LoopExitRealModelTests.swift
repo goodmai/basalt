@@ -63,6 +63,8 @@ struct LoopExitRealModelTests {
         let engine = MLXInferenceEngine(EngineConfiguration(gpuCacheLimit: 0))
         try await log.step("load") { try await engine.load(modelPath: path) }
         let container = try #require(await engine.container)
+        let sequential = Self.env["BASALT_E2E_PLT_SEQUENTIAL"] != nil
+        await container.perform { ($0.model as? PLTModel)?.model.crossLoopDecode = !sequential }
         let lines = try await container.perform { context -> [String] in
             let tokens = Array(context.tokenizer.encode(text: text).prefix(Self.prefix + Self.scored + 1))
             #expect(tokens.count > Self.scored + 1)

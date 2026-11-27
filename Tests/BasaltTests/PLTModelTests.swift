@@ -83,6 +83,24 @@ struct PLTModelTests {
         #expect(cache.count == 2 * 2 + 1 && cache.allSatisfy { $0.offset == Self.tokens.count })
     }
 
+    @Test("Cross-loop parallel decode gives the logits of the sequential per-loop decode, for two and three loops",
+          arguments: [2, 3])
+    func crossLoopMatchesSequential(loops: Int) throws {
+        let config = TinyModel.Family.plt.config.replacingOccurrences(of: "\"plt_num_loops\": 2", with: "\"plt_num_loops\": \(loops)")
+        let model = try PLTModel(configurationData: Data(config.utf8))
+        TinyModel.seedSpecialParameters(model, family: .plt)
+        var results: [MLXArray] = []
+        for parallel in [true, false] {
+            model.model.crossLoopDecode = parallel
+            let cache = model.newCache(parameters: nil)
+            var rows = [model(MLXArray(Array(Self.tokens[..<4]))[.newAxis], cache: cache)[0]]
+            for token in Self.tokens[4...] { rows.append(model(MLXArray([token])[.newAxis], cache: cache)[0]) }
+            results.append(concatenated(rows, axis: 0))
+        }
+        #expect(abs(results[0] - results[1]).max().item(Float.self) < 1e-4)
+        #expect(abs(results[0] - model(MLXArray(Self.tokens)[.newAxis], cache: nil)[0]).max().item(Float.self) < 1e-3)
+    }
+
     @Test("Trimming the caches back and decoding again gives the same logits as never having gone forward")
     func trimRewinds() throws {
         let model = try Self.model()
