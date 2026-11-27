@@ -1449,7 +1449,7 @@ class FullDuplexRQStep(nn.Module):
 
 ## **附录 C. basalt 已支持的专著内容**
 
-本附录把专著视为里程碑的模型类型与机制（大多为 2012–2027 年，外加 basalt 所依赖的基础），对照到 2026-11-26 的 basalt v0.13.0。只有当已注册的 `model_type`、被接受的标志或已路由的端点能够配合真实权重触达某一行时，该行才算「已支持」。独立的核心模块、被拒绝或仅限实验的标志，以及在带种子的骨架上尽力加载权重的模块，都算「部分支持」。如果 basalt 的 README 与代码或 CHANGELOG 不一致，以代码和 CHANGELOG 为准。
+本附录把专著视为里程碑的模型类型与机制（大多为 2012–2027 年，外加 basalt 所依赖的基础），对照到 2026-11-27 的 basalt main。只有当已注册的 `model_type`、被接受的标志或已路由的端点能够配合真实权重触达某一行时，该行才算「已支持」。独立的核心模块、被拒绝或仅限实验的标志，以及在带种子的骨架上尽力加载权重的模块，都算「部分支持」。如果 basalt 的 README 与代码或 CHANGELOG 不一致，以代码和 CHANGELOG 为准。
 
 指向 `https://github.com/goodmai/mlx-swift-lm/...` 的链接指向固定的分叉修订版 `8e76c2f`（`Package.swift`），大部分架构定义都在该版本中。
 
@@ -1528,8 +1528,8 @@ class FullDuplexRQStep(nn.Module):
 | 超连接（HC）、Birkhoff 多面体上的 mHC、iHC | 2024–2026; B.8 | 尚未支持 | 未找到相关证据。Sinkhorn–Knopp 只出现在权重归一化中（[`SINQNormalizer.swift`](../../Sources/BasaltInference/Quantization/SINQNormalizer.swift)）。 |
 | 注意力残差（AttnRes），沿深度方向的注意力 | 2026; B.8 | 已支持 | Inkling 2 在 6 层残差块上做注意力（[`Inkling2Layers.swift`](../../Sources/BasaltInference/Models/Inkling2/Inkling2Layers.swift) 中的 `depthAttention`），与 mlx-lm 对齐（[#755](https://github.com/goodmai/basalt/issues/755)）。 |
 | 循环共享权重的深度（Universal Transformer 到循环语言模型） | 2018–2026; B.9 | 已支持 | Inkling 2 的循环驱动器把第 6–17 层运行三次，共 48 次层访问（[`Inkling2Model.swift`](../../Sources/BasaltInference/Models/Inkling2/Inkling2Model.swift)、[#650](https://github.com/goodmai/basalt/issues/650)）。 |
-| Huginn-0125、Ouro 与 Parallel Loop Transformer（跨循环并行） | 2025; B.9 | 尚未支持 | Inkling 2 是唯一的循环模型类型，没有跨循环的流水线。 |
-| 自适应停止（ACT）与提前退出门（Ouro） | 2016, 2025; B.9 | 尚未支持 | Inkling 2 会解析 `is_varloop`，但从不使用它（[`Inkling2Configuration.swift`](../../Sources/BasaltInference/Models/Inkling2/Inkling2Configuration.swift)）。`--experimental-adaptive-thinking-budget`（[#41](https://github.com/goodmai/basalt/issues/41)）调整的是思考长度，而不是深度。 |
+| Huginn-0125、Ouro 与 Parallel Loop Transformer（跨循环并行） | 2025; B.9 | 部分支持 | Huginn-0125（`huginn_raven`、[`HuginnModel.swift`](../../Sources/BasaltInference/Models/Huginn/HuginnModel.swift)、[#838](https://github.com/goodmai/basalt/pull/838)）与 Ouro（`ouro`、[`OuroModel.swift`](../../Sources/BasaltInference/Models/Ouro/OuroModel.swift)、[#832](https://github.com/goodmai/basalt/pull/832)）可以配合真实权重运行。没有跨循环的流水线（Parallel Loop Transformer）。 |
+| 自适应停止（ACT）与提前退出门（Ouro） | 2016, 2025; B.9 | 已支持 | `--experimental-loop-exit <threshold>`（[`LoopExit.swift`](../../Sources/BasaltInference/Models/LoopExit.swift)、[#820](https://github.com/goodmai/basalt/issues/820)）：Ouro 使用其训练得到的退出门；Inkling 2 与 Huginn 使用无需训练的退出判据，依据两次循环之间残差的相对变化。在 Huginn-0125 上，阈值 0.1 使解码速度提高到 2.3 倍，困惑度上升 1.9%（[#849](https://github.com/goodmai/basalt/pull/849)）。 |
 | Hourglass 变宽 Transformer、Matryoshka 套件、跨循环深度的 SafeBridge 安全性 | 2027 | 尚未支持 | 未找到相关证据。存在拒绝方向工具（`steer_search`，[研究工具](../research-tools.md)），但它们不针对每个循环深度做任何事。 |
 
 ### 归一化与激活函数（Basis）
@@ -1586,7 +1586,7 @@ class FullDuplexRQStep(nn.Module):
 |---|---|---|---|
 | 推测式解码：草稿与验证 | 2023–2026 | 已支持 | 使用 `--speculative-lookup` 的提示查找（[`PromptLookupTokenIterator.swift`](../../Sources/BasaltInference/PromptLookupTokenIterator.swift)、[#239](https://github.com/goodmai/basalt/issues/239)、[#265](https://github.com/goodmai/basalt/issues/265)）以及 `--speculative-recycling` |
 | 多 token 预测头，包括递归 MTP 草稿器（Nemotron 3.5） | 2024, 2026 | 已支持 | `--mtp`（[`MTPSidecar.swift`](../../Sources/BasaltInference/MTPSidecar.swift)）覆盖 Qwen 3.5/3.8 MTP（[`Qwen35MTP.swift`](https://github.com/goodmai/mlx-swift-lm/blob/8e76c2fb9322f9bccc2724fc7c4eebb19fe28f8a/Libraries/MLXLLM/Models/Qwen35MTP.swift)）、Nemotron 草稿器（[`NemotronLightningMTP.swift`](../../Sources/BasaltInference/Models/NemotronLightning/NemotronLightningMTP.swift)）和 Inkling 2 DSpark（[#728](https://github.com/goodmai/basalt/issues/728)）。分叉中的 Gemma 4 草稿器（[`Gemma4Assistant.swift`](https://github.com/goodmai/mlx-swift-lm/blob/8e76c2fb9322f9bccc2724fc7c4eebb19fe28f8a/Libraries/MLXVLM/Models/Gemma4Assistant.swift)）尚未接入。 |
-| 掩码离散扩散语言模型（D3PM、SEDD、MDLM、LLaDA、Dream、Mercury） | 2021–2025; B.10 | 部分支持 | Fast-dLLM 核心（[`FastDLLMCore.swift`](../../Sources/BasaltInference/DiffusionLLM/FastDLLMCore.swift)、[#574](https://github.com/goodmai/basalt/issues/574)）有测试，但 `--experimental-dllm` 因未接入而被拒绝（[`ExperimentalServeOptions.swift`](../../Sources/BasaltCLI/ExperimentalServeOptions.swift)）。分叉注册了 `nemotron_labs_diffusion`（[`NemotronLabsDiffusion.swift`](https://github.com/goodmai/mlx-swift-lm/blob/8e76c2fb9322f9bccc2724fc7c4eebb19fe28f8a/Libraries/MLXLLM/Models/NemotronLabsDiffusion.swift)），basalt 只驱动它的自回归路径。 |
+| 掩码离散扩散语言模型（D3PM、SEDD、MDLM、LLaDA、Dream、Mercury） | 2021–2025; B.10 | 已支持 | LLaDA-8B（`llada`、[`LLaDAModel.swift`](../../Sources/BasaltInference/Models/LLaDA/LLaDAModel.swift)）在 `--experimental-dllm` 下经 Fast-dLLM 运行器（[`FastDLLMRunner.swift`](../../Sources/BasaltInference/DiffusionLLM/FastDLLMRunner.swift)、[#832](https://github.com/goodmai/basalt/pull/832)、[#833](https://github.com/goodmai/basalt/pull/833)）配合真实权重运行，并使用融合的双块注意力内核（[#840](https://github.com/goodmai/basalt/pull/840)）。Dream 与 Mercury 尚未支持。分叉中的 `nemotron_labs_diffusion` 只在其自回归路径上被驱动。 |
 | 循环扩散语言模型（LoopMDM、Looped UDLM）与作为离散扩散的逐尺度 VAR（WACV 2027） | 2026–2027 | 尚未支持 | 未找到相关证据。 |
 
 ### 视觉编码器与多模态（Encoder）
@@ -1606,7 +1606,7 @@ class FullDuplexRQStep(nn.Module):
 | CTC | 2006; B.12 | 部分支持 | 一个 CTC 强制对齐核心（[`SpeechEnhancementAndAligner.swift`](../../Sources/BasaltInference/Speech/SpeechEnhancementAndAligner.swift) 中的 `Qwen3CTCAlignerCore`），没有端点 |
 | RNN-Transducer 与 TDT | 2012, 2023; B.12 | 尚未支持 | Nemotron 3.5 Transcribe 用它的 LLM 解码，而不是用转导器头。 |
 | Conformer 编码器与带说话人分离的音频 LLM（Conformer、SALM / Voxtral、Nemotron 3.5 Transcribe） | 2020, 2025–2026; B.2 | 已支持 | Nemotron 3.5 Transcribe 在 `/v1/audio/transcriptions` 之后结合了 Conformer 编码器（[`NemotronTranscribeEncoder.swift`](../../Sources/BasaltInference/NemotronTranscribeEncoder.swift)）、Sortformer 说话人分离器（[`NemotronTranscribeDiarizer.swift`](../../Sources/BasaltInference/NemotronTranscribeDiarizer.swift)）和 Nemotron-H LLM（[#230](https://github.com/goodmai/basalt/issues/230)）。它有真实模型测试（[`NemotronTranscribeTests.swift`](../../Tests/BasaltTests/NemotronTranscribeTests.swift)）。 |
-| Whisper 与快速 ASR（Parakeet-TDT、Canary、SenseVoice、GigaAM、Voxtral Realtime） | 2022–2026 | 尚未支持 | 未找到相关证据。设备端语音输入使用 macOS SpeechAnalyzer（`--speech-analyzer`，[#222](https://github.com/goodmai/basalt/issues/222)）。 |
+| Whisper 与快速 ASR（Parakeet-TDT、Canary、SenseVoice、GigaAM、Voxtral Realtime） | 2022–2026 | 已支持 | `/v1/audio/transcriptions` 通过 `SpeechRecognitionModel` 路由 Whisper（`whisper`、[`Speech/Whisper`](../../Sources/BasaltInference/Speech/Whisper/)、[#838](https://github.com/goodmai/basalt/pull/838)）与 Parakeet-TDT（[`Speech/Parakeet`](../../Sources/BasaltInference/Speech/Parakeet/)、[#839](https://github.com/goodmai/basalt/pull/839)），并在 [#818](https://github.com/goodmai/basalt/issues/818) 中以真实权重完成测量。mlx-community 的 Whisper 仓库仍需要 `tokenizer.json`（[#851](https://github.com/goodmai/basalt/issues/851)）。Canary、SenseVoice、GigaAM 与 Voxtral Realtime 尚未支持。 |
 | 自监督语音编码器（wav2vec 2.0、HuBERT、WavLM） | 2019–2021 | 尚未支持 | 未找到相关证据。 |
 | 自回归与基于流的波形模型（WaveNet、RealNVP、Glow、WaveGlow） | 2016–2018 | 尚未支持 | 未找到相关证据。 |
 | GAN 训练的声码器或编解码器解码器（HiFi-GAN、DAC） | 2020, 2023 | 已支持 | ZONOS3-Mini 使用 DAC 式解码器解码（[`Zonos3MiniCodec.swift`](../../Sources/BasaltInference/TTS/Zonos3MiniCodec.swift)、[`Zonos3MiniTests.swift`](../../Tests/BasaltTests/Zonos3MiniTests.swift)）。其他 TTS 后端中的 iSTFTNet 和 Vocos 模块是脚手架。 |
@@ -1652,7 +1652,7 @@ class FullDuplexRQStep(nn.Module):
 | Llama 4 Scout / Maverick | 2025 | 尚未支持 | 分叉的工厂中没有 `llama4` 模型类型（[`LLMModelFactory.swift`](https://github.com/goodmai/mlx-swift-lm/blob/8e76c2fb9322f9bccc2724fc7c4eebb19fe28f8a/Libraries/MLXLLM/LLMModelFactory.swift)）。 |
 | 稀疏注意力前沿模型：DeepSeek-V3.2、GLM-5、DeepSeek V4 Pro、Kimi K3、Tencent Hy4 | 2025–2026 | 尚未支持 | 它们需要 DSA、CSA/HCA、门控 MLA 或 iHC。KDA 和 AttnRes 分别存在（bailing_hybrid、Inkling 2）。 |
 
-**合计：120 行——已支持 51，部分支持 34，尚未支持 31，不适用 4。**
+**合计：120 行——已支持 54，部分支持 34，尚未支持 28，不适用 4。**
 
 ## **参考文献**
 
