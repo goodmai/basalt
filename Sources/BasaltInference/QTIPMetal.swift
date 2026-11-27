@@ -490,7 +490,7 @@ package final class QTIPLinear: Linear, Quantized {
         QTIPMetal.decode(packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, tileCols: inFeatures / 16, dtype: dtype)
     }
 
-    private static func onCPUIfFloat64(_ dtypes: [DType?], _ body: () -> MLXArray) -> MLXArray {
+    static func onCPUIfFloat64(_ dtypes: [DType?], _ body: () -> MLXArray) -> MLXArray {
         Device.defaultDevice() == .gpu && dtypes.contains(.float64) ? Device.withDefaultDevice(.cpu, body) : body()
     }
 
@@ -527,7 +527,11 @@ package final class QTIPLinear: Linear, Quantized {
     }
 
     package func matmulRotated(_ xRot: MLXArray) -> MLXArray {
-        QTIPKernels.linear(xRot, packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, inFeatures: inFeatures)
+        if training {
+            return QTIPDifferentiableDecode.linearRotated(
+                xRot, packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, inFeatures: inFeatures)
+        }
+        return QTIPKernels.linear(xRot, packed: weight, rowScales: rowScales, tlut: tlut, rate: rate, inFeatures: inFeatures)
     }
 
     package func callPreRotated(_ xRot: MLXArray) -> MLXArray {
