@@ -35,7 +35,11 @@ extension MLXInferenceEngine {
         if let known = modelIsHybrid { return known }
         let kinds = (try? await container.perform { context -> (hybrid: Bool, recurrent: Bool) in
             let cache = try context.model.newCache(parameters: nil)
-            return (PromptCache(cache).isHybrid, cache.contains { $0 is MambaCache || $0 is RWKV7LayerCache || $0 is XLSTMLayerCache } || context.model is BailingHybridModel)
+            let recurrent = cache.contains { $0 is MambaCache || $0 is RWKV7LayerCache || $0 is XLSTMLayerCache || $0 is FastWeightLayerCache }
+                || context.model is BailingHybridModel
+                || context.model is Mamba3Model
+                || context.model is GatedDeltaNet2Model
+            return (PromptCache(cache).isHybrid, recurrent)
         }) ?? (hybrid: false, recurrent: false)
         record(.learned(epoch) { ($0.isHybrid, $0.hasRecurrentState) = (kinds.hybrid, kinds.recurrent) })
         return kinds.hybrid

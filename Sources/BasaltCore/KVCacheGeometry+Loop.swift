@@ -1,7 +1,25 @@
 import Foundation
 
 extension KVCacheGeometry {
+    static func attentionHeads(_ c: [String: Any]) -> Int? {
+        if let heads = c["num_attention_heads"] as? Int { return heads }
+        guard FastWeightFootprint.isFastWeightModelType(c["model_type"] as? String) else { return nil }
+        return c["num_attn_heads"] as? Int ?? c["num_heads"] as? Int
+    }
+
+    static func slidingWindow(_ c: [String: Any]) -> Int {
+        c["sliding_window"] as? Int ?? c["sliding_window_size"] as? Int ?? c["window_size"] as? Int ?? 0
+    }
+
     static func localLayerKinds(_ c: [String: Any], layers: Int) -> [LayerKind]? {
+        if let modelType = (c["model_type"] as? String)?.lowercased() {
+            if FastWeightFootprint.tttModelTypes.contains(modelType) {
+                return Array(repeating: .linear, count: layers)
+            }
+            if FastWeightFootprint.titansModelTypes.contains(modelType) || FastWeightFootprint.lactModelTypes.contains(modelType) {
+                return Array(repeating: .windowed, count: layers)
+            }
+        }
         if let local = c["local_layer_ids"] as? [Int], c["sliding_window_size"] is Int {
             let windowed = Set(local)
             return (0 ..< layers).map { windowed.contains($0) ? .windowed : .full }
@@ -34,7 +52,6 @@ extension KVCacheGeometry {
         let channels = 2 * kvHeads * headDim + 2 * hidden
         return Int64(visits * (kernel - 1) * channels) * Int64(activationBytes)
     }
-
     init(recurrentFixedStateBytes bytes: Int64) {
         elementsPerToken = 0
         keyElementsPerToken = 0
@@ -78,5 +95,37 @@ extension KVCacheGeometry {
         if let value = raw as? Double { return value }
         if let value = raw as? Int { return Double(value) }
         return (raw as? NSNumber)?.doubleValue
+    }
+
+    static func recurrentModelGeometry(_ c: [String: Any]) -> KVCacheGeometry? {
+        guard let modelType = (c["model_type"] as? String)?.lowercased() else { return nil }
+        let isMamba3 = Mamba3Configuration.supportedModelTypes.contains(modelType)
+        let isGDN2 = GatedDeltaNet2Configuration.supportedModelTypes.contains(modelType)
+        guard isMamba3 || isGDN2,
+              JSONSerialization.isValidJSONObject(c),
+              let data = try? JSONSerialization.data(withJSONObject: c)
+        else { return nil }
+        if isMamba3 {
+            guard let cfg = try? JSONDecoder().decode(Mamba3Configuration.self, from: data).validated() else { return nil }
+            return KVCacheGeometry(recurrentFixedStateBytes: cfg.recurrentStateFootprint().bytes.rawValue)
+        }
+        guard let cfg = try? JSONDecoder().decode(GatedDeltaNet2Configuration.self, from: data).validated() else { return nil }
+            let sliding = cfg.slidingAttentionLayerIndices.count
+            let full = max(0, cfg.attentionLayerCount - sliding)
+            let kvDim = cfg.numKeyValueHeads * cfg.attentionHeadDim
+            let groupSize = quantizedGroupSize(keyDim: cfg.attentionHeadDim, valueDim: cfg.attentionHeadDim) ?? defaultQuantizedGroupSize
+            return KVCacheGeometry(
+                elementsPerToken: Double(full * 2 * kvDim),
+                keyElementsPerToken: Double(full * kvDim),
+                windowedElementsPerToken: kvBytesPerToken(
+                    layers: sliding,
+                    kvHeads: cfg.numKeyValueHeads,
+                    headDim: cfg.attentionHeadDim,
+                    bytesPerElement: 1
+                ),
+                window: cfg.slidingWindow ?? 0,
+                fixedStateBytes: cfg.recurrentStateFootprint(activationBytes: Int(activationBytes)).bytes.rawValue,
+                quantizedGroupSize: groupSize
+            )
     }
 }

@@ -120,6 +120,8 @@ extension MLXInferenceEngine {
         await registerMuseGlimmerAliases()
         await registerBailingHybridAliases()
         await registerHyperConnectionAliases()
+        await registerMamba3Aliases()
+        await registerGatedDeltaNet2Aliases()
     }
 
     public static func registerAliases() async {
