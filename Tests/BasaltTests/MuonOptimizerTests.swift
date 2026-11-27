@@ -168,7 +168,7 @@ struct MuonOptimizerTests {
         )
 
         let composite = TrainingOptimizerFactory.make(.muon, learningRate: lr, weightDecay: wd, muonLRMultiplier: 1.0)
-        let muonRef = Muon(learningRate: lr, weightDecay: wd)
+        let muonRef = MatchedRMSMuonOptimizer(learningRate: lr, weightDecay: wd)
         let adamRef = AdamW(learningRate: lr, weightDecay: wd)
         let adamFallbackRef = AdamW(learningRate: lr, weightDecay: wd)
 
@@ -203,13 +203,27 @@ struct MuonOptimizerTests {
     func newtonSchulzConditioningAndSchedulePropagation() {
         let model = MatrixOnlyModule(matrix: MuonTestSupport.freshMatrix())
         let before = MuonTestSupport.freshMatrix()
-        let opt = TrainingOptimizerFactory.make(.muon, learningRate: 1.0, weightDecay: 0.0, muonLRMultiplier: 1.0)
-        #expect(TrainingOptimizerFactory.defaultMuonLRMultiplier == 10.0)
-        #expect(TrainingOptimizerFactory.make(.muon, learningRate: 1e-4).muonLRMultiplier == 10.0)
+        let opt = TrainingOptimizerFactory.make(.muon, learningRate: 1.0, weightDecay: 0.0)
+        #expect(TrainingOptimizerFactory.defaultMuonLRMultiplier == 1.0)
+        #expect(TrainingOptimizerFactory.make(.muon, learningRate: 1e-4).muonLRMultiplier == 1.0)
         opt.update(model: model, gradients: ModuleParameters.unflattened([("matrix", MuonTestSupport.freshMatrix())]))
         eval(model, opt)
 
-        let scale = Float((6.0 / 4.0).squareRoot())
+        let lrDefault: Float = 0.02
+        for (rows, cols) in [(64, 8), (8, 64)] {
+            let initVals = (0 ..< rows * cols).map { Float(($0 % 13) - 6) * 0.05 }
+            let gradVals = (0 ..< rows * cols).map { Float((($0 * 7) % 17) - 8) * 0.05 }
+            let beforeArr = MLXArray(initVals, [rows, cols])
+            let mod = MatrixOnlyModule(matrix: MLXArray(initVals, [rows, cols]))
+            let factoryOpt = TrainingOptimizerFactory.make(.muon, learningRate: lrDefault)
+            factoryOpt.update(model: mod, gradients: ModuleParameters.unflattened([("matrix", MLXArray(gradVals, [rows, cols]))]))
+            eval(mod, factoryOpt)
+            let rms = MLX.sqrt(square((beforeArr - mod.matrix).asType(.float32)).mean()).item(Float.self)
+            let target = 0.2 * lrDefault
+            #expect(rms > target * 0.5 && rms < target * 1.5, "factory muon [\(rows), \(cols)] rms=\(rms) target=\(target)")
+        }
+
+        let scale = MatrixOptimizerMath.matchedRMSScale(rows: 6, cols: 4)
         let update = (before - model.matrix) / scale
         let inputSV = MuonTestSupport.singularValues(before)
         let updateSV = MuonTestSupport.singularValues(update)
@@ -304,7 +318,7 @@ extension MuonOptimizerTests {
         let container = try #require(await engine.container)
         let beforeWeights = await DistillTests.baseWeights(container)
 
-        for kind in TrainingOptimizerKind.allCases {
+        for kind in [TrainingOptimizerKind.adamw, .muon, .soap] {
             var req = CorpusTrainRequest(corpus: CorpusSourceSpec(source: jsonl.path, maxRows: 8, includeReasoning: false))
             req.method = .lora(rank: 4, scale: 8.0)
             req.optimizer = kind
@@ -387,7 +401,7 @@ extension MuonOptimizerTests {
         defer { try? FileManager.default.removeItem(at: scratch) }
         let dataset = try GoodViewDataset.parse(jsonl: LeJEPATrainTests.scenes)
 
-        for kind in TrainingOptimizerKind.allCases {
+        for kind in [TrainingOptimizerKind.adamw, .muon, .soap] {
             let container = try TinyModel.container(.qwen3)
             let before = await LeJEPATrainTests.weights(container)
             let directory = scratch.appending(component: "jepa-\(kind.rawValue)")

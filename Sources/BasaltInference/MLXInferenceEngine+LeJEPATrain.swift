@@ -36,6 +36,7 @@ extension MLXInferenceEngine {
         guard request.warmupRatio.isFinite, (0 ... 1).contains(request.warmupRatio) else { throw refused("warmupRatio must be in [0, 1]") }
         guard request.lambda.isFinite, request.lambda >= 0 else { throw refused("lambda must be finite and non-negative") }
         guard request.maxGradNorm.isFinite, request.maxGradNorm > 0 else { throw refused("maxGradNorm must be finite and positive") }
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "train_jepa")
     }
 
     static func jepaSchedule(_ request: LeJEPATrainRequest) -> (Int) -> Float {
@@ -96,7 +97,10 @@ extension MLXInferenceEngine {
         let views = GoodViewCollator.totalViewsPerScene
         let loss = LeJEPALoss(baseLambda: request.lambda, referenceSamples: request.batchSize * views, sliceCount: jepaSlices, viewsPerScene: views)
         let directions = LeJEPALoss.unitDirections(projDim: jepaProjection, sliceCount: jepaSlices, seed: 42)
-        let optimizer = TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate, weightDecay: request.weightDecay)
+        let optimizer = TrainingOptimizerFactory.make(options: request.effectiveOptimizerOptions, learningRate: request.learningRate)
+        if optimizer.usesQKClip {
+            try QKClipController.validateTrainableSupport(for: head.backbone, prefix: "train_jepa")
+        }
         let schedule = jepaSchedule(request)
         let step = valueAndGrad(model: head) { head, arrays in
             let out = loss(head(arrays[0], attentionMask: arrays[1]).projected, directions: arrays[2])
@@ -114,6 +118,9 @@ extension MLXInferenceEngine {
             eval(head, optimizer, values, norm)
             let total = values[0].item(Float.self)
             guard total.isFinite else { throw BasaltError.inferenceError("train_jepa: the loss became non-finite at step \(index); nothing was saved") }
+            if optimizer.usesQKClip {
+                QKClipController.measureAndClip(model: head.backbone, inputs: batch.inputIds, isCausal: request.isCausal, options: optimizer.options)
+            }
             report.losses.append(total)
             report.invarianceLosses.append(values[1].item(Float.self))
             report.sigRegLosses.append(values[2].item(Float.self))

@@ -33,19 +33,28 @@ public struct ADPOOptimizeOptions: Sendable, Equatable {
     public var batchSize: Int
     public var emaDecay: Float?
     public var optimizer: TrainingOptimizerKind
+    public var optimizerOptions: TrainingOptimizerOptions?
+
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer)
+        resolved.kind = optimizer
+        return resolved
+    }
 
     public init(
         iterations: Int,
         learningRate: Float,
         batchSize: Int = 4,
         emaDecay: Float? = nil,
-        optimizer: TrainingOptimizerKind = .adamw
+        optimizer: TrainingOptimizerKind = .adamw,
+        optimizerOptions: TrainingOptimizerOptions? = nil
     ) {
         self.iterations = iterations
         self.learningRate = learningRate
         self.batchSize = max(1, batchSize)
         self.emaDecay = emaDecay
         self.optimizer = optimizer
+        self.optimizerOptions = optimizerOptions
     }
 }
 
@@ -429,7 +438,8 @@ extension ADPOTrainer {
                 learningRate: options.learningRate,
                 batchSize: options.batchSize,
                 emaDecay: effectiveEMA,
-                optimizer: options.optimizer
+                optimizer: options.optimizer,
+                optimizerOptions: options.effectiveOptimizerOptions
             )
         )
         var emaApplied = false
@@ -496,7 +506,10 @@ extension ADPOTrainer {
         config: ADPOConfig,
         options: ADPOOptimizeOptions
     ) throws -> (losses: [Float], margins: [Float], ema: EMAWeightShadow?, guardTriggered: Bool, earlyStep: Int?) {
-        let optimizer = TrainingOptimizerFactory.make(options.optimizer, learningRate: options.learningRate)
+        let optimizer = TrainingOptimizerFactory.make(options: options.effectiveOptimizerOptions, learningRate: options.learningRate)
+        if optimizer.usesQKClip {
+            try QKClipController.validateTrainableSupport(for: model, prefix: "train")
+        }
         var ema = options.emaDecay.map { EMAWeightShadow(decay: $0, model: model) }
         let stepFn = valueAndGrad(model: model as Module) { _, batch in
             batchObjective(model: model, batch: batch, config: config)
@@ -518,6 +531,13 @@ extension ADPOTrainer {
             guard loss.isFinite, margin.isFinite else {
                 restoreTrainable(safeWeights, into: model)
                 throw BasaltError.inferenceError("train: preference optimization loss became non-finite at step \(step)")
+            }
+            if optimizer.usesQKClip {
+                let seqs = batch.compactMap { item -> MLXArray? in
+                    let ids = item.pair.promptIds + item.pair.chosenIds
+                    return ids.count > 1 ? MLXArray(ids.dropLast().map(Int32.init)).reshaped([1, ids.count - 1]) : nil
+                }
+                QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: optimizer.options)
             }
             losses.append(loss)
             margins.append(margin)

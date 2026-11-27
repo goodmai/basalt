@@ -72,6 +72,7 @@ extension MLXInferenceEngine {
         }
         guard trainingIterations.contains(request.iterations) else { throw refused("iterations must be in \(trainingIterations)") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must be in (0, 1]") }
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "train")
         if let adpo = request.adpo { try adpo.validate(prefix: "train") }
         if let ema = request.emaDecay {
             guard ema.isFinite, ema > 0, ema < 1 else { throw refused("emaDecay must lie in (0, 1)") }
@@ -143,23 +144,10 @@ extension MLXInferenceEngine {
         let texts = try pairs.map { try trainingText($0, context) }
         let parameters = LoRATrain.Parameters(
             batchSize: min(4, texts.count), iterations: request.iterations, stepsPerReport: 1, stepsPerEval: Int.max, validationBatches: 1)
-        var ema = request.emaDecay.map { EMAWeightShadow(decay: $0, model: context.model) }
-        var losses: [Float] = []
-        var nonFiniteStep: Int?
-        try LoRATrain.train(
-            model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate),
-            loss: { _, inputs, targets, lengths in labLoss(context.model, inputs, targets, lengths) }, tokenizer: context.tokenizer, parameters: parameters
-        ) { progress in
-            if case .train(let step, let loss, _, _) = progress {
-                if !loss.isFinite {
-                    nonFiniteStep = step
-                    return .stop
-                }
-                losses.append(loss)
-                ema?.update(from: context.model)
-            }
-            return Task.isCancelled ? .stop : .more
-        }
+        let optimizer = TrainingOptimizerFactory.make(options: request.effectiveOptimizerOptions, learningRate: request.learningRate)
+        let (losses, nonFiniteStep, ema) = try runLoRALoop(
+            texts: texts, parameters: parameters, optimizer: optimizer, emaDecay: request.emaDecay, context: context
+        )
         try Task.checkCancellation()
         if let step = nonFiniteStep {
             throw BasaltError.modelInferenceError(details: "adapter training diverged with non-finite loss at step \(step)")
@@ -430,7 +418,8 @@ extension MLXInferenceEngine {
             learningRate: request.learningRate,
             batchSize: min(4, tokenized.count),
             emaDecay: request.emaDecay ?? adpo.emaDecay,
-            optimizer: request.optimizer
+            optimizer: request.optimizer,
+            optimizerOptions: request.effectiveOptimizerOptions
         )
         let outcome = try ADPOTrainer.optimize(
             model: context.model,
@@ -459,5 +448,45 @@ extension MLXInferenceEngine {
             }
         }
         return tokenized
+    }
+}
+
+extension MLXInferenceEngine {
+    static func runLoRALoop(
+        texts: [String],
+        parameters: LoRATrain.Parameters,
+        optimizer: TrainingOptimizer,
+        emaDecay: Float?,
+        context: ModelContext
+    ) throws -> (losses: [Float], nonFiniteStep: Int?, ema: EMAWeightShadow?) {
+        final class InputCapture { var latest: MLXArray? }
+        if optimizer.usesQKClip {
+            try QKClipController.validateTrainableSupport(for: context.model, prefix: "train")
+        }
+        let inputCapture = InputCapture()
+        var ema = emaDecay.map { EMAWeightShadow(decay: $0, model: context.model) }
+        var losses: [Float] = []
+        var nonFiniteStep: Int?
+        try LoRATrain.train(
+            model: context.model, train: texts, validate: Array(texts.prefix(1)), optimizer: optimizer,
+            loss: { _, inputs, targets, lengths in
+                if optimizer.usesQKClip { inputCapture.latest = inputs }
+                return labLoss(context.model, inputs, targets, lengths)
+            }, tokenizer: context.tokenizer, parameters: parameters
+        ) { progress in
+            if case .train(let step, let loss, _, _) = progress {
+                if !loss.isFinite {
+                    nonFiniteStep = step
+                    return .stop
+                }
+                if optimizer.usesQKClip, let latest = inputCapture.latest {
+                    QKClipController.measureAndClip(model: context.model, inputs: latest, options: optimizer.options)
+                }
+                losses.append(loss)
+                ema?.update(from: context.model)
+            }
+            return Task.isCancelled ? .stop : .more
+        }
+        return (losses, nonFiniteStep, ema)
     }
 }

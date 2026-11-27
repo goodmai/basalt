@@ -30,8 +30,10 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "Scenes per batch, eight views each")
     var batchSize: Int = 256
 
-    @Option(name: .long, help: "Optimizer for JEPA training: adamw or muon")
-    var optimizer: TrainingOptimizerKind = .adamw
+    @OptionGroup
+    var optimizerOptions: OptimizerTrainingOptions
+
+    var optimizer: TrainingOptimizerKind { optimizerOptions.optimizer }
 
     mutating func run() async throws {
         guard let modelPath = FileManager.default.fileExists(atPath: model) ? model : ModelCache.resolve(repoId: model)?.path else {
@@ -43,6 +45,7 @@ struct TrainJepaSubcommand: AsyncParsableCommand {
         try await orchestrator.loadModel(path: modelPath)
         var request = LeJEPATrainRequest(datasetPath: dataset, iterations: iterations)
         (request.output, request.rank, request.batchSize, request.maxSeqLen, request.optimizer) = (output, rank, batchSize, maxSeqLen, optimizer)
+        request.optimizerOptions = try optimizerOptions.resolve(weightDecay: request.weightDecay)
         let report = try await engine.trainJEPA(request)
         print("adapter: \(report.adapterDirectory ?? "-")")
         print("projector: \(report.projectorPath ?? "-")")

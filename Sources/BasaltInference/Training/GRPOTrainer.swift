@@ -45,6 +45,10 @@ public enum GRPOTrainer {
         TrainingOptimizerFactory.make(kind, learningRate: learningRate, weightDecay: weightDecay)
     }
 
+    static func makeOptimizer(_ options: TrainingOptimizerOptions, learningRate: Float) -> TrainingOptimizer {
+        TrainingOptimizerFactory.make(options: options, learningRate: learningRate)
+    }
+
     static func defaultScore(_ task: TrainingTask, _ output: String) -> Float {
         task.accepts(output) ? 1.0 : 0.0
     }
@@ -77,6 +81,7 @@ public enum GRPOTrainer {
         scorer: Scorer? = nil
     ) throws -> GRPOReport {
         let score = scorer ?? Self.defaultScore
+        try config.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "grpo")
         let heldOut = Array(tasks.suffix(max(1, tasks.count / 5)))
         let practice = Array(tasks.dropLast(heldOut.count))
         let accuracyBefore = try evaluateHeldOut(heldOut, context: context, score: score)
@@ -85,7 +90,7 @@ public enum GRPOTrainer {
             try MLXInferenceEngine.attachConfiguredAdapter(to: context.model, layers: config.layers, method: method)
         }
         defer { _ = PHMAdapterApplicator.revert(in: context.model) }
-        let optimizer = makeOptimizer(config.optimizer, learningRate: config.learningRate, weightDecay: config.weightDecay)
+        let optimizer = makeOptimizer(config.effectiveOptimizerOptions, learningRate: config.learningRate)
         let outcome = try runRounds(practice: practice, config: config, optimizer: optimizer, context: context, score: score)
         let accuracyAfter = try evaluateHeldOut(heldOut, context: context, score: score)
         let gateReport = try MLXInferenceEngine.gate(config.gate, context: context, live: [:], family: family)
@@ -264,6 +269,9 @@ extension GRPOTrainer {
         optimizer: any Optimizer,
         model: any LanguageModel
     ) throws -> (loss: Float, kl: Float, updates: Int) {
+        if let trainingOpt = optimizer as? TrainingOptimizer, trainingOpt.usesQKClip {
+            try QKClipController.validateTrainableSupport(for: model, prefix: "grpo")
+        }
         let epochs = max(1, config.ppoEpochs)
         let stepFn = valueAndGrad(model: model as Module) { _, activeGroup in
             groupObjective(model: model, group: activeGroup, config: config)
@@ -280,6 +288,13 @@ extension GRPOTrainer {
             let kl = values[1].item(Float.self)
             guard loss.isFinite, kl.isFinite else {
                 throw BasaltError.inferenceError("grpo: policy gradient loss or KL became non-finite")
+            }
+            if let trainingOpt = optimizer as? TrainingOptimizer, trainingOpt.usesQKClip {
+                let seqs = group.rollouts.compactMap { rollout -> MLXArray? in
+                    let ids = group.promptIds + rollout.responseIds
+                    return ids.count > 1 ? MLXArray(ids.dropLast().map(Int32.init)).reshaped([1, ids.count - 1]) : nil
+                }
+                QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: trainingOpt.options)
             }
             lastLoss = loss
             lastKL = kl

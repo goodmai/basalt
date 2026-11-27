@@ -15,7 +15,9 @@ extension AdapterProgress {
         case .phm(_, let r, _, _): r
         case .oft(let b, _, _): b
         }
-        (rank, method, optimizer, batchSize, learningRate) = (effectiveRank, resolved, request.optimizer, request.batchSize, request.learningRate)
+        (rank, method, optimizer, optimizerOptions, batchSize, learningRate) = (
+            effectiveRank, resolved, request.optimizer, request.effectiveOptimizerOptions, request.batchSize, request.learningRate
+        )
     }
 }
 
@@ -99,6 +101,7 @@ extension MLXInferenceEngine {
         guard (1 ... 64).contains(request.batchSize) else { throw refused("batchSize must be in 1...64") }
         guard (16 ... 32_768).contains(request.maxSeqLen) else { throw refused("maxSeqLen must be in 16...32768") }
         guard request.learningRate.isFinite, request.learningRate > 0, request.learningRate <= 1 else { throw refused("learningRate must lie in (0, 1]") }
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "train")
         guard request.checkpointEvery >= 0 else { throw refused("checkpointEvery must be 0 or positive") }
     }
 }
@@ -111,13 +114,14 @@ enum CorpusAdapterRunner {
         directory: URL,
         steps: AdapterSteps
     ) async throws(BasaltError) -> (DistillRun, String) {
+        try request.effectiveOptimizerOptions.validateAdapterCompatible(prefix: "train")
         let (rows, layerCount) = try await steps.read { context in
             let prepared = try prepareRows(split: split, markers: markers, request: request, context: context)
             return (prepared, MLXInferenceEngine.loraBlocks(of: context.model).count)
         }
         let digest = AdapterProgress.digest(rows.train + rows.heldOut)
         let identity = AdapterProgress(request, model: steps.fingerprint, data: digest, layerCount: layerCount)
-        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(request.optimizer, learningRate: request.learningRate))
+        var state = AdapterState(optimizer: TrainingOptimizerFactory.make(options: request.effectiveOptimizerOptions, learningRate: request.learningRate))
         var progress = try await startState(&state, identity: identity, request: request, directory: directory, steps: steps)
         let resumedAt = request.resume ? progress.step : nil
         var before: Float = 0

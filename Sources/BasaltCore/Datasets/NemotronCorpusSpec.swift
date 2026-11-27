@@ -192,6 +192,7 @@ public struct CorpusTrainRequest: Sendable, Codable, Equatable {
     public var batchSize: Int = 2
     public var learningRate: Float = 1e-4
     public var optimizer: TrainingOptimizerKind = .adamw
+    public var optimizerOptions: TrainingOptimizerOptions?
     public var maxSeqLen: Int = 2048
     public var checkpointEvery: Int = 50
     public var resume: Bool = false
@@ -203,6 +204,11 @@ public struct CorpusTrainRequest: Sendable, Codable, Equatable {
     public var adaLoRATargetRank: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
+    public var effectiveOptimizerOptions: TrainingOptimizerOptions {
+        var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer)
+        resolved.kind = optimizer
+        return resolved
+    }
     public var effectiveLearningRate: Float {
         (try? QuantizedLRPolicy.effectiveLearningRate(baseLR: learningRate, weightBits: quantizedBaseBits)) ?? learningRate
     }
