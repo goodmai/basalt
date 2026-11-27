@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm, mhc, mamba3Siso, mamba3Mimo, gdn2, tttLinear, tttMlp, titans, lact
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm, mhc, mamba3Siso, mamba3Mimo, gdn2, tttLinear, tttMlp, titans, lact, plt
 
         var decodesTokenByToken: Bool { self != .llada }
 
@@ -28,7 +28,7 @@ enum TinyModel {
             case .ricursive: RicursiveModel(try decoder.decode(RicursiveConfiguration.self, from: config).validated())
             case .museGlimmerText: MuseGlimmerTextModel(try MuseGlimmerTextConfiguration.decodeFlexible(from: config))
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
-            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact: try multimodalModel(config, decoder: decoder)
+            case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt: try multimodalModel(config, decoder: decoder)
             }
         }
 
@@ -50,6 +50,7 @@ enum TinyModel {
             if self == .rwkv7 { return try RWKV7Model(configurationData: config) }
             if let recurrent = try recurrentModel(config) { return recurrent }
             if let fastWeight = try fastWeightModel(config) { return fastWeight }
+            if self == .plt { return try PLTModel(configurationData: config) }
             if self == .paddleOCR { return PaddleOCRVL(try decoder.decode(PaddleOCRVLConfiguration.self, from: config)) }
             if self == .deepSeekOCR { return DeepSeekOCR(try decoder.decode(DeepSeekOCRConfiguration.self, from: config).validated()) }
             if self == .museGlimmer { return MuseGlimmerVLM(try decoder.decode(MuseGlimmerConfiguration.self, from: config)) }
@@ -59,7 +60,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt: 1
             }
         }
 
@@ -201,7 +202,7 @@ enum TinyModel {
                   "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
                  "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
-            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact:
+            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt:
                 extendedConfig
             }
         }
@@ -315,6 +316,12 @@ extension TinyModel.Family {
              "norm_topk_prob": true, "moe_router_enable_expert_bias": true, "rms_norm_eps": 1e-6,
              "tie_word_embeddings": false}
             """
+        case .plt: """
+            {"model_type": "iquestpltcoder", "hidden_size": 64, "num_hidden_layers": 2, "intermediate_size": 128,
+             "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-6, "vocab_size": 256,
+             "rope_theta": 10000.0, "plt_num_loops": 2, "plt_window_size": [8, 0], "plt_normalize_per_loop": true,
+             "plt_emb_scale": 0.707, "plt_hidden_scale": 0.5, "plt_gate_use_hidden_states": true, "tie_word_embeddings": false}
+            """
         case .ouro: """
             {"model_type": "ouro", "hidden_size": 64, "num_hidden_layers": 2, "intermediate_size": 128,
              "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16, "rms_norm_eps": 1e-6,
@@ -370,6 +377,7 @@ extension TinyModel.Family {
         .moeVideoDiT: 586, .bailingHybrid: 672, .ouro: 820, .llada: 819, .huginn: 125,
         .rwkv7: 825, .xlstm: 843, .mhc: 844, .mamba3Siso: 8471, .mamba3Mimo: 8472,
         .gdn2: 8473, .tttLinear: 8481, .tttMlp: 8482, .titans: 8483, .lact: 8484,
+        .plt: 8201,
     ]
 }
 
