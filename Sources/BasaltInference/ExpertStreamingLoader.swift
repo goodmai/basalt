@@ -164,6 +164,10 @@ public enum ExpertStreamingLoader {
         throw failure ?? BasaltError.inferenceError("expert streaming: no model factory knows model_type \(base.modelType)")
     }
 
+    static func automaticCache(share: ByteCount, planned: ByteCount) -> ByteCount {
+        planned > .zero ? min(share, planned) : share
+    }
+
     static func load(
         _ directory: URL, family: Family, base: BaseConfiguration, configuration: Data, streaming: ExpertStreaming,
         tokenizerLoader: any TokenizerLoader
@@ -178,7 +182,11 @@ public enum ExpertStreamingLoader {
         let capacity: ByteCount = if let explicit = streaming.cacheBytes {
             explicit
         } else if ssdResident == .zero {
-            streaming.cache(forExperts: plan.expertBytes)
+            Self.automaticCache(
+                share: streaming.cache(forExperts: plan.expertBytes),
+                planned: ExpertArenaPlanner.planForCurrentHost(
+                    workload: ExpertArenaWorkload(denseWeightsBytes: denseWeights, expertBytesTotal: plan.expertBytes)
+                ).arenaBytes)
         } else {
             ExpertArenaPlanner.planForCurrentHost(
                 workload: ExpertArenaWorkload(

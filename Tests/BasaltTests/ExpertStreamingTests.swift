@@ -196,6 +196,21 @@ struct ExpertStreamingParityTests {
         }
     }
 
+    @Test("With no --expert-cache-gb the loader sizes the cache itself and the streamed model still equals the resident one",
+          arguments: ["qwen3_5_moe", "qwen3_next"])
+    func automaticCache(family: String) async throws {
+        let source = try Self.source(family)
+        defer { Self.removeGenerated(source, source) }
+        let resident = try await Self.outputs(try await loadModelContainer(from: source, using: ByteTokenizerLoader()))
+        let loaded = try await ExpertStreamingLoader.loadContainer(from: source, streaming: ExpertStreaming(), tokenizerLoader: ByteTokenizerLoader())
+        let container = try #require(loaded)
+        let streamed = try await Self.outputs(container)
+        #expect(streamed.tokens == resident.tokens && streamed.logits == resident.logits)
+        let store = try #require(await container.perform { ExpertStreamingLoader.store(in: $0.model).map { ($0.stats, $0.capacity, $0.expertBytes) } })
+        #expect(store.0.misses > 0)
+        #expect(store.1 > .zero && store.1 <= ExpertStreaming().cache(forExperts: store.2))
+    }
+
     @Test("The streamed model holds no expert weights: each expert projection keeps a one-element placeholder")
     func expertsStayOnDisk() async throws {
         let container = try await Self.streamed(Self.fixtures.appendingPathComponent("qwen3_moe"), cache: ByteCount(1))
