@@ -37,6 +37,7 @@ package struct WeightConverter: Sendable {
         package var plan: BitPlan?
         package var sinq: SINQSummary?
         package var groupMisfits: [String: GroupMisfit] = [:]
+        package var groupFallbacks: [String: BaseConfiguration.Quantization] = [:]
     }
 
     package var precision: Precision
@@ -148,7 +149,7 @@ extension WeightConverter {
                 guard let tensor = arrays.removeValue(forKey: key) else { continue }
                 let packed = try layout.packed(key, taking: &arrays)
                 let outputs = try convert(key, tensor, packed: packed, lora: lora, sourceQuantized: layout.quantization != nil)
-                noteGroupMisfit(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, into: &summary)
+                noteGroupChoice(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, into: &summary)
                 let inputs = [tensor, packed?.scales, packed?.biases, packed?.globalScale].compactMap { $0 }
                 summary.tensors += inputs.count
                 summary.bytesBefore += inputs.reduce(0) { $0 + $1.nbytes }
@@ -158,7 +159,7 @@ extension WeightConverter {
             }
         }
         summary.shards = try writer.finish()
-        warnGroupMisfits(summary)
+        try finishGroupChoices(summary, output: output)
         return summary
     }
 
@@ -205,11 +206,11 @@ extension WeightConverter {
         case .source, .nf4, .mxfp4, .nvfp4:
             return packed?.quantization
         case .affine(let bits, let groupSize):
-            guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) else { return nil }
-            return BaseConfiguration.Quantization(groupSize: groupSize, bits: bits)
+            guard let group = Self.fittingGroup(key, tensor, packed: packed, sourceQuantized: sourceQuantized, requested: groupSize) else { return nil }
+            return BaseConfiguration.Quantization(groupSize: group, bits: bits)
         case .mixed(let mixed):
-            guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: mixed.groupSize) else { return nil }
-            return BaseConfiguration.Quantization(groupSize: mixed.groupSize, bits: mixed.bits(layer: String(key.dropLast(".weight".count))))
+            guard let group = Self.fittingGroup(key, tensor, packed: packed, sourceQuantized: sourceQuantized, requested: mixed.groupSize) else { return nil }
+            return BaseConfiguration.Quantization(groupSize: group, bits: mixed.bits(layer: String(key.dropLast(".weight".count))))
         }
     }
 
