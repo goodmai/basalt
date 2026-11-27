@@ -9,6 +9,9 @@ public enum TelemetryExport {
         appendDecisions(snapshot, into: &lines)
         appendConfidenceAndExperts(snapshot, into: &lines)
         appendCacheAndCalibration(snapshot, into: &lines)
+        if let slo = snapshot.servingSLO { appendServingSLO(slo, into: &lines) }
+        if let stateHealth = snapshot.stateHealth { appendRecurrentStateHealth(stateHealth, into: &lines) }
+        if let reasoning = snapshot.reasoning { appendReasoningTelemetry(reasoning, into: &lines) }
         return (lines + ["# EOF"]).joined(separator: "\n") + "\n"
     }
 
@@ -73,6 +76,10 @@ public enum TelemetryExport {
             appendMetric("expert_cache_capacity_bytes", "gauge", "Size of the streamed expert cache.", [("", Double(experts.capacityBytes))], into: &lines)
             appendMetric("expert_layer_distinct", "gauge", "Distinct experts routed per MoE layer since load.", experts.layers.map { ("layer=\"\($0.layer)\"", Double($0.distinct)) }, into: &lines)
             appendMetric("expert_layer_top_share", "gauge", "Share of routings that went to the layer's eight most used experts.", experts.layers.map { ("layer=\"\($0.layer)\"", $0.topShare) }, into: &lines)
+            let loadBalance = experts.layers.compactMap { entry in
+                entry.loadBalance.map { (layer: entry.layer, metrics: $0) }
+            }
+            appendMoELoadBalance(loadBalance, into: &lines)
         }
     }
 

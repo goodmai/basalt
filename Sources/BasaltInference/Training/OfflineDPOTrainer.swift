@@ -62,7 +62,7 @@ public enum OfflineDPOTrainer {
         defer { _ = PHMAdapterApplicator.revert(in: context.model) }
         let (configuration, cached) = try attachAndCacheReference(tokenized: tokenized, config: config, model: context.model)
         let before = evaluate(model: context.model, cached: cached, config: config)
-        let losses = try runSteps(model: context.model, cached: cached, config: config)
+        let (losses, stabilitySummary) = try runSteps(model: context.model, cached: cached, config: config)
         let after = evaluate(model: context.model, cached: cached, config: config)
         var gatePassed: Bool?
         if let gate = config.gate {
@@ -77,6 +77,7 @@ public enum OfflineDPOTrainer {
         report.preferenceAccuracyAfter = after.accuracy
         report.klDivergence = after.klDivergence
         report.gatePassed = gatePassed
+        report.stabilitySummary = stabilitySummary
         return report
     }
 }
@@ -219,7 +220,7 @@ extension OfflineDPOTrainer {
         model: any LanguageModel,
         cached: [CachedDPOPair],
         config: OfflineDPOConfig
-    ) throws -> [Float] {
+    ) throws -> (losses: [Float], stabilitySummary: TrainingStabilitySummary?) {
         let optimizer = makeOptimizer(config.effectiveOptimizerOptions, learningRate: config.learningRate)
         if optimizer.usesQKClip {
             try QKClipController.validateTrainableSupport(for: model, prefix: "dpo")
@@ -227,6 +228,8 @@ extension OfflineDPOTrainer {
         let stepFn = valueAndGrad(model: model as Module) { _, batch in
             batchObjective(model: model, batch: batch, config: config)
         }
+        let monitor = TrainingStabilityMonitor(sampleEvery: config.stabilityTelemetryEvery ?? 0)
+        var stability = TrainingStabilityAccumulator()
         var rng = SplitMix64(seed: config.seed)
         var order: [Int] = []
         var cursor = 0
@@ -235,6 +238,7 @@ extension OfflineDPOTrainer {
         for step in 0 ..< config.iterations {
             try Task.checkCancellation()
             let batch = nextBatch(from: cached, batchSize: config.batchSize, order: &order, cursor: &cursor, rng: &rng)
+            let before = monitor.snapshotWeights(model.trainableParameters(), step: step)
             let (values, gradients) = stepFn(model as Module, batch)
             let (clipped, _) = clipGradNorm(gradients: gradients, maxNorm: config.maxGradNorm)
             optimizer.update(model: model as Module, gradients: clipped)
@@ -250,9 +254,10 @@ extension OfflineDPOTrainer {
                 }
                 QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: optimizer.options)
             }
+            monitor.recordStep(step: step, before: before, after: model.trainableParameters(), gradients: gradients, into: &stability)
             losses.append(loss)
         }
-        return losses
+        return (losses, monitor.isEnabled ? stability.finalize() : nil)
     }
 
     static func batchObjective(

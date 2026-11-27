@@ -124,6 +124,7 @@ public struct OfflineDPOConfig: Sendable, Equatable, Codable {
     public var output: String?
     public var applyOverlay: Bool = false
     public var gate: GateRequest?
+    public var stabilityTelemetryEvery: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
@@ -175,6 +176,7 @@ public struct OfflineDPOReport: Sendable, Equatable, Codable {
     public var klDivergence: Float = 0
     public var outputPath: String = ""
     public var gatePassed: Bool?
+    public var stabilitySummary: TrainingStabilitySummary?
 
     public init(outputPath: String = "") {
         self.outputPath = outputPath
@@ -202,6 +204,7 @@ public struct GRPOConfig: Sendable, Equatable, Codable {
     public var output: String?
     public var gate: GateRequest = GateRequest(heldOut: CorpusTrainRequest.defaultHeldOutPrompts)
     public var applyOverlay: Bool = false
+    public var stabilityTelemetryEvery: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
@@ -285,6 +288,7 @@ public struct GRPOReport: Sendable, Equatable, Codable {
     public var skippedGroups: Int = 0
     public var gatePassed: Bool = false
     public var outputPath: String = ""
+    public var stabilitySummary: TrainingStabilitySummary?
 
     public init(outputPath: String = "") {
         self.outputPath = outputPath

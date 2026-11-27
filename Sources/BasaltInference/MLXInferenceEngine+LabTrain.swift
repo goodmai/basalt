@@ -359,6 +359,7 @@ extension MLXInferenceEngine {
         report.earlyStoppedStep = outcome.earlyStoppedStep
         report.emaApplied = outcome.emaApplied
         report.adapterDirectory = directory.path
+        report.stabilitySummary = outcome.stabilitySummary
     }
 }
 
@@ -413,7 +414,7 @@ extension MLXInferenceEngine {
         let method = configuredMethod(explicit: request.method, fallbackRank: request.rank)
         let configuration = try attachConfiguredAdapter(to: context.model, layers: request.layers, method: method)
         defer { _ = PHMAdapterApplicator.revert(in: context.model) }
-        let options = ADPOOptimizeOptions(
+        var options = ADPOOptimizeOptions(
             iterations: request.iterations,
             learningRate: request.learningRate,
             batchSize: min(4, tokenized.count),
@@ -421,6 +422,7 @@ extension MLXInferenceEngine {
             optimizer: request.optimizer,
             optimizerOptions: request.effectiveOptimizerOptions
         )
+        options.stabilityTelemetryEvery = request.stabilityTelemetryEvery ?? 0
         let outcome = try ADPOTrainer.optimize(
             model: context.model,
             pairs: tokenized,

@@ -14,7 +14,9 @@ extension MLXInferenceEngine {
         get async {
             guard let container else { return nil }
             return await container.performEvaluating(nonSendable: ()) { context, _ in
-                ExpertStreamingLoader.store(in: context.model).map { ExpertTelemetry(cache: $0.stats, capacityBytes: $0.capacity.rawValue, layers: $0.routing.layers()) }
+                ExpertStreamingLoader.store(in: context.model).map {
+                    ExpertTelemetry(cache: $0.stats, capacityBytes: $0.capacity.rawValue, layers: $0.routing.layers(expertCounts: $0.expertCountsByLayer))
+                }
             }
         }
     }

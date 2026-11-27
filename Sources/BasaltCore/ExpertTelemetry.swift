@@ -6,6 +6,7 @@ public struct ExpertLayerRouting: Codable, Sendable, Equatable {
     public var distinct: Int
     public var top: [ExpertCount]
     public var topShare: Double
+    public var loadBalance: MoELoadBalanceMetrics? = nil
 
     public struct ExpertCount: Codable, Sendable, Equatable {
         public var expert: Int
@@ -15,6 +16,7 @@ public struct ExpertLayerRouting: Codable, Sendable, Equatable {
     enum CodingKeys: String, CodingKey {
         case layer, routed, distinct, top
         case topShare = "top_share"
+        case loadBalance = "load_balance"
     }
 }
 
@@ -27,13 +29,21 @@ public struct ExpertRouting: Sendable, Equatable {
         for expert in experts { counts[module, default: [:]][expert, default: 0] += 1 }
     }
 
-    public func layers(top: Int = 8) -> [ExpertLayerRouting] {
+    public func layers(top: Int = 8, expertCounts: [Int: Int] = [:]) -> [ExpertLayerRouting] {
         counts.keys.sorted().compactMap { layer in
             guard let experts = counts[layer] else { return nil }
             let routed = experts.values.reduce(0, +)
             let leaders = experts.sorted { ($0.value, -$0.key) > ($1.value, -$1.key) }.prefix(top)
             let share = routed > 0 ? Double(leaders.reduce(0) { $0 + $1.value }) / Double(routed) : 0
-            return ExpertLayerRouting(layer: layer, routed: routed, distinct: experts.count, top: leaders.map { .init(expert: $0.key, count: $0.value) }, topShare: share)
+            let totalExperts = expertCounts[layer] ?? (experts.keys.max().map { $0 + 1 } ?? 0)
+            let balance = totalExperts > 0
+                ? MoELoadBalanceMath.evaluate(dispatchMap: experts, expertCount: totalExperts)
+                : nil
+            return ExpertLayerRouting(
+                layer: layer, routed: routed, distinct: experts.count,
+                top: leaders.map { .init(expert: $0.key, count: $0.value) },
+                topShare: share, loadBalance: balance
+            )
         }
     }
 }

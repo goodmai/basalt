@@ -168,6 +168,9 @@ public struct TelemetryCore: Sendable, Equatable {
     public private(set) var cache = CacheTelemetry()
     public private(set) var calibration = DecisionCalibrationTelemetry()
     public private(set) var interventions: [String: Int] = [:]
+    public private(set) var servingSLO = ServingSLOReducer()
+    public private(set) var stateHealth: RecurrentStateHealthSnapshot?
+    public private(set) var reasoning = ThinkingTelemetryReducer()
     private var confidenceEvery = 0
     private var confidenceCounter = 0
 
@@ -180,14 +183,18 @@ public struct TelemetryCore: Sendable, Equatable {
     }
 
     @discardableResult
-    public mutating func requestFinished(with response: GenerationResponse? = nil, at date: Date = Date()) -> [String] {
+    public mutating func requestFinished(
+        with response: GenerationResponse? = nil, queueWaitSeconds: Double = 0, at date: Date = Date()
+    ) -> [String] {
         activeRequests = max(0, activeRequests - 1)
         guard let response else { return [] }
-        return recordGeneration(response, at: date)
+        return recordGeneration(response, queueWaitSeconds: queueWaitSeconds, at: date)
     }
 
     @discardableResult
-    public mutating func recordGeneration(_ response: GenerationResponse, at date: Date = Date()) -> [String] {
+    public mutating func recordGeneration(
+        _ response: GenerationResponse, queueWaitSeconds: Double = 0, at date: Date = Date()
+    ) -> [String] {
         totalRequests += 1
         totalTokens += response.completionTokens
         lastTokensPerSecond = response.tokensPerSecond
@@ -205,6 +212,8 @@ public struct TelemetryCore: Sendable, Equatable {
         windows.record(sample)
         if let measured = response.confidence { confidence.record(measured) }
         if let cacheDelta = response.cacheTelemetry { cache.record(cacheDelta) }
+        servingSLO.record(sloRecord(for: response, queueWaitSeconds: queueWaitSeconds))
+        recordReasoningIfPresent(from: response)
         return warnings
     }
 
@@ -287,7 +296,62 @@ public struct TelemetryCore: Sendable, Equatable {
         snapshot.confidence = confidence.responses > 0 ? confidence : nil
         snapshot.cache = cache.isEmpty ? nil : cache
         snapshot.calibration = calibration.samples > 0 ? calibration : nil
+        if !servingSLO.isEmpty {
+            let peak = AppleSiliconBandwidthTable.peakBandwidthGBps(
+                for: hardware?.chipModel ?? snapshot.chipModel,
+                gpuCores: hardware?.gpuCores)
+            snapshot.servingSLO = servingSLO.snapshot(peakBandwidthGBps: peak)
+        }
+        snapshot.stateHealth = stateHealth
+        snapshot.reasoning = reasoning.isEmpty ? nil : reasoning.snapshot()
         return snapshot
+    }
+}
+
+extension TelemetryCore {
+    public mutating func recordStateHealth(_ health: RecurrentStateHealthSnapshot) {
+        stateHealth = health
+    }
+
+    public mutating func recordReasoning(_ turn: ReasoningTurnRecord) {
+        reasoning.record(turn)
+    }
+
+    mutating func recordReasoningIfPresent(from response: GenerationResponse) {
+        if let turn = response.reasoningTurn {
+            reasoning.record(turn)
+            return
+        }
+        guard let reasoningTokens = response.reasoningTokens, reasoningTokens > 0 else { return }
+        let answerTokens = max(0, response.completionTokens - reasoningTokens)
+        let truncated = response.finishReason == .length && answerTokens == 0
+        reasoning.record(ReasoningTurnRecord(
+            thinkingTokens: reasoningTokens,
+            answerTokens: answerTokens,
+            hitTokenBudgetBeforeClose: truncated
+        ))
+    }
+
+    func sloRecord(for response: GenerationResponse, queueWaitSeconds: Double) -> ServingSLORecord {
+        let prefillTokens = max(0, response.promptTokens - response.cachedPromptTokens)
+        let prefillSeconds = response.prefillSeconds ?? response.timeToFirstToken
+        let elapsedDecode = response.generationTime - prefillSeconds
+        let decodeSeconds = elapsedDecode > 0
+            ? elapsedDecode
+            : (response.tokensPerSecond > 0 ? Double(response.completionTokens) / response.tokensPerSecond : 0)
+        let activeWeightBytes: UInt64 = modelRAMMB > 0
+            ? UInt64(modelRAMMB) * 1_048_576
+            : UInt64(max(0, response.memory.activeBytes))
+        return ServingSLORecord(
+            queueWaitSeconds: queueWaitSeconds,
+            ttftSeconds: response.timeToFirstToken,
+            prefillTokens: prefillTokens,
+            prefillSeconds: prefillSeconds,
+            decodeTokens: response.completionTokens,
+            decodeSeconds: decodeSeconds
+        ).withDecodeDetail(
+            itlSamplesSeconds: response.itlSamplesSeconds ?? [],
+            activeWeightBytes: activeWeightBytes)
     }
 }
 
@@ -295,6 +359,19 @@ extension GenerationResponse {
     package func withCacheTelemetry(_ cache: CacheTelemetry?) -> GenerationResponse {
         var copy = self
         copy.cacheTelemetry = cache
+        return copy
+    }
+
+    package func withServingTiming(prefillSeconds: Double?, itlSamplesSeconds: [Double]?) -> GenerationResponse {
+        var copy = self
+        copy.prefillSeconds = prefillSeconds
+        copy.itlSamplesSeconds = itlSamplesSeconds
+        return copy
+    }
+
+    package func withReasoningTurn(_ turn: ReasoningTurnRecord?) -> GenerationResponse {
+        var copy = self
+        copy.reasoningTurn = turn
         return copy
     }
 }

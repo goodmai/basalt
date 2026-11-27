@@ -2,7 +2,10 @@ import Foundation
 import BasaltCore
 
 struct TelemetryQuery: Encodable {
-    static let sections = ["windows", "decisions", "experts", "confidence", "cache", "calibration", "health", "memory"]
+    static let sections = [
+        "windows", "decisions", "experts", "confidence", "cache",
+        "calibration", "health", "memory", "slo", "reasoning", "state_health",
+    ]
 
     struct Totals: Encodable {
         let requests: Int
@@ -25,6 +28,14 @@ struct TelemetryQuery: Encodable {
     let calibration: DecisionCalibrationTelemetry?
     let health: HealthTelemetry?
     let memory: MemoryTelemetry?
+    let slo: ServingSLOSnapshot?
+    let reasoning: ReasoningTelemetrySnapshot?
+    let stateHealth: RecurrentStateHealthSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case totals, windows, decisions, experts, confidence, cache, calibration, health, memory, slo, reasoning
+        case stateHealth = "state_health"
+    }
 
     init(_ snapshot: ServerTelemetrySnapshot, sections: Set<String>) {
         totals = Totals(requests: snapshot.totalRequests, tokens: snapshot.totalTokensGenerated, activeRequests: snapshot.activeRequests, gpuActiveBytes: snapshot.gpuActiveBytes)
@@ -36,6 +47,9 @@ struct TelemetryQuery: Encodable {
         calibration = sections.contains("calibration") ? snapshot.calibration : nil
         health = sections.contains("health") ? snapshot.health : nil
         memory = sections.contains("memory") ? snapshot.memory : nil
+        slo = sections.contains("slo") ? snapshot.servingSLO : nil
+        reasoning = sections.contains("reasoning") ? snapshot.reasoning : nil
+        stateHealth = sections.contains("state_health") ? snapshot.stateHealth : nil
     }
 
     static func validated(_ requested: [String]) -> Set<String>? {

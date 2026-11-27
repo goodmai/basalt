@@ -35,6 +35,9 @@ public struct ServerTelemetrySnapshot: Codable, Sendable, Equatable {
     public var calibration: DecisionCalibrationTelemetry?
     public var semanticCache: SemanticCacheMetrics?
     public var tieredKV: TieredKVMetrics?
+    public var servingSLO: ServingSLOSnapshot?
+    public var stateHealth: RecurrentStateHealthSnapshot?
+    public var reasoning: ReasoningTelemetrySnapshot?
 
     public init() {}
 
@@ -126,8 +129,8 @@ public actor TelemetryTracker {
         for sink in sinks { sink.recordActiveRequests(active) }
     }
 
-    public func requestFinished(with response: GenerationResponse? = nil) {
-        let warnings = core.requestFinished(with: response, at: clock())
+    public func requestFinished(with response: GenerationResponse? = nil, queueWaitSeconds: Double = 0) {
+        let warnings = core.requestFinished(with: response, queueWaitSeconds: queueWaitSeconds, at: clock())
         for warning in warnings { logger.warn(warning) }
         let active = core.activeRequests
         let currentModel = core.model
@@ -163,6 +166,14 @@ public actor TelemetryTracker {
     public func recordIntervention(_ event: InterventionTelemetryEvent) {
         core.recordIntervention(event)
         for sink in sinks { sink.recordIntervention(event) }
+    }
+
+    public func recordStateHealth(_ health: RecurrentStateHealthSnapshot) {
+        core.recordStateHealth(health)
+    }
+
+    public func recordReasoning(_ turn: ReasoningTurnRecord) {
+        core.recordReasoning(turn)
     }
 
     public func recordStage(_ span: ComposeStageSpan) {

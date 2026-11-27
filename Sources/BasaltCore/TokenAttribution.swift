@@ -35,6 +35,7 @@ public struct TokenHeadActivation: Sendable, Codable, Equatable {
     public var residualShare: Float?
     public var logitAlignment: Float?
     public var influenceScore: Float?
+    public var sinkMass: Float?
 
     public init(
         head: Int,
@@ -50,6 +51,7 @@ public struct TokenHeadActivation: Sendable, Codable, Equatable {
         self.residualShare = residualShare
         self.logitAlignment = logitAlignment
         self.influenceScore = influenceScore
+        self.sinkMass = nil
     }
 
     enum CodingKeys: String, CodingKey {
@@ -58,6 +60,7 @@ public struct TokenHeadActivation: Sendable, Codable, Equatable {
         case residualShare = "residual_share"
         case logitAlignment = "logit_alignment"
         case influenceScore = "influence_score"
+        case sinkMass = "sink_mass"
     }
 }
 

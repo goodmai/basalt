@@ -190,8 +190,9 @@ struct ServeCommand: AsyncParsableCommand {
 
         BasaltLogger.globalLevel = config.logLevel.basaltLevel
 
-        let engine = try makeEngine()
-        let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens)
+        let telemetry = TelemetryTracker()
+        let engine = try makeEngine(telemetry: telemetry)
+        let orchestrator = try await makeOrchestrator(engine: engine, maxTokens: config.maxTokens, telemetry: telemetry)
         if let spec, !mcp { return try await runComposed(spec, ComposeBoot(config: config, engine: engine, orchestrator: orchestrator, chatPath: resolvedPath)) }
         try await runDirect(
             spec,
@@ -228,7 +229,7 @@ extension ServeCommand {
         .withImageSynthesizer(imageSynthesizer)
     }
 
-    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int) async throws -> ModelOrchestratorActor<MLXInferenceEngine> {
+    private func makeOrchestrator(engine: MLXInferenceEngine, maxTokens: Int, telemetry: TelemetryTracker) async throws -> ModelOrchestratorActor<MLXInferenceEngine> {
         if batchSlots > 1, maxConcurrent < 2 {
             log("\(yellow("[warn]")) --batch-slots \(batchSlots) has no effect with --max-concurrent \(maxConcurrent): only one generation runs at a time")
         }
@@ -238,7 +239,7 @@ extension ServeCommand {
         }
         let orchestrator = ModelOrchestratorActor(
             engine: engine, maxTokens: maxTokens, kv: .init(precision: kvCache.bits?.fixedPrecision, adaptive: kvCache.bits == .auto, zones: kvCache.zones),
-            gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
+            telemetry: telemetry, gate: GenerationGate(maxConcurrent: maxConcurrent, maxQueue: maxQueue), sessionLog: sessionLogWriter)
         await orchestrator.setAdaptiveThinkingBudget(thinking.experimentalAdaptiveThinkingBudget)
         return orchestrator
     }

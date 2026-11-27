@@ -39,7 +39,10 @@ extension MLXInferenceEngine {
         }
         var report = TokenTraceReport(
             file: url.path, bytes: data.count, promptTokens: run.promptTokens, generated: Array(run.ids.dropFirst(run.promptTokens)), text: run.text)
-        report.layers = TokenTraceSummary.layers(run.table, topK: request.topK)
+        let expertCounts = Dictionary(uniqueKeysWithValues: anatomy.layers.compactMap { layer in
+            layer.experts.map { (layer.index, $0) }
+        })
+        report.layers = TokenTraceSummary.layers(run.table, topK: request.topK, expertCounts: expertCounts)
         report.crossings = TokenTraceSummary.crossings(run.table, directions: request.projections)
         return report
     }

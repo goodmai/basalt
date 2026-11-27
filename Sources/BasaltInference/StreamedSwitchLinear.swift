@@ -263,6 +263,9 @@ final class ExpertStore {
     }
     var reserve: ByteCount { capacity + (layouts.map(\.totalBytes).max() ?? .zero) * 3 }
     var unclaimedReserve: ByteCount { max(.zero, reserve - slotBytes) }
+    var expertCountsByLayer: [Int: Int] {
+        Dictionary(groups.map { ($0.layer, layouts[$0.entry].numExperts) }, uniquingKeysWith: { first, _ in first })
+    }
 
     func attachRouters(in model: Module) {
         let moduleMap = Dictionary(model.namedModules(), uniquingKeysWith: { first, _ in first })

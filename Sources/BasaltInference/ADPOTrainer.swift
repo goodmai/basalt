@@ -34,6 +34,7 @@ public struct ADPOOptimizeOptions: Sendable, Equatable {
     public var emaDecay: Float?
     public var optimizer: TrainingOptimizerKind
     public var optimizerOptions: TrainingOptimizerOptions?
+    public var stabilityTelemetryEvery: Int = 0
 
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
         var resolved = optimizerOptions ?? TrainingOptimizerOptions(kind: optimizer)
@@ -71,6 +72,7 @@ public struct ADPOTrainOutcome: Sendable, Equatable {
     public var earlyStoppedStep: Int?
     public var emaApplied: Bool
     public var emaUpdates: Int
+    public var stabilitySummary: TrainingStabilitySummary? = nil
 }
 
 public struct EMAWeightShadow {
@@ -427,20 +429,16 @@ extension ADPOTrainer {
         let entropyBefore = policyEntropy(model: model, pairs: evalSubset)
         let marginBefore = meanPreparedMargin(model: model, prepared: prepared, config: config)
         let effectiveEMA = options.emaDecay ?? config.emaDecay
+        var resolvedOptions = options
+        resolvedOptions.emaDecay = effectiveEMA
+        resolvedOptions.optimizerOptions = options.effectiveOptimizerOptions
         let loop = try runSteps(
             model: model,
             prepared: prepared,
             evalSubset: evalSubset,
             entropyBefore: entropyBefore,
             config: config,
-            options: ADPOOptimizeOptions(
-                iterations: options.iterations,
-                learningRate: options.learningRate,
-                batchSize: options.batchSize,
-                emaDecay: effectiveEMA,
-                optimizer: options.optimizer,
-                optimizerOptions: options.effectiveOptimizerOptions
-            )
+            options: resolvedOptions
         )
         var emaApplied = false
         if let ema = loop.ema, config.swapEMAOnFinish, ema.updates > 0 {
@@ -468,7 +466,8 @@ extension ADPOTrainer {
             sharpeningGuardTriggered: loop.guardTriggered,
             earlyStoppedStep: loop.earlyStep,
             emaApplied: emaApplied,
-            emaUpdates: loop.ema?.updates ?? 0
+            emaUpdates: loop.ema?.updates ?? 0,
+            stabilitySummary: loop.stabilitySummary
         )
     }
 
@@ -505,7 +504,7 @@ extension ADPOTrainer {
         entropyBefore: Float,
         config: ADPOConfig,
         options: ADPOOptimizeOptions
-    ) throws -> (losses: [Float], margins: [Float], ema: EMAWeightShadow?, guardTriggered: Bool, earlyStep: Int?) {
+    ) throws -> (losses: [Float], margins: [Float], ema: EMAWeightShadow?, guardTriggered: Bool, earlyStep: Int?, stabilitySummary: TrainingStabilitySummary?) {
         let optimizer = TrainingOptimizerFactory.make(options: options.effectiveOptimizerOptions, learningRate: options.learningRate)
         if optimizer.usesQKClip {
             try QKClipController.validateTrainableSupport(for: model, prefix: "train")
@@ -514,10 +513,10 @@ extension ADPOTrainer {
         let stepFn = valueAndGrad(model: model as Module) { _, batch in
             batchObjective(model: model, batch: batch, config: config)
         }
+        let monitor = TrainingStabilityMonitor(sampleEvery: options.stabilityTelemetryEvery)
+        var stability = TrainingStabilityAccumulator()
         let batchCount = min(options.batchSize, prepared.count)
-        var losses: [Float] = []
-        var margins: [Float] = []
-        var guardTriggered = false
+        var (losses, margins, guardTriggered) = ([Float](), [Float](), false)
         var earlyStep: Int?
         for step in 0 ..< options.iterations {
             try Task.checkCancellation()
@@ -526,8 +525,7 @@ extension ADPOTrainer {
             let (values, gradients) = stepFn(model as Module, batch)
             optimizer.update(model: model as Module, gradients: gradients)
             eval(model as Module, optimizer, values)
-            let loss = values[0].item(Float.self)
-            let margin = values[1].item(Float.self)
+            let (loss, margin) = (values[0].item(Float.self), values[1].item(Float.self))
             guard loss.isFinite, margin.isFinite else {
                 restoreTrainable(safeWeights, into: model)
                 throw BasaltError.inferenceError("train: preference optimization loss became non-finite at step \(step)")
@@ -539,17 +537,17 @@ extension ADPOTrainer {
                 }
                 QKClipController.measureAndClipSequences(model: model, sequences: seqs, options: optimizer.options)
             }
-            losses.append(loss)
-            margins.append(margin)
+            if monitor.shouldSample(step: step) {
+                monitor.recordStep(step: step, before: Dictionary(uniqueKeysWithValues: safeWeights), after: model.trainableParameters(), gradients: gradients, into: &stability)
+            }
+            losses.append(loss); margins.append(margin)
             let currentEntropy = policyEntropy(model: model, pairs: evalSubset)
             if ADPOMetrics.isEntropyCollapsed(before: entropyBefore, current: currentEntropy, config: config) {
                 restoreTrainable(safeWeights, into: model)
-                guardTriggered = true
-                earlyStep = step + 1
-                break
+                guardTriggered = true; earlyStep = step + 1; break
             }
             ema?.update(from: model)
         }
-        return (losses, margins, ema, guardTriggered, earlyStep)
+        return (losses, margins, ema, guardTriggered, earlyStep, monitor.isEnabled ? stability.finalize() : nil)
     }
 }

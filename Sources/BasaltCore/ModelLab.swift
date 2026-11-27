@@ -14,6 +14,9 @@ public protocol ModelLab: ModelResearch {
     func attributeTokens(_ request: AttributedTokenTraceRequest) async throws(BasaltError) -> AttributedTokenTraceReport
     func activationContrast(_ request: ActivationContrastRequest) async throws(BasaltError) -> ActivationContrastReport
     func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary
+    func runDepthDiagnostics(_ request: DepthDiagnosticsRequest) async throws(BasaltError) -> DepthDiagnosticsReport
+    func runCausalSweep(_ request: CausalSweepRequest) async throws(BasaltError) -> CausalSweepReport
+    func runOutlierProfile(_ request: OutlierProfileRequest) async throws(BasaltError) -> OutlierProfileReport
     func trainCorpus(_ request: CorpusTrainRequest, lease: StepLease?) async throws(BasaltError) -> CorpusTrainReport
 }
 
@@ -36,6 +39,15 @@ extension ModelLab {
     }
     public func phasorProbe(_ request: PhasorProbeRequest) async throws(BasaltError) -> PhasorProbeSummary {
         throw Self.unavailable("phasor probe")
+    }
+    public func runDepthDiagnostics(_ request: DepthDiagnosticsRequest) async throws(BasaltError) -> DepthDiagnosticsReport {
+        throw Self.unavailable("depth diagnostics")
+    }
+    public func runCausalSweep(_ request: CausalSweepRequest) async throws(BasaltError) -> CausalSweepReport {
+        throw Self.unavailable("causal sweep")
+    }
+    public func runOutlierProfile(_ request: OutlierProfileRequest) async throws(BasaltError) -> OutlierProfileReport {
+        throw Self.unavailable("outlier profile")
     }
     public func trainCorpus(_ request: CorpusTrainRequest, lease: StepLease?) async throws(BasaltError) -> CorpusTrainReport {
         throw Self.unavailable("corpus training")
@@ -308,6 +320,7 @@ public struct TrainRequest: Sendable, Codable, Equatable {
     public var emaDecay: Float?
     public var gate: GateRequest
     public var output: String?
+    public var stabilityTelemetryEvery: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
@@ -338,6 +351,7 @@ public struct TrainReport: Sendable, Codable {
     public var earlyStoppedStep: Int?
     public var emaApplied: Bool?
     public var adapterDirectory: String?
+    public var stabilitySummary: TrainingStabilitySummary?
     public var verdict: AdapterVerdict
 
     public init(collected: Int, verified: Int, losses: [Float], accuracyBefore: Float, accuracyAfter: Float, verdict: AdapterVerdict) {

@@ -388,6 +388,9 @@ public struct GenerationResponse: Codable, Sendable {
     public private(set) var confidence: ResponseConfidence?
     public private(set) var tokenTelemetry: [OutputTokenTelemetry]?
     package var cacheTelemetry: CacheTelemetry?
+    package var prefillSeconds: Double?
+    package var itlSamplesSeconds: [Double]?
+    package var reasoningTurn: ReasoningTurnRecord?
 
     public init(
         generatedText: String,

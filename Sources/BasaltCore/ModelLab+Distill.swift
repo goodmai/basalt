@@ -49,6 +49,7 @@ public struct DistillRequest: Sendable, Codable, Equatable {
     public var onPolicy = false
     public var checkpointEvery = 50
     public var resume = false
+    public var stabilityTelemetryEvery: Int?
 
     public var effectiveMethod: AdapterMethod { method ?? .lora(rank: rank) }
     public var effectiveOptimizerOptions: TrainingOptimizerOptions {
@@ -88,6 +89,7 @@ public struct DistillReport: Sendable, Codable {
     public var cacheDirectory: String?
     public var adapterDirectory: String?
     public var resumedAt: Int?
+    public var stabilitySummary: TrainingStabilitySummary?
     public var verdict: AdapterVerdict?
 
     public init() {}

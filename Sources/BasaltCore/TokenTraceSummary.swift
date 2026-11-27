@@ -48,11 +48,13 @@ public struct TokenTraceTable: Sendable, Equatable {
 public enum TokenTraceSummary {
     public static let crossingPositions = 32
 
-    public static func layers(_ table: TokenTraceTable, topK: Int) -> [LayerActivity] {
+    public static func layers(_ table: TokenTraceTable, topK: Int, expertCounts: [Int: Int] = [:]) -> [LayerActivity] {
         table.layers.compactMap { index in
             var activity = LayerActivity(index: index)
             activity.heads = heads(table, layer: index, topK: topK)
-            activity.experts = experts(table, layer: index, topK: topK)
+            let routed = expertStats(table, layer: index, topK: topK, expertCount: expertCounts[index])
+            activity.experts = routed.usage
+            activity.loadBalance = routed.loadBalance
             activity.routerEntropy = table.column(.routerEntropy, layer: index).map(mean)
             activity.routerMargin = table.column(.routerMargin, layer: index).map(mean)
             let empty = activity.heads.isEmpty && activity.experts.isEmpty && activity.routerEntropy == nil
@@ -69,6 +71,15 @@ public enum TokenTraceSummary {
     }
 
     static func experts(_ table: TokenTraceTable, layer: Int, topK: Int) -> [ExpertUsage] {
+        expertStats(table, layer: layer, topK: topK, expertCount: nil).usage
+    }
+
+    static func expertStats(
+        _ table: TokenTraceTable,
+        layer: Int,
+        topK: Int,
+        expertCount: Int?
+    ) -> (usage: [ExpertUsage], loadBalance: MoELoadBalanceMetrics?) {
         var counts: [Int: (tokens: Int, gate: Float)] = [:]
         for (ids, gates) in table.routed(layer: layer) ?? [] {
             for (id, gate) in zip(ids, gates) {
@@ -77,7 +88,12 @@ public enum TokenTraceSummary {
             }
         }
         let usage = counts.map { ExpertUsage(expert: $0.key, tokens: $0.value.tokens, meanGate: $0.value.gate / Float($0.value.tokens)) }
-        return Array(usage.sorted { ($0.tokens, $0.meanGate, -$0.expert) > ($1.tokens, $1.meanGate, -$1.expert) }.prefix(topK))
+        let ranked = Array(usage.sorted { ($0.tokens, $0.meanGate, -$0.expert) > ($1.tokens, $1.meanGate, -$1.expert) }.prefix(topK))
+        let totalExperts = expertCount ?? (counts.keys.max().map { $0 + 1 } ?? 0)
+        let balance = totalExperts > 0
+            ? MoELoadBalanceMath.evaluate(dispatchMap: counts.mapValues(\.tokens), expertCount: totalExperts)
+            : nil
+        return (ranked, balance)
     }
 
     public static func crossings(_ table: TokenTraceTable, directions: [TraceDirection]) -> [ProjectionCrossing] {

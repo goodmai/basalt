@@ -161,6 +161,7 @@ public struct LayerActivity: Sendable, Codable, Equatable {
     public var experts: [ExpertUsage] = []
     public var routerEntropy: Float?
     public var routerMargin: Float?
+    public var loadBalance: MoELoadBalanceMetrics?
 
     public init(index: Int) {
         self.index = index
