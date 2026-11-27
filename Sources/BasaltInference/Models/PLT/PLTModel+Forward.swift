@@ -18,8 +18,10 @@ final class PLTInner: Module {
     }
 
     var cacheCount: Int { config.loops * config.layers + config.loops - 1 }
+    var crossLoopDecode = true
 
     func callAsFunction(_ tokens: MLXArray, cache: [KVCache]?) -> MLXArray {
+        if let cache, tokens.dim(-1) == 1, config.loops > 1, crossLoopDecode { return crossLoopStep(tokens, cache: cache) }
         let embedded = embedTokens(tokens)
         var h = embedded
         var shared: [(keys: MLXArray, values: MLXArray)] = []
