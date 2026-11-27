@@ -153,6 +153,16 @@ extension MLXInferenceEngine {
         try ModelCapabilities.refuseIncompleteCheckpoint(at: directory, modelType: modelType, path: modelPath)
     }
 
+    private func gaugeRoPEPlan(_ directory: URL, modelPath: String) throws(BasaltError) -> (layout: GaugeRoPELayout?, codecs: [Int: GaugeRoPECodec]) {
+        guard let layout = try ModelCapabilities.gaugeRoPELayout(
+            configuration.kvPrecision, config: ModelCache.config(at: directory), ropeYarn: configuration.ropeYarn, path: modelPath) else { return (nil, [:]) }
+        let stored = try GaugeRoPECodecStore.load(
+            from: directory, layout: layout, fingerprint: GaugeRoPECodecStore.fingerprint(modelDirectory: directory))
+        logger.info(stored.map { "GaugeRoPE: the codec stored in \(GaugeRoPECodecStore.fileName) covers \($0.count) full-attention layers, so requests compress from the first token" }
+            ?? "GaugeRoPE: no \(GaugeRoPECodecStore.fileName) beside the weights, so each request calibrates its codec on its first \(layout.calibrationTokens) tokens; basalt models convert --to gaugerope stores one")
+        return (layout, stored ?? [:])
+    }
+
     static func imageToken(in config: [String: Any]?) -> Int? {
         (config?["image_token_id"] ?? config?["image_token_index"]) as? Int
     }
@@ -173,7 +183,7 @@ extension MLXInferenceEngine {
         }
         let modelType = ModelCache.config(at: directory)?["model_type"] as? String
         try refuseUnloadable(directory, modelType: modelType, modelPath: modelPath)
-        let gaugeRoPE = try ModelCapabilities.gaugeRoPELayout(configuration.kvPrecision, config: ModelCache.config(at: directory), ropeYarn: configuration.ropeYarn, path: modelPath)
+        let gaugeRoPE = try gaugeRoPEPlan(directory, modelPath: modelPath)
 
         if container != nil { await unloadCurrentModel() }
         do { try faults.check(.unload) } catch { throw await Self.loadFailure(error, modelPath: modelPath) }
@@ -205,7 +215,7 @@ extension MLXInferenceEngine {
                 description: modelPath, hasMTPDrafter: drafts, expertReserve: await Self.expertReserve(loaded), capabilities: capabilities ?? .conservative,
                 imageToken: Self.imageToken(in: ModelCache.config(at: directory)),
                 transcribesAudio: transcribes, prefillScratch: prefillScratch(at: directory),
-                ropeStatus: rope.status, gaugeRoPE: gaugeRoPE)
+                ropeStatus: rope.status, gaugeRoPE: gaugeRoPE.layout, gaugeRoPECodecs: gaugeRoPE.codecs)
             guard attach(loaded, facts: facts, epoch: epoch, warming: true) else { return }
             if capabilities == nil { logger.warn(ModelCapabilities.unverifiedWarning(modelType: modelType)) }
             await warmUp(loaded, directory: directory, epoch: epoch)

@@ -91,6 +91,7 @@ struct LaunchOptions {
     var pacer: PrefillPacer?
     var kEqVRow: KEqVRowLayout?
     var gaugeRoPE: GaugeRoPELayout?
+    var gaugeRoPECodecs: [Int: GaugeRoPECodec] = [:]
     var prefillScratch: PrefillAttentionScratch?
     var diffusion: BlockDiffusionConfig?
 }
@@ -135,6 +136,7 @@ struct GenerationLauncher {
     let tools: [ToolSpec]?
     let context: ModelContext
     let started: ContinuousClock.Instant
+    var gaugeRoPECodecs: [Int: GaugeRoPECodec] = [:]
 
     func handing(_ iterator: some TokenIteratorProtocol, promptTokens: Int) -> (AsyncStream<Generation>, Task<Void, Never>, TimeInterval, OnyxReasoningBox?) {
         MLXInferenceEngine.handOffWithOnyx(
@@ -169,7 +171,7 @@ struct GenerationLauncher {
         case .gaugeRoPE(let layout):
             var exact = params
             (exact.kvBits, exact.kvScheme) = (nil, nil)
-            let cache = GaugeRoPEKVCache.replacingFullAttention(try model.newCache(parameters: exact), layout: layout)
+            let cache = GaugeRoPEKVCache.replacingFullAttention(try model.newCache(parameters: exact), layout: layout, codecs: gaugeRoPECodecs)
             return uncached(try TokenIterator(input: input, model: model, cache: cache, parameters: exact, components: components))
         case .zoned(let zones, let precision):
             var exact = params

@@ -30,9 +30,9 @@ struct GaugeRoPECodes {
     let joint: MLXArray
 }
 
-struct GaugeRoPECodec {
+struct GaugeRoPECodec: Sendable {
     let carrier: GaugeRoPECarrier
-    let projection: MLXArray
+    let projection: MaterializedArray
     let ropeBase: Float
     let keyDim: Int
     let valueDim: Int
@@ -47,8 +47,7 @@ struct GaugeRoPECodec {
         let budgeted = defaultCodeRank(
             heads: keys.dim(1), keyDim: keys.dim(2), valueDim: values.dim(2), carrierElements: carrier.carrierHeads * layout.rotaryDims)
         let rank = min(max(1, layout.codeRank ?? budgeted), pca.maxRank)
-        let projection = contiguous(pca.encoder[0..., 0 ..< rank])
-        eval(projection)
+        let projection = contiguous(pca.encoder[0..., 0 ..< rank]).materialized()
         return GaugeRoPECodec(
             carrier: carrier, projection: projection, ropeBase: layout.ropeBase, keyDim: keys.dim(2), valueDim: values.dim(2))
     }

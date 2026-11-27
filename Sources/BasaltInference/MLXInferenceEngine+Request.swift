@@ -229,7 +229,7 @@ extension MLXInferenceEngine {
             speculative: plan.speculativeLookup, recycling: configuration.speculativeRecycling, jumpForward: jumpForward, routesExperts: expertRouting)
         (options.kvZones, options.kvHeadMask, options.questTopK, options.kvPrecision) = (plan.kvZones, plan.kvHeadMask, plan.questTopK, plan.kvPrecision)
         (options.attentionBackend, options.mobaTopK, options.nsaWindow) = (plan.attentionBackend, plan.mobaTopK, plan.nsaWindow)
-        (options.kEqVRow, options.gaugeRoPE) = (plan.kEqVRow, modelFacts.gaugeRoPE)
+        (options.kEqVRow, options.gaugeRoPE, options.gaugeRoPECodecs) = (plan.kEqVRow, modelFacts.gaugeRoPE, modelFacts.gaugeRoPECodecs)
         (options.mtp, options.mtpBlockSize, options.mtpPrefix) = (plan.drafts, configuration.mtpBlockSize, mtpPrefix)
         (options.pacer, options.prefillScratch) = (prefillPacer, modelFacts.prefillScratch)
         options.diffusion = configuration.dllm ? BlockDiffusionConfig.live() : nil

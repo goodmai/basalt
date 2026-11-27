@@ -1,8 +1,8 @@
 import Foundation
 import MLX
 
-struct GaugeRoPECarrier {
-    let basis: MLXArray
+struct GaugeRoPECarrier: Sendable {
+    let basis: MaterializedArray
     let rotaryDims: Int
     let numKVHeads: Int
     let carrierHeads: Int
@@ -15,8 +15,7 @@ struct GaugeRoPECarrier {
         let (_, eigVecs) = MLXLinalg.eigh(sym, stream: .cpu)
         let rank = min(max(1, carrierHeads), numHeads)
         let basis = eigVecs[0..., 0..., (numHeads - rank) ..< numHeads]
-        eval(basis)
-        return GaugeRoPECarrier(basis: basis, rotaryDims: rotaryDims, numKVHeads: numHeads, carrierHeads: rank)
+        return GaugeRoPECarrier(basis: basis.materialized(), rotaryDims: rotaryDims, numKVHeads: numHeads, carrierHeads: rank)
     }
 
     static func pairs(_ x: MLXArray, rotaryDims: Int) -> MLXArray {

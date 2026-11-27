@@ -9,12 +9,17 @@ final class GaugeRoPEKVCache: KVCache {
     private var exactValues: MLXArray?
     private var codes: GaugeRoPECodes?
 
-    init(layout: GaugeRoPELayout) {
+    init(layout: GaugeRoPELayout, codec: GaugeRoPECodec? = nil) {
         self.layout = layout
+        self.codec = codec
     }
 
-    static func replacingFullAttention(_ caches: [any KVCache], layout: GaugeRoPELayout) -> [any KVCache] {
-        caches.map { type(of: $0) == KVCacheSimple.self ? GaugeRoPEKVCache(layout: layout) : $0 }
+    static func replacingFullAttention(
+        _ caches: [any KVCache], layout: GaugeRoPELayout, codecs: [Int: GaugeRoPECodec] = [:]
+    ) -> [any KVCache] {
+        caches.enumerated().map { index, cache in
+            type(of: cache) == KVCacheSimple.self ? GaugeRoPEKVCache(layout: layout, codec: codecs[index]) : cache
+        }
     }
 
     var encodedTokens: Int { codes?.joint.dim(0) ?? 0 }
@@ -48,8 +53,7 @@ final class GaugeRoPEKVCache: KVCache {
     }
 
     func copy() -> any KVCache {
-        let copied = GaugeRoPEKVCache(layout: layout)
-        copied.codec = codec
+        let copied = GaugeRoPEKVCache(layout: layout, codec: codec)
         copied.exactKeys = exactKeys
         copied.exactValues = exactValues
         copied.codes = codes

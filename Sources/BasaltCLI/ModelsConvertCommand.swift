@@ -30,7 +30,7 @@ struct ConvertSubcommand: AsyncParsableCommand {
     @Option(name: .long, help: "New output directory; required unless --register-cache <org/repo> is supplied")
     var out: String = ""
 
-    @Option(name: .long, help: "Unified any-to-any quantization target (#546, #547, #569): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nvfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, macaq:moe:<bpw>, flatquant:<b:g>, lirquant:<b:g:k>, qtip:<bpw>, qtip-budget:<bpw> or gsq-rco:<bpw>")
+    @Option(name: .long, help: "Unified any-to-any quantization target (#546, #547, #569): dense:bf16, dense:f16, affine:<b:g>, mixed:<lo:hi:g>, mxfp4, nvfp4, nf4:<g>, macaq:affine:<b:g>, macaq:mxfp4, macaq:moe:<bpw>, flatquant:<b:g>, lirquant:<b:g:k>, qtip:<bpw>, qtip-budget:<bpw>, gsq-rco:<bpw>, or gaugerope (experimental, #647: weights unchanged plus a calibrated gaugerope.safetensors codec for --kv-bits gaugerope)")
     var to: String?
 
     @Option(name: .customLong("register-cache"), help: "Register converted model in local Hugging Face cache as <org/repo> (#546)")

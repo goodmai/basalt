@@ -14,6 +14,7 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
     case qtipBudget
     case gsqRCO
     case dense
+    case gaugeRoPE
 
     public var id: String { rawValue }
 
@@ -31,6 +32,7 @@ public enum ConversionTargetFamily: String, Sendable, CaseIterable, Identifiable
         case .qtipBudget: "QTIP Mixed Budget"
         case .gsqRCO: "GSQ-RCO Mixed"
         case .dense: "Dense (BF16 / FP16)"
+        case .gaugeRoPE: "GaugeRoPE KV Codec (Weights Unchanged)"
         }
     }
 }
@@ -109,6 +111,8 @@ public struct ConversionDraft: Sendable, Equatable {
             .gsqRCO(bpw: budgetBPW)
         case .dense:
             denseFP16 ? .denseFP16 : .denseBF16
+        case .gaugeRoPE:
+            .gaugeRoPE
         }
     }
 
@@ -117,7 +121,7 @@ public struct ConversionDraft: Sendable, Equatable {
         case .macaq: [2, 3, 4]
         case .flatQuant, .lirQuant: [2, 3, 4, 8]
         case .affine: [2, 3, 4, 5, 6, 8]
-        case .macaqMoE, .mxfp4, .nvfp4, .nf4, .qtip, .qtipBudget, .gsqRCO, .dense: [bits]
+        case .macaqMoE, .mxfp4, .nvfp4, .nf4, .qtip, .qtipBudget, .gsqRCO, .dense, .gaugeRoPE: [bits]
         }
     }
 

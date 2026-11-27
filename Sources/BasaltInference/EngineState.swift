@@ -37,6 +37,7 @@ struct ModelFacts: Sendable {
     var switchingAdapter = false
     var ropeStatus = ModelRoPEStatus.empty
     var gaugeRoPE: GaugeRoPELayout?
+    var gaugeRoPECodecs: [Int: GaugeRoPECodec] = [:]
 }
 
 struct LoadedModel: Sendable {
