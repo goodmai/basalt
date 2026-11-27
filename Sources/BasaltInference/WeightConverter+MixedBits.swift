@@ -87,7 +87,7 @@ extension WeightConverter {
             for key in arrays.keys.sorted() where !layout.isCompanion(key) {
                 guard let tensor = arrays.removeValue(forKey: key) else { continue }
                 let packed = try layout.packed(key, taking: &arrays)
-                guard Self.quantizable(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, groupSize: mixed.groupSize) else {
+                guard Self.fittingGroup(key, tensor, packed: packed, sourceQuantized: layout.quantization != nil, requested: mixed.groupSize) != nil else {
                     fixedBytes += tensor.nbytes + (packed?.scales.nbytes ?? 0) + (packed?.biases?.nbytes ?? 0)
                     continue
                 }
