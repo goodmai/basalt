@@ -100,11 +100,12 @@ package enum BlockSparseRoutingMetal {
     }
 
     package static func deterministicTopIndices(_ scores: MLXArray, k: Int) -> MLXArray {
-        runOnCPUIfFloat64([scores]) {
+        guard scores.ndim > 0 else { return MLXArray.zeros([0], type: Int32.self) }
+        return runOnCPUIfFloat64([scores]) {
             let n = scores.dim(-1)
             let kSel = min(max(0, k), n)
             guard kSel > 0, scores.size > 0 else {
-                return MLXArray.zeros(Array(scores.shape.dropLast()) + [0], type: Int32.self)
+                return MLXArray.zeros(Array(scores.shape.dropLast()) + [kSel], type: Int32.self)
             }
             let f32 = stopGradient(scores).asType(.float32)
             let clean = MLX.where(isNaN(f32), MLXArray(-Float.infinity), f32 + Float(0.0))
@@ -241,12 +242,14 @@ extension BlockSparseRoutingMetal {
                 Int32(options.blockSize), Int32(topK), Int32(geo.gqaGroup), Int32(selGroup),
                 Int32(options.causal ? 1 : 0), Int32(effectiveOffset),
             ])
+            let numBlocks = (geo.lK + options.blockSize - 1) / max(1, options.blockSize)
+            let safeBlocks = sanitizeInt32Indices(selectedBlocks, upperBound: numBlocks).reshaped(selHeads, geo.lQ, topK)
             let out = mobaSparseKernel(
                 [
                     q.reshaped(geo.totalQHeads, geo.lQ, geo.d),
                     k.reshaped(geo.totalKVHeads, geo.lK, geo.d),
                     v.reshaped(geo.totalKVHeads, geo.lK, geo.d),
-                    selectedBlocks.asType(.int32).reshaped(selHeads, geo.lQ, topK),
+                    safeBlocks,
                     params,
                     shapes,
                 ],
@@ -393,7 +396,7 @@ extension BlockSparseRoutingMetal {
         if config.causal {
             let qPos = MLXArray(Int32(qOffset) ..< Int32(qOffset + lQ)).reshaped(1, 1, lQ, 1)
             let kPos = MLXArray(Int32(winStart) ..< Int32(winEnd)).reshaped(1, 1, 1, winLen)
-            let valid = (kPos .<= qPos) .&& (kPos .> (qPos - Int32(config.slidingWindow)))
+            let valid = (kPos .<= qPos) .&& (kPos .> (qPos - Int32(clamping: config.slidingWindow)))
             weights = maskedSoftmax(scores, valid: valid)
         } else {
             weights = maskedSoftmax(scores, valid: scores .!= MLXArray(-Float.infinity))
@@ -433,6 +436,14 @@ extension BlockSparseRoutingMetal {
 }
 
 extension BlockSparseRoutingMetal {
+    package static func sanitizeInt32Indices(_ raw: MLXArray, upperBound: Int) -> MLXArray {
+        guard raw.dtype.isInteger, upperBound > 0 else {
+            return MLXArray.full(raw.shape, values: MLXArray(Int32(-1)))
+        }
+        let ok = (raw .>= 0) .&& (raw .< upperBound)
+        return MLX.where(ok, raw.asType(.int32), MLXArray(Int32(-1)))
+    }
+
     private static func sparseSelectedAttentionMLX(
         q: MLXArray,
         k: MLXArray,
@@ -455,8 +466,9 @@ extension BlockSparseRoutingMetal {
             v.asType(.float32).reshaped(geo.totalKVHeads, 1, geo.lK, geo.d),
             to: [geo.totalKVHeads, geo.gqaGroup, geo.lK, geo.d]
         ).reshaped(geo.totalQHeads, geo.lK, geo.d)
+        let numBlocks = (geo.lK + options.blockSize - 1) / max(1, options.blockSize)
         let selExp = MLX.broadcast(
-            selectedBlocks.asType(.int32).reshaped(selHeads, 1, geo.lQ, topK),
+            sanitizeInt32Indices(selectedBlocks, upperBound: numBlocks).reshaped(selHeads, 1, geo.lQ, topK),
             to: [selHeads, selGroup, geo.lQ, topK]
         ).reshaped(geo.totalQHeads, geo.lQ, 1, topK)
         let kPos = MLXArray(Int32(0) ..< Int32(geo.lK))

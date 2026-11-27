@@ -59,14 +59,18 @@ package enum LIRQuantKernels {
         let ones = [Float](repeating: 1.0, count: 32)
         for m in 0 ..< rows {
             let base = m * k
-            var buf = (0 ..< k).map { x[base + Int(perm[$0])] }
+            var buf = (0 ..< k).map { col -> Float in
+                let src = Int(perm[col])
+                return (src >= 0 && src < k) ? x[base + src] : 0
+            }
             let pCount = schedule.pairsPerLayer
             for l in 0 ..< schedule.numLayers {
                 for p in 0 ..< pCount {
                     let off = (l * pCount + p) * 2
+                    guard off + 1 < schedule.flatPairs.count, off + 1 < schedule.flatAngles.count else { continue }
                     let i = Int(schedule.flatPairs[off])
                     let j = Int(schedule.flatPairs[off + 1])
-                    if i >= 0, j >= 0, i != j {
+                    if i >= 0, j >= 0, i < k, j < k, i != j {
                         let c = schedule.flatAngles[off]
                         let s = schedule.flatAngles[off + 1]
                         let xi = buf[i]
@@ -83,24 +87,54 @@ package enum LIRQuantKernels {
         return out
     }
 
+    private static func validatedDims(
+        _ x: MLXArray,
+        basis: LIRBasisParameters
+    ) -> (rows: Int, k: Int, layers: Int, pairsPerLayer: Int)? {
+        let k = basis.perm.size
+        guard x.ndim >= 1, k > 0, x.dim(-1) == k, k.isMultiple(of: 32),
+              basis.diagScale.size == k,
+              basis.numLayers >= 0, basis.pairsPerLayer >= 0
+        else { return nil }
+        let rows = x.size / k
+        guard rows > 0 else { return nil }
+        let (pairCount, ov1) = basis.numLayers.multipliedReportingOverflow(by: basis.pairsPerLayer)
+        let (required, ov2) = pairCount.multipliedReportingOverflow(by: 2)
+        guard !ov1, !ov2 else { return nil }
+        if required > 0 {
+            guard basis.givensPairs.size >= required, basis.givensAngles.size >= required else { return nil }
+            return (rows, k, basis.numLayers, basis.pairsPerLayer)
+        }
+        return (rows, k, 0, 0)
+    }
+
     package static func transform(_ x: MLXArray, basis: LIRBasisParameters) -> MLXArray {
         let origType = x.dtype
-        let k = basis.perm.size
-        guard x.ndim >= 1, x.dim(-1) == k, k.isMultiple(of: 32) else { return x }
-        let rows = x.size / max(1, k)
-        guard rows > 0 else { return x }
-        if k <= maxThreadgroupK, supportedDTypes.contains(origType) {
+        guard let dims = validatedDims(x, basis: basis) else { return x }
+        let required = dims.layers * dims.pairsPerLayer * 2
+        if Device.defaultDevice() == .gpu,
+           dims.k <= maxThreadgroupK,
+           dims.rows <= Int(Int32.max),
+           dims.layers <= Int(Int32.max),
+           dims.pairsPerLayer <= Int(Int32.max),
+           required <= Int(Int32.max),
+           supportedDTypes.contains(origType) {
             let scaleClean = supportedDTypes.contains(basis.diagScale.dtype)
-                ? basis.diagScale : basis.diagScale.asType(.float32)
-            let pSafe = basis.givensPairs.size > 0 ? basis.givensPairs.asType(.int32) : MLXArray([Int32(0), Int32(0)])
-            let aSafe = basis.givensAngles.size > 0 ? basis.givensAngles.asType(.float32) : MLXArray([Float(1), Float(0)])
-            let shapes = MLXArray([Int32(rows), Int32(k), Int32(basis.numLayers), Int32(basis.pairsPerLayer)])
+                ? basis.diagScale : basis.diagScale.asType(.float32, stream: basis.diagScale.dtype == .float64 ? .cpu : .default)
+            let pSafe = required > 0
+                ? basis.givensPairs.asType(.int32, stream: basis.givensPairs.dtype == .float64 ? .cpu : .default).reshaped(-1)
+                : MLXArray([Int32(0), Int32(0)])
+            let aSafe = required > 0
+                ? basis.givensAngles.asType(.float32, stream: basis.givensAngles.dtype == .float64 ? .cpu : .default).reshaped(-1)
+                : MLXArray([Float(1), Float(0)])
+            let permSafe = basis.perm.asType(.int32, stream: basis.perm.dtype == .float64 ? .cpu : .default).reshaped(dims.k)
+            let shapes = MLXArray([Int32(dims.rows), Int32(dims.k), Int32(dims.layers), Int32(dims.pairsPerLayer)])
             let out = lirGivensKernel(
-                [x.reshaped(rows, k), basis.perm.asType(.int32).reshaped(k), pSafe, aSafe, scaleClean.reshaped(k), shapes],
+                [x.reshaped(dims.rows, dims.k), permSafe, pSafe, aSafe, scaleClean.reshaped(dims.k), shapes],
                 template: [("T", origType), ("TD", scaleClean.dtype)],
-                grid: (128, rows, 1),
+                grid: (128, dims.rows, 1),
                 threadGroup: (128, 1, 1),
-                outputShapes: [[rows, k]],
+                outputShapes: [[dims.rows, dims.k]],
                 outputDTypes: [origType]
             )[0]
             return out.reshaped(x.shape)
@@ -110,45 +144,62 @@ package enum LIRQuantKernels {
 
     package static func differentiableTransform(_ x: MLXArray, basis: LIRBasisParameters) -> MLXArray {
         let origType = x.dtype
-        let k = basis.perm.size
-        guard x.ndim >= 1, x.dim(-1) == k, k.isMultiple(of: 32) else { return x }
-        let rows = x.size / max(1, k)
-        guard rows > 0 else { return x }
-        var cur = x.asType(.float32).reshaped(rows, k).take(basis.perm.asType(.int32), axis: -1)
-        if let givens = givensMatrix(basis) {
-            let rotatedSub = matmul(cur[0..., 0 ..< givens.width], givens.matrix)
-            cur = givens.width < k ? concatenated([rotatedSub, cur[0..., givens.width...]], axis: -1) : rotatedSub
+        guard let dims = validatedDims(x, basis: basis) else { return x }
+        if Device.defaultDevice() == .gpu,
+           [x.dtype, basis.perm.dtype, basis.givensPairs.dtype, basis.givensAngles.dtype, basis.diagScale.dtype].contains(.float64) {
+            return Device.withDefaultDevice(.cpu) { differentiableTransform(x, basis: basis) }
         }
-        cur = cur * basis.diagScale.asType(.float32).reshaped(1, k)
+        let permRaw = stopGradient(basis.perm.asType(.int32).reshaped(dims.k))
+        let permValid = stopGradient((permRaw .>= Int32(0)) .&& (permRaw .< Int32(dims.k)))
+        let permSafe = stopGradient(MLX.where(permValid, permRaw, MLXArray(Int32(0))))
+        var cur = MLX.where(
+            permValid.reshaped(1, dims.k),
+            x.asType(.float32).reshaped(dims.rows, dims.k).take(permSafe, axis: -1),
+            MLXArray(Float(0))
+        )
+        if dims.layers > 0, dims.pairsPerLayer > 0 {
+            cur = applyDifferentiableGivens(cur, dims: dims, basis: basis)
+        }
+        cur = cur * basis.diagScale.asType(.float32).reshaped(1, dims.k)
         return hadamardTransform(cur.reshaped(-1, 32), scale: 1.0 / Float(32.0).squareRoot())
             .reshaped(x.shape)
             .asType(origType)
     }
 
-    private static func givensMatrix(_ basis: LIRBasisParameters) -> (matrix: MLXArray, width: Int)? {
-        guard basis.numLayers > 0, basis.pairsPerLayer > 0 else { return nil }
-        let pFlat = basis.givensPairs.asType(.int32).asArray(Int32.self)
-        let aFlat = basis.givensAngles.asType(.float32).asArray(Float.self)
-        let maxIdx = pFlat.max().map(Int.init) ?? -1
-        guard maxIdx >= 1 else { return nil }
-        let width = min(basis.perm.size, maxIdx + 1)
-        var mat = [Float](repeating: 0, count: width * width)
-        for r in 0 ..< width { mat[r * width + r] = 1.0 }
-        for l in 0 ..< basis.numLayers {
-            for p in 0 ..< basis.pairsPerLayer {
-                let off = (l * basis.pairsPerLayer + p) * 2
-                guard off + 1 < pFlat.count, off + 1 < aFlat.count else { continue }
-                let (i, j) = (Int(pFlat[off]), Int(pFlat[off + 1]))
-                guard i >= 0, j >= 0, i < width, j < width, i != j else { continue }
-                let (c, s) = (aFlat[off], aFlat[off + 1])
-                for r in 0 ..< width {
-                    let (mi, mj) = (mat[r * width + i], mat[r * width + j])
-                    mat[r * width + i] = c * mi + s * mj
-                    mat[r * width + j] = -s * mi + c * mj
-                }
-            }
+    private static func applyDifferentiableGivens(
+        _ cur: MLXArray,
+        dims: (rows: Int, k: Int, layers: Int, pairsPerLayer: Int),
+        basis: LIRBasisParameters
+    ) -> MLXArray {
+        let required = dims.layers * dims.pairsPerLayer * 2
+        let pairs = stopGradient(
+            basis.givensPairs.asType(.int32).reshaped(-1)[0 ..< required]
+                .reshaped(dims.layers, dims.pairsPerLayer, 2)
+        )
+        let angles = basis.givensAngles.asType(.float32).reshaped(-1)[0 ..< required]
+            .reshaped(dims.layers, dims.pairsPerLayer, 2)
+        let sink = MLXArray(Int32(dims.k))
+        var padded = concatenated([cur, MLXArray.zeros([dims.rows, 1], dtype: .float32)], axis: -1)
+        for l in 0 ..< dims.layers {
+            let idxI = pairs[l, 0..., 0]
+            let idxJ = pairs[l, 0..., 1]
+            let valid = (idxI .>= Int32(0)) .&& (idxJ .>= Int32(0))
+                .&& (idxI .< Int32(dims.k)) .&& (idxJ .< Int32(dims.k))
+                .&& (idxI .!= idxJ)
+            let safeI = stopGradient(MLX.where(valid, idxI, sink))
+            let safeJ = stopGradient(MLX.where(valid, idxJ, sink))
+            let xi = padded.take(safeI, axis: -1)
+            let xj = padded.take(safeJ, axis: -1)
+            let c = angles[l, 0..., 0].reshaped(1, dims.pairsPerLayer)
+            let s = angles[l, 0..., 1].reshaped(1, dims.pairsPerLayer)
+            let mask = stopGradient(valid.asType(.float32).reshaped(1, dims.pairsPerLayer))
+            let yi = (c * xi + s * xj) * mask
+            let yj = (-s * xi + c * xj) * mask
+            let scatterIdx = stopGradient(concatenated([safeI, safeJ], axis: 0).reshaped(1, 2 * dims.pairsPerLayer))
+            let scatterVals = concatenated([yi, yj], axis: -1)
+            padded = putAlong(padded, scatterIdx, values: scatterVals, axis: -1)
         }
-        return (MLXArray(mat, [width, width]), width)
+        return padded[0..., 0 ..< dims.k]
     }
 }
 
@@ -194,125 +245,11 @@ package struct LIRQuantLayerSpec: Codable, Sendable, Equatable {
     }
 
     package var resolvedScaleDType: DType {
-        if quantizationMode == .mxfp4 { return .uint8 }
+        if quantizationMode != .affine { return .uint8 }
         if let scaleDType, let match = DType.allCases.first(where: { "\($0)" == scaleDType }) {
             return match
         }
         return .bfloat16
-    }
-}
-
-package final class LIRQuantLinear: QuantizedLinear {
-    package let numLayers: Int
-    package let pairsPerLayer: Int
-    @ParameterInfo(key: "perm") package var perm: MLXArray
-    @ParameterInfo(key: "givens_pairs") package var givensPairs: MLXArray
-    @ParameterInfo(key: "givens_angles") package var givensAngles: MLXArray
-    @ParameterInfo(key: "diag_scale") package var diagScale: MLXArray
-
-    package init(
-        packed: MACaQPackedWeights,
-        bias: MLXArray?,
-        basis: LIRBasisParameters,
-        groupSize: Int,
-        bits: Int,
-        mode: QuantizationMode
-    ) {
-        self.numLayers = basis.numLayers
-        self.pairsPerLayer = basis.pairsPerLayer
-        self._perm.wrappedValue = basis.perm
-        self._givensPairs.wrappedValue = basis.givensPairs
-        self._givensAngles.wrappedValue = basis.givensAngles
-        self._diagScale.wrappedValue = basis.diagScale
-        if mode == .affine {
-            super.init(
-                weight: packed.weight, bias: bias, scales: packed.scales,
-                biases: packed.biases, groupSize: groupSize, bits: bits)
-        } else if bias == nil {
-            super.init(
-                weight: packed.weight, scales: packed.scales, biases: nil,
-                groupSize: groupSize, bits: bits, mode: mode)
-        } else {
-            let stub = MLXArray.zeros([1, groupSize], dtype: .float16)
-            super.init(weight: stub, bias: bias, groupSize: groupSize, bits: bits, mode: mode)
-            update(parameters: ModuleParameters.unflattened([("weight", packed.weight), ("scales", packed.scales)]))
-        }
-        freeze()
-    }
-
-    package static func placeholder(replacing linear: Linear, spec: LIRQuantLayerSpec) -> LIRQuantLinear {
-        let (outputs, inputs) = linear.shape
-        let groups = inputs / spec.groupSize
-        let qMode = spec.quantizationMode
-        let sType = spec.resolvedScaleDType
-        let factorType: DType = sType.isFloatingPoint ? sType : .bfloat16
-        let weight = MLXArray.zeros([outputs, (inputs * spec.bits) / 32], dtype: .uint32)
-        let scales = MLXArray.zeros([outputs, groups], dtype: sType)
-        let biases = qMode == .affine ? MLXArray.zeros([outputs, groups], dtype: sType) : nil
-        let hasBias = spec.hasBias ?? (linear.bias != nil)
-        let bias = hasBias ? (linear.bias ?? MLXArray.zeros([outputs], dtype: factorType)) : nil
-        let pairLen = max(2, spec.numLayers * spec.pairsPerLayer * 2)
-        let basis = LIRBasisParameters(
-            perm: MLXArray(Array(0 ..< Int32(inputs))),
-            givensPairs: MLXArray.zeros([pairLen], dtype: .int32),
-            givensAngles: MLXArray.zeros([pairLen], dtype: .float32),
-            diagScale: MLXArray.ones([inputs], dtype: factorType),
-            numLayers: spec.numLayers,
-            pairsPerLayer: spec.pairsPerLayer)
-        let packed = MACaQPackedWeights(weight: weight, scales: scales, biases: biases)
-        return LIRQuantLinear(
-            packed: packed, bias: bias, basis: basis,
-            groupSize: spec.groupSize, bits: spec.bits, mode: qMode)
-    }
-
-    public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let basis = LIRBasisParameters(
-            perm: perm, givensPairs: givensPairs, givensAngles: givensAngles,
-            diagScale: diagScale, numLayers: numLayers, pairsPerLayer: pairsPerLayer)
-        let transformed = training
-            ? LIRQuantKernels.differentiableTransform(x, basis: basis)
-            : LIRQuantKernels.transform(x, basis: basis)
-        return super.callAsFunction(transformed)
-    }
-
-    package func unrotatedDenseWeight() -> MLXArray {
-        let wRot = dequantized(
-            weight, scales: scales, biases: biases, groupSize: groupSize, bits: bits, mode: mode
-        ).asType(.float32)
-        let rows = wRot.dim(0)
-        let k = wRot.dim(1)
-        let unWht = MACaQMath.rotateBlocks(wRot, blockSize: 32) * diagScale.asType(.float32).reshaped(1, k)
-        eval(unWht, perm, givensPairs, givensAngles)
-        var arr = unWht.asArray(Float.self)
-        let pFlat = givensPairs.asType(.int32).asArray(Int32.self)
-        let aFlat = givensAngles.asType(.float32).asArray(Float.self)
-        for m in 0 ..< rows {
-            let base = m * k
-            for l in stride(from: numLayers - 1, through: 0, by: -1) where pairsPerLayer > 0 {
-                for p in 0 ..< pairsPerLayer {
-                    let off = (l * pairsPerLayer + p) * 2
-                    let i = Int(pFlat[off])
-                    let j = Int(pFlat[off + 1])
-                    if i >= 0, j >= 0, i != j {
-                        let c = aFlat[off]
-                        let s = aFlat[off + 1]
-                        let yi = arr[base + i]
-                        let yj = arr[base + j]
-                        arr[base + i] = c * yi - s * yj
-                        arr[base + j] = s * yi + c * yj
-                    }
-                }
-            }
-        }
-        let permHost = perm.asType(.int32).asArray(Int32.self)
-        var restored = [Float](repeating: 0, count: rows * k)
-        for m in 0 ..< rows {
-            let base = m * k
-            for q in 0 ..< k {
-                restored[base + Int(permHost[q])] = arr[base + q]
-            }
-        }
-        return MLXArray(restored, [rows, k])
     }
 }
 
@@ -322,7 +259,7 @@ package enum LIRQuantCalibrator {
         subspaceWidth kSub: Int,
         layers: Int = 2
     ) -> LIRGivensSchedule {
-        guard kSub >= 2, layers > 0 else {
+        guard kSub >= 2, layers > 0, subspaceCov.count >= kSub * kSub else {
             return LIRGivensSchedule(numLayers: 0, pairsPerLayer: 0, flatPairs: [], flatAngles: [])
         }
         let pairsPerLayer = kSub / 2
@@ -368,8 +305,8 @@ package enum LIRQuantCalibrator {
         for r in 0 ..< dim where r != i && r != j {
             let cri = cov[r * dim + i]
             let crj = cov[r * dim + j]
-            let ni = c * cri - s * crj
-            let nj = s * cri + c * crj
+            let ni = c * cri + s * crj
+            let nj = -s * cri + c * crj
             cov[r * dim + i] = ni
             cov[i * dim + r] = ni
             cov[r * dim + j] = nj
@@ -378,9 +315,9 @@ package enum LIRQuantCalibrator {
         let cii = cov[i * dim + i]
         let cjj = cov[j * dim + j]
         let cij = cov[i * dim + j]
-        cov[i * dim + i] = c * c * cii - 2.0 * c * s * cij + s * s * cjj
-        cov[j * dim + j] = s * s * cii + 2.0 * c * s * cij + c * c * cjj
-        cov[i * dim + j] = (c * c - s * s) * cij + c * s * (cii - cjj)
+        cov[i * dim + i] = c * c * cii + 2.0 * c * s * cij + s * s * cjj
+        cov[j * dim + j] = s * s * cii - 2.0 * c * s * cij + c * c * cjj
+        cov[i * dim + j] = (c * c - s * s) * cij - c * s * (cii - cjj)
         cov[j * dim + i] = cov[i * dim + j]
     }
 
@@ -411,9 +348,14 @@ package enum LIRQuantCalibrator {
         activations: MLXArray? = nil,
         options: QuantizeOptions = .init()
     ) -> LIRQuantLinear {
-        let wf = linear.weight.asType(.float32)
+        let qType: DType = linear.weight.dtype == .float64 ? .float32 : linear.weight.dtype
+        let wf = linear.weight.asType(.float32, stream: linear.weight.dtype == .float64 ? .cpu : .default)
         let k = wf.dim(1)
-        let actFlat = activations?.asType(.float32).reshaped(-1, k)
+        let actFlat = activations.flatMap {
+            k > 0 && $0.size > 0 && $0.size.isMultiple(of: k)
+                ? $0.asType(.float32, stream: $0.dtype == .float64 ? .cpu : .default).reshaped(-1, k)
+                : nil
+        }
         let sens: MLXArray = if let actFlat {
             mean(square(actFlat), axis: 0) * mean(square(wf), axis: 0)
         } else {
@@ -441,13 +383,13 @@ package enum LIRQuantCalibrator {
             perm: permArr, givensPairs: pairsTensor, givensAngles: anglesTensor,
             diagScale: (Float(1.0) / diagScale).asType(.float32),
             numLayers: schedule.numLayers, pairsPerLayer: schedule.pairsPerLayer)
-        let wConj = LIRQuantKernels.transform(wf, basis: invBasis).asType(linear.weight.dtype)
+        let wConj = LIRQuantKernels.transform(wf, basis: invBasis).asType(qType)
         let (wq, scales, biases) = MLX.quantized(
             wConj, groupSize: options.groupSize, bits: options.bits, mode: options.mode)
         let packed = MACaQPackedWeights(weight: wq, scales: scales, biases: biases)
         let basis = LIRBasisParameters(
             perm: permArr, givensPairs: pairsTensor, givensAngles: anglesTensor,
-            diagScale: diagScale.asType(linear.weight.dtype),
+            diagScale: diagScale.asType(qType),
             numLayers: schedule.numLayers, pairsPerLayer: schedule.pairsPerLayer)
         return LIRQuantLinear(
             packed: packed, bias: linear.bias, basis: basis,
@@ -464,12 +406,12 @@ private let lirGivensSource = """
     const int tid = int(thread_position_in_threadgroup.x);
     const int sg = int(simdgroup_index_in_threadgroup);
     const int lane = int(thread_index_in_simdgroup);
-    if (row >= M) { return; }
+    if (row >= M || K <= 0 || K > 4096) { return; }
     threadgroup float tg_row[4096];
-    const device T* x_row = x + size_t(row) * size_t(K);
-    device T* out_row = out + size_t(row) * size_t(K);
+    const size_t row_off = size_t(row) * size_t(K);
     for (int col = tid; col < K; col += 128) {
-        tg_row[col] = float(x_row[perm[col]]);
+        const int src = int(perm[col]);
+        tg_row[col] = (src >= 0 && src < K) ? float(x[row_off + size_t(src)]) : 0.0f;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (int l = 0; l < L; ++l) {
@@ -477,7 +419,7 @@ private let lirGivensSource = """
             const int off = (l * P + p) * 2;
             const int i = int(pairs[off]);
             const int j = int(pairs[off + 1]);
-            if (i >= 0 && j >= 0 && i != j) {
+            if (i >= 0 && j >= 0 && i < K && j < K && i != j) {
                 float yi = 0.0f;
                 float yj = 0.0f;
                 basalt_givens_pair(tg_row[i], tg_row[j], angles[off], angles[off + 1], yi, yj);
@@ -491,7 +433,7 @@ private let lirGivensSource = """
     for (int blk = sg; blk < num_blocks; blk += 4) {
         const int col = (blk << 5) + lane;
         const float v = tg_row[col] * float(diag_scale[col]);
-        out_row[col] = static_cast<T>(basalt_wht32_simd(v, lane));
+        out[row_off + size_t(col)] = static_cast<T>(basalt_wht32_simd(v, lane));
     }
     """
 
@@ -502,3 +444,127 @@ private let lirGivensKernel = MLXFast.metalKernel(
     source: lirGivensSource,
     header: BasaltMetalSubstrate.combinedHeader
 )
+
+package final class LIRQuantLinear: QuantizedLinear {
+    package let numLayers: Int
+    package let pairsPerLayer: Int
+    @ParameterInfo(key: "perm") package var perm: MLXArray
+    @ParameterInfo(key: "givens_pairs") package var givensPairs: MLXArray
+    @ParameterInfo(key: "givens_angles") package var givensAngles: MLXArray
+    @ParameterInfo(key: "diag_scale") package var diagScale: MLXArray
+
+    package static func placeholder(replacing linear: Linear, spec: LIRQuantLayerSpec) -> LIRQuantLinear {
+        let (outputs, inputs) = linear.shape
+        let groups = inputs / spec.groupSize
+        let qMode = spec.quantizationMode
+        let sType = spec.resolvedScaleDType
+        let factorType: DType = sType.isFloatingPoint ? sType : .bfloat16
+        let weight = MLXArray.zeros([outputs, (inputs * spec.bits) / 32], dtype: .uint32)
+        let scales = MLXArray.zeros([outputs, groups], dtype: sType)
+        let biases = qMode == .affine ? MLXArray.zeros([outputs, groups], dtype: sType) : nil
+        let hasBias = spec.hasBias ?? (linear.bias != nil)
+        let bias = hasBias ? (linear.bias ?? MLXArray.zeros([outputs], dtype: factorType)) : nil
+        let pairLen = max(2, spec.numLayers * spec.pairsPerLayer * 2)
+        let basis = LIRBasisParameters(
+            perm: MLXArray(Array(0 ..< Int32(inputs))),
+            givensPairs: MLXArray.zeros([pairLen], dtype: .int32),
+            givensAngles: MLXArray.zeros([pairLen], dtype: .float32),
+            diagScale: MLXArray.ones([inputs], dtype: factorType),
+            numLayers: spec.numLayers,
+            pairsPerLayer: spec.pairsPerLayer)
+        let packed = MACaQPackedWeights(weight: weight, scales: scales, biases: biases)
+        return LIRQuantLinear(
+            packed: packed, bias: bias, basis: basis,
+            groupSize: spec.groupSize, bits: spec.bits, mode: qMode)
+    }
+
+    public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let basis = LIRBasisParameters(
+            perm: perm, givensPairs: givensPairs, givensAngles: givensAngles,
+            diagScale: diagScale, numLayers: numLayers, pairsPerLayer: pairsPerLayer)
+        let transformed = training
+            ? LIRQuantKernels.differentiableTransform(x, basis: basis)
+            : LIRQuantKernels.transform(x, basis: basis)
+        return FusedTransformerKernels.stockMatmul(transformed, weights: AffineQuantizedWeights(self))
+    }
+
+    private func dequantizedFloat32Weight() -> MLXArray {
+        if weight.ndim == 2, weight.dim(0) == 0 || weight.dim(1) == 0 {
+            return MLXArray.zeros([weight.dim(0), (weight.dim(1) * 32) / max(1, bits)], dtype: .float32)
+        }
+        let deq: () -> MLXArray = {
+            dequantized(self.weight, scales: self.scales, biases: self.biases, groupSize: self.groupSize, bits: self.bits, mode: self.mode).asType(.float32)
+        }
+        return (Device.defaultDevice() == .gpu && (scales.dtype == .float64 || biases?.dtype == .float64))
+            ? Device.withDefaultDevice(.cpu, deq) : deq()
+    }
+
+    package func unrotatedDenseWeight() -> MLXArray {
+        let wRot = dequantizedFloat32Weight()
+        let rows = wRot.dim(0)
+        let k = wRot.dim(1)
+        guard k > 0, k.isMultiple(of: 32), diagScale.size == k else { return wRot }
+        let unWht = MACaQMath.rotateBlocks(wRot, blockSize: 32)
+            * diagScale.asType(.float32, stream: diagScale.dtype == .float64 ? .cpu : .default).reshaped(1, k)
+        let pCast = givensPairs.asType(.int32, stream: givensPairs.dtype == .float64 ? .cpu : .default)
+        let aCast = givensAngles.asType(.float32, stream: givensAngles.dtype == .float64 ? .cpu : .default)
+        let permCast = perm.asType(.int32, stream: perm.dtype == .float64 ? .cpu : .default)
+        eval(unWht, permCast, pCast, aCast)
+        var arr = unWht.asArray(Float.self)
+        let pFlat = pCast.asArray(Int32.self)
+        let aFlat = aCast.asArray(Float.self)
+        for m in 0 ..< rows {
+            let base = m * k
+            for l in stride(from: numLayers - 1, through: 0, by: -1) where pairsPerLayer > 0 {
+                for p in 0 ..< pairsPerLayer {
+                    let off = (l * pairsPerLayer + p) * 2
+                    guard off + 1 < pFlat.count, off + 1 < aFlat.count else { continue }
+                    let i = Int(pFlat[off])
+                    let j = Int(pFlat[off + 1])
+                    if i >= 0, j >= 0, i < k, j < k, i != j {
+                        let c = aFlat[off]
+                        let s = aFlat[off + 1]
+                        let yi = arr[base + i]
+                        let yj = arr[base + j]
+                        arr[base + i] = c * yi - s * yj
+                        arr[base + j] = s * yi + c * yj
+                    }
+                }
+            }
+        }
+        let permHost = permCast.asArray(Int32.self)
+        var restored = [Float](repeating: 0, count: rows * k)
+        let permCount = min(k, permHost.count)
+        for m in 0 ..< rows {
+            let base = m * k
+            for q in 0 ..< permCount {
+                let dst = Int(permHost[q])
+                if dst >= 0, dst < k {
+                    restored[base + dst] = arr[base + q]
+                }
+            }
+        }
+        return MLXArray(restored, [rows, k])
+    }
+
+    package init(
+        packed: MACaQPackedWeights,
+        bias: MLXArray?,
+        basis: LIRBasisParameters,
+        groupSize: Int,
+        bits: Int,
+        mode: QuantizationMode
+    ) {
+        self.numLayers = basis.numLayers
+        self.pairsPerLayer = basis.pairsPerLayer
+        self._perm.wrappedValue = basis.perm
+        self._givensPairs.wrappedValue = basis.givensPairs
+        self._givensAngles.wrappedValue = basis.givensAngles
+        self._diagScale.wrappedValue = basis.diagScale
+        super.init(
+            weight: packed.weight, bias: bias, scales: packed.scales,
+            biases: mode == .affine ? packed.biases : nil, groupSize: groupSize, bits: bits, mode: mode)
+        freeze()
+    }
+}
+

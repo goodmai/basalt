@@ -83,14 +83,22 @@ package final class NemotronMoEGateModule: Module {
     package func callAsFunction(_ x: MLXArray) -> FusedMoERouterOutput {
         let logits = matmul(x.asType(.float32), weight.asType(.float32).T)
         if nGroup <= 1 {
-            let routed = FlintRouterKernel.route(
-                logits,
-                expertBias: correctionBias,
-                k: topK,
-                normTopkProb: topK > 1 && normTopkProb,
-                scoreFunction: "sigmoid",
-                weightDType: .float32
-            )
+            let routed = !training
+                ? FlintRouterKernel.route(
+                    logits,
+                    expertBias: correctionBias,
+                    k: topK,
+                    normTopkProb: topK > 1 && normTopkProb,
+                    scoreFunction: "sigmoid",
+                    weightDType: .float32
+                )
+                : FlintRouterKernel.referenceSigmoid(
+                    logits,
+                    expertBias: correctionBias,
+                    k: topK,
+                    normTopkProb: topK > 1 && normTopkProb,
+                    weightDType: .float32
+                )
             return FusedMoERouterOutput(
                 indices: routed.indices,
                 weights: routed.weights * routedScalingFactor

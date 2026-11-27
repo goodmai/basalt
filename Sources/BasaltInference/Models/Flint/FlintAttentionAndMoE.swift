@@ -66,14 +66,23 @@ package final class FlintSparseMoEBlock: Module, UnaryLayer {
                 logits = MLX.where(mask .> 0, logits, -Float.infinity)
             }
         }
-        let routed = FlintRouterKernel.route(
-            logits,
-            expertBias: expertBias,
-            k: topK,
-            normTopkProb: normTopkProb,
-            scoreFunction: scoreFunction,
-            weightDType: .float32
-        )
+        let routed = !training
+            ? FlintRouterKernel.route(
+                logits,
+                expertBias: expertBias,
+                k: topK,
+                normTopkProb: normTopkProb,
+                scoreFunction: scoreFunction,
+                weightDType: .float32
+            )
+            : FlintRouterKernel.reference(
+                logits,
+                expertBias: expertBias,
+                k: topK,
+                normTopkProb: normTopkProb,
+                scoreFunction: scoreFunction,
+                weightDType: .float32
+            )
         probe?.routerTopK(layer: layerIdx, indices: routed.indices, gates: routed.weights)
         let expertOut = switchMLP(x, routed.indices)
         let weighted = (expertOut.asType(.float32) * routed.weights.expandedDimensions(axis: -1))

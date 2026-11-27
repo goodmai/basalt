@@ -16,21 +16,61 @@ enum SmallMQuantizedMatmul {
 
     static func fits(_ layer: QuantizedLinear) -> Bool {
         let (outputs, inputs) = layer.shape
-        return layer.mode == .affine && layer.bits == 4 && layer.biases != nil && layer.globalScale == nil
-            && groupSizes.contains(layer.groupSize) && layer.weight.ndim == 2
-            && inputs % chunk == 0 && outputs % (8 * tilesPerSimdgroup) == 0
+        guard outputs > 0, inputs > 0, layer.mode == .affine, layer.bits == 4,
+              let biases = layer.biases, layer.globalScale == nil
+        else { return false }
+        return fitsGeometry(
+            inputs: inputs, outputs: outputs, groupSize: layer.groupSize,
+            weight: layer.weight, scales: layer.scales, biases: biases)
+    }
+
+    private static func fitsGeometry(
+        inputs: Int, outputs: Int, groupSize: Int, weight: MLXArray, scales: MLXArray, biases: MLXArray
+    ) -> Bool {
+        guard outputs > 0, inputs > 0, groupSizes.contains(groupSize), weight.ndim == 2, weight.dtype == .uint32,
+              inputs % chunk == 0, inputs % groupSize == 0, outputs % (8 * tilesPerSimdgroup) == 0,
+              weight.dim(1) == inputs / 8
+        else { return false }
+        let expected = [outputs, inputs / groupSize]
+        return scales.shape == expected && biases.shape == expected
     }
 
     static func handles(_ x: MLXArray, layer: QuantizedLinear) -> Bool {
+        guard Device.defaultDevice() == .gpu, !layer.training, x.ndim >= 1, fits(layer) else { return false }
         let inputs = x.dim(-1)
-        return inputs > 0 && rows.contains(x.size / inputs) && dtypes.contains(x.dtype)
-            && layer.scales.dtype == x.dtype && layer.biases?.dtype == x.dtype
+        guard inputs == layer.shape.1, rows.contains(x.size / inputs) else { return false }
+        return dtypes.contains(x.dtype) && layer.scales.dtype == x.dtype && layer.biases?.dtype == x.dtype
     }
 
     static func matmul(_ x: MLXArray, weight: MLXArray, scales: MLXArray, biases: MLXArray, groupSize: Int) -> MLXArray {
-        let inputs = x.dim(-1)
-        let outputs = weight.dim(0)
+        if Device.defaultDevice() == .gpu, [x, weight, scales, biases].contains(where: { $0.dtype == .float64 }) {
+            return Device.withDefaultDevice(.cpu) {
+                matmul(x, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
+            }
+        }
+        let inputs = x.ndim > 0 ? x.dim(-1) : 0
+        let outputs = weight.ndim > 0 ? weight.dim(0) : 0
+        let outShape = (x.ndim > 0 ? Array(x.shape.dropLast()) : []) + [outputs]
+        guard inputs > 0, outputs > 0, x.size > 0 else {
+            return MLXArray.zeros(outShape, dtype: x.dtype)
+        }
         let rowCount = x.size / inputs
+        guard Device.defaultDevice() == .gpu,
+              rows.contains(rowCount),
+              dtypes.contains(x.dtype),
+              scales.dtype == x.dtype,
+              biases.dtype == x.dtype,
+              fitsGeometry(inputs: inputs, outputs: outputs, groupSize: groupSize, weight: weight, scales: scales, biases: biases)
+        else {
+            let hasF64 = x.dtype == .float64 || scales.dtype == .float64 || biases.dtype == .float64
+            let raw = MLX.quantizedMM(
+                dtypes.contains(x.dtype) ? x : x.asType(.float32), weight,
+                scales: dtypes.contains(scales.dtype) ? scales : scales.asType(.float32),
+                biases: dtypes.contains(biases.dtype) ? biases : biases.asType(.float32),
+                transpose: true, groupSize: groupSize, bits: 4, mode: .affine)
+            if hasF64 { return raw.asType(.float64) }
+            return dtypes.contains(x.dtype) ? raw : raw.asType(x.dtype)
+        }
         let mTiles = (rowCount + 7) / 8
         let result = kernel(
             [x.reshaped(rowCount, inputs), weight, scales, biases],
@@ -39,14 +79,14 @@ enum SmallMQuantizedMatmul {
             threadGroup: (32, splitK, 1),
             outputShapes: [[rowCount, outputs]],
             outputDTypes: [x.dtype])[0]
-        return result.reshaped(Array(x.shape.dropLast()) + [outputs])
+        return result.reshaped(outShape)
     }
 
     static let source = """
         constexpr int CH = 64;
         const int K = int(x_shape[1]);
         const int N = int(w_shape[0]);
-        const int KB = K / 2;
+        const int KW = K / 8;
         const int KG = K / G;
         const int lane = int(thread_index_in_simdgroup);
         const int sg = int(simdgroup_index_in_threadgroup);
@@ -54,7 +94,6 @@ enum SmallMQuantizedMatmul {
         const int qid = lane / 4;
         const int sm = (qid & 4) + (lane / 2) % 4;
         const int sn = (qid & 2) * 2 + (lane % 2) * 2;
-        const device uint8_t* wb = (const device uint8_t*)w;
         simdgroup_float8x8 acc[MT][NT];
         for (int mt = 0; mt < MT; mt++) {
             for (int j = 0; j < NT; j++) {
@@ -75,11 +114,13 @@ enum SmallMQuantizedMatmul {
             }
             for (int j = 0; j < NT; j++) {
                 const int n = n0 + 8 * j + sm;
-                const uint2 q = *((const device uint2*)(wb + size_t(n) * size_t(KB) + size_t(kw / 2)));
+                const size_t wIdx = size_t(n) * size_t(KW) + size_t(kw / 8);
+                const uint q0 = w[wIdx];
+                const uint q1 = w[wIdx + 1];
                 const float s = scales[size_t(n) * size_t(KG) + size_t(kw / G)];
                 const float b = biases[size_t(n) * size_t(KG) + size_t(kw / G)];
                 for (int t = 0; t < 8; t++) {
-                    const uint word = t < 4 ? q.x : q.y;
+                    const uint word = t < 4 ? q0 : q1;
                     const uint shift = 8u * uint(t % 4);
                     simdgroup_float8x8 wt;
                     wt.thread_elements()[0] = s * float((word >> shift) & 15u) + b;
@@ -126,18 +167,52 @@ private let kernel = MLXFast.metalKernel(
     source: SmallMQuantizedMatmul.source, header: "#include <metal_simdgroup_matrix>\n")
 
 final class SmallMQuantizedLinear: QuantizedLinear {
-    init(replacing layer: QuantizedLinear) {
-        super.init(
-            weight: layer.weight, bias: layer.bias, scales: layer.scales, biases: layer.biases,
-            groupSize: layer.groupSize, bits: layer.bits)
-        freeze()
-    }
-
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        guard let biases, SmallMQuantizedMatmul.handles(x, layer: self) else { return super.callAsFunction(x) }
+        let hasF64 = [x, weight, scales, biases, bias, globalScale].contains(where: { $0?.dtype == .float64 })
+        if hasF64 {
+            return Device.defaultDevice() == .gpu ? Device.withDefaultDevice(.cpu) { float64Fallback(x) } : float64Fallback(x)
+        }
+        let inputs = x.ndim > 0 ? x.dim(-1) : 0
+        let outputs = weight.ndim > 0 ? weight.dim(0) : 0
+        guard inputs > 0, outputs > 0, x.size > 0 else {
+            let outShape = (x.ndim > 0 ? Array(x.shape.dropLast()) : []) + [outputs]
+            let zeros = MLXArray.zeros(outShape, dtype: x.dtype)
+            return bias.map { zeros + $0 } ?? zeros
+        }
+        let dts = SmallMQuantizedMatmul.dtypes
+        let needsSafeFallback = !dts.contains(x.dtype)
+            || (mode == .affine && (!dts.contains(scales.dtype) || biases.map { !dts.contains($0.dtype) } == true))
+        if needsSafeFallback {
+            return float64Fallback(x)
+        }
+        guard !training, let biases, SmallMQuantizedMatmul.handles(x, layer: self) else { return super.callAsFunction(x) }
         let result = SmallMQuantizedMatmul.matmul(x, weight: weight, scales: scales, biases: biases, groupSize: groupSize)
         guard let bias else { return result }
         return result + bias
+    }
+
+    private static func safeFloatOperand(_ array: MLXArray) -> MLXArray {
+        SmallMQuantizedMatmul.dtypes.contains(array.dtype) ? array : array.asType(.float32)
+    }
+
+    private func float64Fallback(_ x: MLXArray) -> MLXArray {
+        let inputs = x.ndim > 0 ? x.dim(-1) : 0
+        let outputs = weight.ndim > 0 ? weight.dim(0) : 0
+        let outShape = (x.ndim > 0 ? Array(x.shape.dropLast()) : []) + [outputs]
+        guard inputs > 0, outputs > 0, x.size > 0 else {
+            let zeros = MLXArray.zeros(outShape, dtype: x.dtype)
+            return bias.map { zeros + $0 } ?? zeros
+        }
+        let mmF64 = [x, scales, biases, globalScale].contains(where: { $0?.dtype == .float64 })
+        let xIn = Self.safeFloatOperand(x)
+        let sIn = mode == .affine ? Self.safeFloatOperand(scales) : scales
+        let bIn = mode == .affine ? biases.map(Self.safeFloatOperand) : nil
+        var raw = MLX.quantizedMM(xIn, weight, scales: sIn, biases: bIn, transpose: true, groupSize: groupSize, bits: bits, mode: mode)
+        if let gs = globalScale {
+            raw = (raw * (gs.asType(.float32) / Float(448 * 6))).asType(raw.dtype)
+        }
+        let out = mmF64 ? raw.asType(.float64) : (SmallMQuantizedMatmul.dtypes.contains(x.dtype) ? raw : raw.asType(x.dtype))
+        return bias.map { out + $0 } ?? out
     }
 
     static let logger = BasaltLogger(module: "SmallMQuantizedLinear")
@@ -168,5 +243,13 @@ final class SmallMQuantizedLinear: QuantizedLinear {
         }
         if !updates.isEmpty { model.update(modules: ModuleChildren.unflattened(updates)) }
         return updates.count + macaqCount
+    }
+
+    init(replacing layer: QuantizedLinear) {
+        super.init(
+            weight: layer.weight, bias: layer.bias, scales: layer.scales, biases: layer.biases,
+            groupSize: layer.groupSize, bits: layer.bits, mode: layer.mode, globalScale: layer.globalScale)
+        freeze()
+        train(false)
     }
 }

@@ -57,6 +57,12 @@ package enum BailingHybridKDAOps {
         mask: MLXArray? = nil,
         useKernel: Bool = true
     ) -> (MLXArray, MLXArray) {
+        if Device.defaultDevice() == .gpu,
+           [inputs.q, inputs.k, inputs.v, inputs.decay, inputs.beta, state, mask].contains(where: { $0?.dtype == .float64 }) {
+            return Device.withDefaultDevice(.cpu) {
+                recurrentUpdate(inputs, state: state, mask: mask, useKernel: useKernel)
+            }
+        }
         if useKernel, BailingHybridKDAKernel.canUseKernel(inputs, state: state, mask: mask) {
             return BailingHybridKDAKernel.run(inputs, state: state, mask: mask)
         }
@@ -252,7 +258,8 @@ package final class BailingHybridLinearAttention: Module {
         )
         let beta = sigmoid(bProj(x).asType(.float32))
         let inputs = BailingHybridKDAInputs(q: q, k: k, v: v, decay: exp(gLog), beta: beta)
-        let (recurrenceOut, nextState) = BailingHybridKDAOps.recurrentUpdate(inputs, state: cache?[3], mask: ssmMask)
+        let (recurrenceOut, nextState) = BailingHybridKDAOps.recurrentUpdate(
+            inputs, state: cache?[3], mask: ssmMask, useKernel: !training)
         if let cache {
             cache[3] = nextState
             cache.advance(steps)

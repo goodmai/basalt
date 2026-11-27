@@ -35,6 +35,12 @@ package enum GatedDeltaNet2Ops {
         chunkSize: Int = 64,
         useMetal: Bool = true
     ) -> (output: MLXArray, state: MLXArray) {
+        if Device.defaultDevice() == .gpu,
+           [inputs.q, inputs.k, inputs.v, inputs.gLog, inputs.erase, inputs.write, state, mask].contains(where: { $0?.dtype == .float64 }) {
+            return Device.withDefaultDevice(.cpu) {
+                forward(inputs, state: state, mask: mask, chunkSize: chunkSize, useMetal: useMetal)
+            }
+        }
         let steps = inputs.q.dim(1)
         guard steps > 0 else {
             let stateIn = contiguous(

@@ -94,6 +94,7 @@ extension ModelSkeletonBuilder {
         from original: any LanguageModel,
         into copy: any LanguageModel
     ) throws -> any LanguageModel {
+        copy.train(original.training)
         let origModules = original.namedModules()
         var moduleUpdates: [(String, Module)] = []
         for (path, module) in origModules where !path.isEmpty {
@@ -115,7 +116,6 @@ extension ModelSkeletonBuilder {
         if !remaining.isEmpty {
             try copy.update(parameters: ModuleParameters.unflattened(remaining), verify: [.noUnusedKeys])
         }
-        copy.train(original.training)
         MLXInferenceEngine.settle(copy)
         eval(copy)
         return copy

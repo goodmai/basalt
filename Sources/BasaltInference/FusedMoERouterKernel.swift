@@ -17,35 +17,31 @@ public enum FusedMoERouterKernel {
     public static let dtypes: Set<DType> = [.float16, .bfloat16, .float32]
 
     public static func supports(_ logits: MLXArray, k: Int) -> Bool {
-        guard logits.ndim >= 1 else { return false }
+        guard Device.defaultDevice() == .gpu, logits.ndim >= 1 else { return false }
         let experts = logits.dim(-1)
-        return experts >= 1 && experts <= maxExperts && k >= 1 && k <= min(maxTopK, experts)
-            && dtypes.contains(logits.dtype)
+        let rows = experts > 0 ? logits.size / experts : 0
+        return experts >= 1 && experts <= maxExperts && rows >= 1 && rows <= Int(Int32.max) - 3
+            && k >= 1 && k <= min(maxTopK, experts) && dtypes.contains(logits.dtype)
     }
 
     public static func route(
         _ logits: MLXArray, k: Int, normTopkProb: Bool = true,
         softmaxBeforeTopK: Bool = true, weightDType: DType? = nil
     ) -> FusedMoERouterOutput {
-        guard logits.ndim >= 1, k >= 1 else {
-            return FusedMoERouterOutput(
-                indices: MLXArray.zeros([0], type: Int32.self),
-                weights: MLXArray.zeros([0], type: Float.self))
-        }
-        let experts = logits.dim(-1)
-        let clampedK = min(k, experts)
+        let experts = logits.ndim > 0 ? logits.dim(-1) : 0
+        let clampedK = min(max(0, k), experts)
         let leading = Array(logits.shape.dropLast())
         let rows = experts > 0 ? logits.size / experts : 0
         let outShape = leading + [clampedK]
         let outType = weightDType ?? (dtypes.contains(logits.dtype) ? logits.dtype : .float32)
-        guard rows > 0, supports(logits, k: clampedK), dtypes.contains(outType) else {
+        guard rows > 0, clampedK > 0, supports(logits, k: clampedK), dtypes.contains(outType) else {
             return reference(
                 logits, k: clampedK, normTopkProb: normTopkProb,
                 softmaxBeforeTopK: softmaxBeforeTopK, weightDType: outType)
         }
         let rowsPerGroup = min(rows, 4)
         let paddedRows = ((rows + rowsPerGroup - 1) / rowsPerGroup) * rowsPerGroup
-        let outputs = moeRouterTopkSoftmaxKernel(
+        let raw = moeRouterTopkSoftmaxKernel(
             [logits.reshaped(rows, experts)],
             template: [
                 ("OUT_T", outType),
@@ -58,13 +54,23 @@ public enum FusedMoERouterKernel {
             threadGroup: (32, rowsPerGroup, 1),
             outputShapes: [[rows, clampedK], [rows, clampedK]],
             outputDTypes: [.int32, outType])
-        return FusedMoERouterOutput(
-            indices: outputs[0].reshaped(outShape),
-            weights: outputs[1].reshaped(outShape))
+        return FusedMoERouterOutput(indices: raw[0].reshaped(outShape), weights: raw[1].reshaped(outShape))
     }
 
     static func perLane(_ experts: Int) -> Int {
         [8, 16, 32].first { $0 * 32 >= experts } ?? 32
+    }
+
+    static func safeSoftmax(_ x: MLXArray) -> MLXArray {
+        let posInf = isPosInf(x)
+        let hasPosInf = posInf.any(axis: -1, keepDims: true)
+        let posInfMask = posInf.asType(.float32)
+        let posInfCount = maximum(sum(posInfMask, axis: -1, keepDims: true), MLXArray(Float(1)))
+        let posInfProbs = posInfMask / posInfCount
+        let hasFinite = isFinite(x).any(axis: -1, keepDims: true)
+        let finiteOrZero = MLX.where(hasFinite, x, MLXArray(Float(0)))
+        let safeForExp = MLX.where(hasPosInf, MLXArray(Float(0)), finiteOrZero)
+        return MLX.where(hasPosInf, posInfProbs, softmax(safeForExp, axis: -1, precise: true))
     }
 
     public static func reference(
@@ -76,25 +82,33 @@ public enum FusedMoERouterKernel {
         let leading = Array(logits.shape.dropLast())
         let outShape = leading + [clampedK]
         let outType = weightDType ?? (dtypes.contains(logits.dtype) ? logits.dtype : .float32)
+        if Device.defaultDevice() == .gpu, (logits.dtype == .float64 || outType == .float64) {
+            return Device.withDefaultDevice(.cpu) {
+                reference(
+                    logits, k: k, normTopkProb: normTopkProb,
+                    softmaxBeforeTopK: softmaxBeforeTopK, weightDType: weightDType)
+            }
+        }
         guard experts > 0, clampedK > 0, logits.size > 0 else {
             return FusedMoERouterOutput(
                 indices: MLXArray.zeros(outShape, type: Int32.self),
-                weights: MLXArray.zeros(outShape).asType(outType))
+                weights: MLXArray.zeros(outShape, dtype: outType))
         }
         let z = logits.asType(.float32)
         let safeZ = MLX.where(isNaN(z), MLXArray(-Float.infinity), z)
         let indices = stopGradient(argSort(-safeZ, axis: -1)[.ellipsis, ..<clampedK]).asType(.int32)
         if softmaxBeforeTopK {
-            let probs = softmax(safeZ, axis: -1, precise: true)
+            let probs = safeSoftmax(safeZ)
             var selected = takeAlong(probs, indices, axis: -1)
             if normTopkProb {
                 let denom = sum(selected, axis: -1, keepDims: true)
-                selected = MLX.where(denom .> 0, selected / denom, MLXArray(Float(0)))
+                let safeDenom = maximum(denom, MLXArray(Float(1e-30)))
+                selected = MLX.where(denom .> 0, selected / safeDenom, MLXArray(Float(0)))
             }
             return FusedMoERouterOutput(indices: indices, weights: selected.asType(outType))
         }
         let selectedLogits = takeAlong(safeZ, indices, axis: -1)
-        let selected = softmax(selectedLogits, axis: -1, precise: true)
+        let selected = safeSoftmax(selectedLogits)
         return FusedMoERouterOutput(indices: indices, weights: selected.asType(outType))
     }
 }
@@ -111,20 +125,20 @@ private enum FusedMoERouterMetal {
         }
 
         float vals[PER_LANE];
-        int idxs[PER_LANE];
+        uint active_mask = 0u;
         float lane_max = -INFINITY;
         const size_t base = size_t(row) * size_t(V);
+        #pragma unroll
         for (int slot = 0; slot < PER_LANE; slot++) {
             const int col = lane + 32 * slot;
             if (col < V) {
                 const float raw = float(logits[base + size_t(col)]);
                 const float clean = isnan(raw) ? -INFINITY : raw;
                 vals[slot] = clean;
-                idxs[slot] = col;
+                active_mask |= (1u << uint(slot));
                 lane_max = max(lane_max, clean);
             } else {
                 vals[slot] = -INFINITY;
-                idxs[slot] = MAX_IDX;
             }
         }
 
@@ -133,9 +147,17 @@ private enum FusedMoERouterMetal {
         if (SOFTMAX_FIRST) {
             row_max = simd_max(lane_max);
             float lane_exp = 0.0f;
-            if (row_max > -INFINITY && row_max < INFINITY) {
+            if (row_max == INFINITY) {
+                #pragma unroll
                 for (int slot = 0; slot < PER_LANE; slot++) {
-                    if (idxs[slot] < V) {
+                    if (((active_mask >> uint(slot)) & 1u) != 0u && vals[slot] == INFINITY) {
+                        lane_exp += 1.0f;
+                    }
+                }
+            } else if (row_max > -INFINITY) {
+                #pragma unroll
+                for (int slot = 0; slot < PER_LANE; slot++) {
+                    if (((active_mask >> uint(slot)) & 1u) != 0u) {
                         lane_exp += metal::precise::exp(vals[slot] - row_max);
                     }
                 }
@@ -143,66 +165,78 @@ private enum FusedMoERouterMetal {
             row_sum = simd_sum(lane_exp);
         }
 
-        float top_vals[K];
-        int top_idxs[K];
+        float top_max = -INFINITY;
+        float my_top_val = -INFINITY;
+        int my_top_idx = MAX_IDX;
         for (int r = 0; r < K; r++) {
             float lane_best = -INFINITY;
+            #pragma unroll
             for (int slot = 0; slot < PER_LANE; slot++) {
-                if (idxs[slot] < V && vals[slot] > lane_best) {
+                if (((active_mask >> uint(slot)) & 1u) != 0u && vals[slot] > lane_best) {
                     lane_best = vals[slot];
                 }
             }
             const float win_val = simd_max(lane_best);
             int lane_win_idx = MAX_IDX;
+            #pragma unroll
             for (int slot = 0; slot < PER_LANE; slot++) {
-                if (idxs[slot] < V && vals[slot] == win_val && idxs[slot] < lane_win_idx) {
-                    lane_win_idx = idxs[slot];
+                if (((active_mask >> uint(slot)) & 1u) != 0u && vals[slot] == win_val) {
+                    const int col = lane + 32 * slot;
+                    if (col < lane_win_idx) {
+                        lane_win_idx = col;
+                    }
                 }
             }
             const int win_idx = simd_min(lane_win_idx);
-            for (int slot = 0; slot < PER_LANE; slot++) {
-                if (idxs[slot] == win_idx) {
-                    idxs[slot] = MAX_IDX;
-                    vals[slot] = -INFINITY;
-                }
+            if (win_idx < V && lane == (win_idx & 31)) {
+                active_mask &= ~(1u << uint(win_idx >> 5));
             }
-            top_vals[r] = win_val;
-            top_idxs[r] = win_idx;
+            if (r == 0) {
+                top_max = win_val;
+            }
+            if (lane == r) {
+                my_top_val = win_val;
+                my_top_idx = win_idx;
+            }
         }
 
-        float probs[K];
+        float my_prob = 0.0f;
         if (SOFTMAX_FIRST) {
-            float p_sum = 0.0f;
-            for (int r = 0; r < K; r++) {
-                const float p = (row_sum > 0.0f) ? (metal::precise::exp(top_vals[r] - row_max) / row_sum) : (1.0f / float(K));
-                probs[r] = p;
-                p_sum += p;
+            if (lane < K) {
+                if (row_max == INFINITY) {
+                    my_prob = (my_top_val == INFINITY) ? (1.0f / row_sum) : 0.0f;
+                } else if (row_max > -INFINITY && row_sum > 0.0f) {
+                    my_prob = metal::precise::exp(my_top_val - row_max) / row_sum;
+                } else {
+                    my_prob = 1.0f / float(V);
+                }
             }
             if (NORM_TOPK) {
-                const float inv = (p_sum > 0.0f) ? (1.0f / p_sum) : 0.0f;
-                for (int r = 0; r < K; r++) {
-                    probs[r] *= inv;
+                const float p_sum = simd_sum(my_prob);
+                if (lane < K) {
+                    my_prob = (p_sum > 0.0f) ? (my_prob / p_sum) : 0.0f;
                 }
             }
         } else {
-            const float top_max = top_vals[0];
-            float top_sum = 0.0f;
-            for (int r = 0; r < K; r++) {
-                const float p = (top_max > -INFINITY && top_max < INFINITY)
-                    ? metal::precise::exp(top_vals[r] - top_max) : 1.0f;
-                probs[r] = p;
-                top_sum += p;
+            if (lane < K) {
+                if (top_max == INFINITY) {
+                    my_prob = (my_top_val == INFINITY) ? 1.0f : 0.0f;
+                } else if (top_max > -INFINITY) {
+                    my_prob = metal::precise::exp(my_top_val - top_max);
+                } else {
+                    my_prob = 1.0f;
+                }
             }
-            const float inv = (top_sum > 0.0f) ? (1.0f / top_sum) : 0.0f;
-            for (int r = 0; r < K; r++) {
-                probs[r] *= inv;
+            const float top_sum = simd_sum(my_prob);
+            if (lane < K) {
+                my_prob = (top_sum > 0.0f) ? (my_prob / top_sum) : 0.0f;
             }
         }
 
         if (lane < K) {
             const size_t out_idx = size_t(row) * size_t(K) + size_t(lane);
-            out_indices[out_idx] = top_idxs[lane];
-            out_weights[out_idx] = static_cast<OUT_T>(probs[lane]);
+            out_indices[out_idx] = my_top_idx;
+            out_weights[out_idx] = static_cast<OUT_T>(my_prob);
         }
         """
 }
