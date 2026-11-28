@@ -408,11 +408,11 @@ struct ExpertStreamingPrefetchTests {
 
 extension ExpertStreamingParityTests {
     static func source(_ family: String) throws -> URL {
-        guard family == "qwen3_next" else { return fixtures.appendingPathComponent(family) }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-qwen3-next-\(UUID().uuidString)")
+        guard let tiny = ["qwen3_next": TinyModel.Family.qwen3Next, "deepseek_v3": .deepseekV3][family] else { return fixtures.appendingPathComponent(family) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("expert-streaming-\(family)-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try Data(TinyModel.Family.qwen3Next.config.utf8).write(to: directory.appendingPathComponent("config.json"))
-        let model = try TinyModel.make(.qwen3Next)
+        try Data(tiny.config.utf8).write(to: directory.appendingPathComponent("config.json"))
+        let model = try TinyModel.make(tiny)
         try save(arrays: Dictionary(uniqueKeysWithValues: model.parameters().flattened()), url: directory.appendingPathComponent("model.safetensors"))
         return directory
     }

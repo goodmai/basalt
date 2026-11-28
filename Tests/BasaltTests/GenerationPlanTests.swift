@@ -183,7 +183,7 @@ struct GenerationPlanTests {
 
     @Test("An unknown model_type gets the conservative plan and one warning naming it and every feature that stays off")
     func unknownFamily() {
-        #expect(ModelCapabilities.of(modelType: "deepseek_v3") == nil)
+        #expect(ModelCapabilities.of(modelType: "deepseek_v2") == nil)
         #expect(ModelCapabilities.of(modelType: nil) == nil)
         #expect(ModelCapabilities.of(modelType: "Qwen3_5") != nil)
         let everything = GenerationPlan.Settings(
@@ -196,8 +196,8 @@ struct GenerationPlanTests {
         let facts = GenerationPlan.Facts(
             namespace: namespace, promptTokens: 100, hasMTPDrafter: true, blendAvailable: true, modelIsHybrid: false, modelHasRecurrentState: true)
         #expect(GenerationPlan.make(request, everything, facts) == GenerationPlan())
-        let warning = ModelCapabilities.unverifiedWarning(modelType: "deepseek_v3")
-        #expect(warning.contains("deepseek_v3"))
+        let warning = ModelCapabilities.unverifiedWarning(modelType: "deepseek_v2")
+        #expect(warning.contains("deepseek_v2"))
         #expect(ModelCapabilities.Feature.allCases.allSatisfy { warning.contains($0.rawValue) })
     }
 }

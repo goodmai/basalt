@@ -5,7 +5,8 @@ public enum ChatTemplateCompatibility {
     static let renamedLoopVariable = "call_item"
 
     private static let loopOpening = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*for\s+(.+?)\s+in\b"#)
-    private static let loopClosing = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*endfor\b"#)
+    private static let loopClosing = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*(?:endfor|endmacro)\b"#)
+    private static let macroOpening = try! NSRegularExpression(pattern: #"^\{%[-+]?\s*macro\s+\w+\s*\((.*)\)"#, options: .dotMatchesLineSeparators)
     private static let stringLiteral = try! NSRegularExpression(
         pattern: #"'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*""#, options: .dotMatchesLineSeparators)
     private static let reservedIdentifier = try! NSRegularExpression(
@@ -22,7 +23,7 @@ public enum ChatTemplateCompatibility {
             }
             var segment = String(chars[range])
             let whole = NSRange(location: 0, length: (segment as NSString).length)
-            if let opening = loopOpening.firstMatch(in: segment, range: whole) {
+            if let opening = loopOpening.firstMatch(in: segment, range: whole) ?? macroOpening.firstMatch(in: segment, range: whole) {
                 loopsBindingReserved.append(bindsReserved(targets: (segment as NSString).substring(with: opening.range(at: 1))))
             }
             if loopsBindingReserved.contains(true) { segment = renamingOutsideStringLiterals(segment) }
@@ -36,7 +37,7 @@ public enum ChatTemplateCompatibility {
 
     private static func bindsReserved(targets: String) -> Bool {
         targets.split(whereSeparator: { ",()".contains($0) })
-            .contains { $0.trimmingCharacters(in: .whitespaces) == reservedLoopVariable }
+            .contains { ($0.split(separator: "=").first ?? "").trimmingCharacters(in: .whitespaces) == reservedLoopVariable }
     }
 
     private static func renamingOutsideStringLiterals(_ segment: String) -> String {

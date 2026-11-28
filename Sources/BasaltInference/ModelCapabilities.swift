@@ -182,6 +182,7 @@ struct ModelCapabilities: Equatable, Sendable {
             (HyperConnectionModel.modelTypes, hyperConnection),
             (["falcon_h1", "falcon-h1"], falconH1),
             ([BailingHybridModel.modelType], bailingHybrid),
+            (["deepseek_v3", "deepseek-v3"], ModelCapabilities(verified: [.speculativeLookup, .batchedDecode, .promptCacheReuse, .quest, .grammarJumpForward])),
             ([RWKV7Model.modelType, XLSTMModel.modelType], rwkv7),
             (Mamba3Model.supportedModelTypes, mamba3),
             (GatedDeltaNet2Model.supportedModelTypes, gdn2),
