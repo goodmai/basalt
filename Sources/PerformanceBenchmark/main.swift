@@ -10,10 +10,10 @@ struct Benchmark: AsyncParsableCommand {
         abstract: "Benchmark Gem inference (TPS, TTFT, latency, memory)"
     )
 
-    @Option(name: .shortAndLong, help: "Model path or HF repo ID (must be in local cache)")
-    var model: String
+    @Option(name: .shortAndLong, help: "Model path or HF repo ID (must be in local cache; omit when using --metal-kernels)")
+    var model: String = ""
 
-    @Option(name: .shortAndLong, help: "Number of timed iterations (warmup is always 1)")
+    @Option(name: .shortAndLong, help: "Number of timed iterations (default: 5; --metal-kernels production uses at least 7)")
     var iterations: Int = 5
 
     @Option(name: .shortAndLong, help: "Prompt to use for every iteration")
@@ -115,7 +115,36 @@ struct Benchmark: AsyncParsableCommand {
     @Flag(name: .customLong("share"), help: "Export benchmark results to JSON format suitable for sharing (bench --share)")
     var share: Bool = false
 
+    @Flag(name: .customLong("metal-kernels"), help: "Run the deterministic zero-weight Metal kernel microbenchmark and #228 parity suite (#878)")
+    var metalKernels: Bool = false
+
+    @Option(name: .customLong("metal-profile"), help: "Kernel benchmark profile: 'production' (default, full shapes & cache defeat) or 'smoke'")
+    var metalProfile: String = "production"
+
+    @Option(name: .customLong("metal-json"), help: "Write --metal-kernels JSON report to this path")
+    var metalJson: String?
+
+    @Option(name: .customLong("compare"), help: "Compare --metal-kernels against a saved baseline JSON and fail on regressions")
+    var compare: String?
+
+    @Option(name: .customLong("max-regression-pct"), help: "Base latency regression gate percent for --compare (default: 2.0; effective gate is max(base, 1.5x inter-pass spread), so bimodal nf4_m8 gates near ~5.7%)")
+    var maxRegressionPct: Double = 2.0
+
+    @Flag(name: .customLong("allow-debug"), help: "Allow --compare on debug builds (for local testing only)")
+    var allowDebug: Bool = false
+
+    @Flag(name: .customLong("allow-dirty"), help: "Allow --compare when baseline or candidate comes from a dirty working tree")
+    var allowDirty: Bool = false
+
+    @Flag(name: .customLong("allow-busy-ci"), help: "Allow --metal-kernels while CI Runner.Worker is active")
+    var allowBusyCI: Bool = false
+
     func run() async throws {
+        if metalKernels { return try runMetalKernelBench() }
+        if metalJson != nil || compare != nil {
+            throw ValidationError("--metal-json and --compare require --metal-kernels")
+        }
+        guard !model.isEmpty else { throw ValidationError("--model is required unless --metal-kernels is set") }
         if wiredLimit { MLXInferenceEngine.renewsResidency() }
         let resolvedPath = resolveModelPath()
         print("Benchmark — model: \(model)")
