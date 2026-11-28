@@ -212,7 +212,7 @@ struct ExpertStreamingRealModelTests {
         let log = try await ModelRunLog("expert-streaming-acceptance", modelPath: path)
         defer { log.releaseGPU() }
         let cacheGB = Double(Self.env["BASALT_E2E_QWEN36_CACHE_GB"] ?? "") ?? 6.0
-        let cacheBytes = ByteCount(Int64(cacheGB * 1_073_741_824))
+        let cacheBytes: ByteCount? = Self.env["BASALT_E2E_QWEN36_CACHE_GB"] == "auto" ? nil : ByteCount(Int64(cacheGB * 1_073_741_824))
         let agentRequest = GenerationRequest(
             prompt: "", maxTokens: Self.tokens, temperature: 0,
             tools: [GoldenPrompt.readFile], messages: GoldenPrompt.agentTrace(turns: 16))

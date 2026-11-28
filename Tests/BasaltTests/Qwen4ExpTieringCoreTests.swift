@@ -79,6 +79,17 @@ struct ExpertArenaPlannerTests {
         }
     }
 
+    @Test("On a 24 GB Mac the automatic expert cache is the 25% share unless the arena planner allows less: Coder-Next 8-bit would take 19 GiB and gets 10.5, the 4-bit pack and Qwen3.6-35B 8-bit keep their share (#642 P2)",
+          arguments: [(2.34, 76.5, 10.5), (1.27, 40.5, nil), (3.45, 30.6, nil)])
+    func automaticCacheOnTwentyFourGB(denseGB: Double, expertsGB: Double, plannedGB: Double?) {
+        let host = ExpertArenaHost(totalRAMBytes: gib(24), availableMemoryBytes: gib(20), metalWorkingSetBytes: gib(18))
+        let planned = ExpertArenaPlanner.plan(ExpertArenaInput(
+            host: host, workload: ExpertArenaWorkload(denseWeightsBytes: gib(denseGB), expertBytesTotal: gib(expertsGB)))).arenaBytes
+        let share = ExpertStreaming().cache(forExperts: gib(expertsGB))
+        #expect(ExpertStreamingLoader.automaticCache(share: share, planned: planned) == plannedGB.map(gib) ?? share)
+        #expect(ExpertStreamingLoader.automaticCache(share: gib(2), planned: .zero) == gib(2))
+    }
+
     @Test("Explicit --expert-cache-gb override wins over caps and 1.5 GB steps while clamping safely above RAM")
     func explicitOverrideWinsAndClamps() {
         let host24 = ExpertArenaHost(totalRAMBytes: gib(24), availableMemoryBytes: gib(16), metalWorkingSetBytes: gib(18))
