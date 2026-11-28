@@ -185,6 +185,7 @@ struct ModelCapabilities: Equatable, Sendable {
             ([RWKV7Model.modelType, XLSTMModel.modelType], rwkv7),
             (Mamba3Model.supportedModelTypes, mamba3),
             (GatedDeltaNet2Model.supportedModelTypes, gdn2),
+            (["qwen3_next"], mamba3),
             ([TTTModel.modelType] + TitansModel.modelTypes + LaCTModel.modelTypes, rwkv7),
             (Inkling2Model.modelTypes, ModelCapabilities(verified: [.speculativeLookup, .mtp, .promptCacheReuse, .grammarJumpForward])),
             ([PaddleOCRVL.modelType], ModelCapabilities(verified: all.subtracting([.mtp, .cacheBlend, .kvQuantization, .kvZones, .kvHeadSplit, .quest]))),
