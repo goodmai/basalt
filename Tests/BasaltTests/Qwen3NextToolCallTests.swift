@@ -121,6 +121,8 @@ struct Qwen3NextToolCallTests {
         "grep -n '<parameter=x>' Sources",
         "printf '%s' '</tool_call>'",
         "sed -n '1p' <function=Bash>",
+        "echo '</parameter>' done",
+        "first line\n</parameter>\nsecond line",
     ]
 
     @Test("The real chat template and the checkpoint's tool_parser_type both select the xmlFunction format")
@@ -145,20 +147,10 @@ struct Qwen3NextToolCallTests {
         ])]))
     }
 
-    @Test("A value containing a literal </function>, <parameter=x>, </tool_call> or <function=…> stays inside its parameter", arguments: literalMarkup)
+    @Test("A value containing a literal </function>, <parameter=x>, </tool_call>, <function=…> or a </parameter> that no <parameter= or </function> follows stays inside its parameter (#887)", arguments: literalMarkup)
     func literalMarkupStaysInTheValue(command: String) {
         let parsed = Qwen3NextTools.parse([Qwen3NextTools.call("Bash", [("command", command)])])
         #expect(parsed == Qwen3NextTools.Parsed(calls: [Qwen3NextTools.function("Bash", ["command": .string(command)])]))
-    }
-
-    @Test("A value ends at the first </parameter> whether or not a newline precedes it, so a value containing that literal makes the payload malformed: no call, one malformed_syntax rejection at end of output", arguments: [
-        "echo '</parameter>' done", "first line\n</parameter>\nsecond line",
-    ])
-    func literalParameterCloseIsNotRepresentable(command: String) {
-        let payload = Qwen3NextTools.call("Bash", [("command", command)])
-        let specs = MLXInferenceEngine.toolSpecs(Qwen3NextTools.all.map(\.definition))
-        #expect(ToolCallFormat.xmlFunction.createParser().parse(content: payload, tools: specs) == nil)
-        #expect(Qwen3NextTools.parse([payload]) == Qwen3NextTools.Parsed(rejections: [.malformedSyntax]))
     }
 
     @Test("Two calls in one message decode in order, plain text before a call and text after it stay response text")
@@ -174,15 +166,14 @@ struct Qwen3NextToolCallTests {
         #expect(Qwen3NextTools.parse([read + "\nDone."]) == Qwen3NextTools.Parsed(text: "\nDone.", calls: [expected[0]]))
     }
 
-    @Test("Prose with an opening quote before a call does not hide the call; an unmatched backtick still does, which is a known defect of the fork's recovery scanner (#887)")
+    @Test("Prose with an opening quote or an unmatched backtick before a call does not hide the call (#887)")
     func proseBeforeACallDoesNotHideIt() {
         let read = Qwen3NextTools.call("Read", [("file_path", "a.swift")])
         let expected = [Qwen3NextTools.function("Read", ["file_path": .string("a.swift")])]
         let quoted = Qwen3NextTools.parse(["He said \"go.\n" + read])
         #expect(quoted.calls == expected && quoted.text == "He said \"go.\n")
-        withKnownIssue("an unmatched backtick puts the fork's TextToolCallRecoveryScanner in a protected context, so the call is returned as text") {
-            #expect(Qwen3NextTools.parse(["Use a ` here.\n" + read]).calls == expected)
-        }
+        let ticked = Qwen3NextTools.parse(["Use a ` here.\n" + read])
+        #expect(ticked.calls == expected && ticked.text == "Use a ` here.\n")
     }
 
     @Test("At end of output a call cut inside a parameter is rejected as incomplete_output with no text, and a call that closed </function> but not </tool_call> is accepted")

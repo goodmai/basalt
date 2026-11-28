@@ -8,7 +8,7 @@ import MLXVLM
 
 enum TinyModel {
     enum Family: String, CaseIterable, Sendable {
-        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm, mhc, mamba3Siso, mamba3Mimo, gdn2, tttLinear, tttMlp, titans, lact, plt
+        case qwen3Small, qwen3, qwen3HeadDim32, qwen35, qwen35Moe, qwen3Next, gemma3, gemma4, gemma4Moe, gemma4KEqV, gemma4Unified, inkling2Loop, qwen3Moe, sigmoidMoe, nemotronH, lfm2, lfm2Moe, prism, paddleOCR, deepSeekOCR, deepSeekOCR2, flint, ricursive, museGlimmer, museGlimmerText, ltxVideo, kandinskyCrossDiT, moeVideoDiT, bailingHybrid, ouro, llada, huginn, rwkv7, xlstm, mhc, mamba3Siso, mamba3Mimo, gdn2, tttLinear, tttMlp, titans, lact, plt, deepseekV3
 
         var decodesTokenByToken: Bool { self != .llada }
 
@@ -19,7 +19,7 @@ enum TinyModel {
             case .qwen35, .qwen35Moe: Qwen35TextModel(try decoder.decode(Qwen35TextConfiguration.self, from: config))
             case .gemma3: Gemma3TextModel(try decoder.decode(Gemma3TextConfiguration.self, from: config))
             case .gemma4, .gemma4Moe, .gemma4KEqV: Gemma4TextModel(try decoder.decode(Gemma4TextConfiguration.self, from: config))
-            case .qwen3Moe: Qwen3MoEModel(try decoder.decode(Qwen3MoEConfiguration.self, from: config))
+            case .qwen3Moe, .deepseekV3: try attentionMoEModel(config, decoder: decoder)
             case .sigmoidMoe, .nemotronH: NemotronHModel(try decoder.decode(NemotronHConfiguration.self, from: config))
             case .lfm2: LFM2Model(try decoder.decode(LFM2Configuration.self, from: config))
             case .lfm2Moe: LFM2MoEModel(try decoder.decode(LFM2MoEConfiguration.self, from: config))
@@ -30,6 +30,11 @@ enum TinyModel {
             case .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT: try videoModel(config, decoder: decoder)
             case .gemma4Unified, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .museGlimmer, .inkling2Loop, .qwen3Next, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt: try multimodalModel(config, decoder: decoder)
             }
+        }
+
+        private func attentionMoEModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
+            if self == .deepseekV3 { return DeepseekV3Model(try decoder.decode(DeepseekV3Configuration.self, from: config)) }
+            return Qwen3MoEModel(try decoder.decode(Qwen3MoEConfiguration.self, from: config))
         }
 
         private func videoModel(_ config: Data, decoder: JSONDecoder) throws -> any LanguageModel {
@@ -60,7 +65,7 @@ enum TinyModel {
         var weightScale: Float {
             switch self {
             case .qwen3Small, .gemma3: 4
-            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt: 1
+            case .qwen3, .qwen3HeadDim32, .gemma4, .gemma4Moe, .gemma4KEqV, .gemma4Unified, .inkling2Loop, .qwen35, .qwen35Moe, .qwen3Next, .qwen3Moe, .sigmoidMoe, .nemotronH, .lfm2, .lfm2Moe, .prism, .paddleOCR, .deepSeekOCR, .deepSeekOCR2, .flint, .ricursive, .museGlimmer, .museGlimmerText, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt, .deepseekV3: 1
             }
         }
 
@@ -202,7 +207,7 @@ enum TinyModel {
                   "qwen2-0-5b": {"dim": 64, "layers": 2, "heads": 4, "kv_heads": 2, "intermediate_size": 128}}},
                  "projector_config": {"input_dim": 64, "n_embed": 64, "projector_type": "linear"}}
                 """
-            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt:
+            case .flint, .ricursive, .museGlimmerText, .museGlimmer, .ltxVideo, .kandinskyCrossDiT, .moeVideoDiT, .bailingHybrid, .ouro, .llada, .huginn, .rwkv7, .xlstm, .mhc, .mamba3Siso, .mamba3Mimo, .gdn2, .tttLinear, .tttMlp, .titans, .lact, .plt, .deepseekV3:
                 extendedConfig
             }
         }
@@ -356,6 +361,16 @@ extension TinyModel.Family {
              "hc_variant": "mhc", "hc_expansion_rate": 4, "hc_sinkhorn_iterations": 20,
              "hc_gate_mode": "sigmoid", "hc_collapse_mode": "mean", "hc_dynamic": true, "hc_alpha_init": 0.01}
             """
+        case .deepseekV3: """
+            {"model_type": "deepseek_v3", "vocab_size": 256, "hidden_size": 64, "num_hidden_layers": 3,
+             "intermediate_size": 128, "moe_intermediate_size": 32, "num_attention_heads": 4, "num_key_value_heads": 4,
+             "kv_lora_rank": 32, "q_lora_rank": null, "qk_nope_head_dim": 24, "qk_rope_head_dim": 8, "v_head_dim": 16,
+             "n_routed_experts": 8, "num_experts_per_tok": 2, "n_shared_experts": 1, "n_group": 2, "topk_group": 1,
+             "scoring_func": "sigmoid", "topk_method": "noaux_tc", "norm_topk_prob": true, "routed_scaling_factor": 2.5,
+             "moe_layer_freq": 1, "first_k_dense_replace": 1, "max_position_embeddings": 256, "attention_bias": false,
+             "rope_theta": 10000.0, "rope_scaling": {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 64,
+              "beta_fast": 32, "beta_slow": 1, "mscale": 1.0, "mscale_all_dim": 1.0}, "rms_norm_eps": 1e-6}
+            """
         case .mamba3Siso, .mamba3Mimo, .gdn2:
             recurrentConfig
         default:
@@ -377,7 +392,7 @@ extension TinyModel.Family {
         .moeVideoDiT: 586, .bailingHybrid: 672, .ouro: 820, .llada: 819, .huginn: 125,
         .rwkv7: 825, .xlstm: 843, .mhc: 844, .mamba3Siso: 8471, .mamba3Mimo: 8472,
         .gdn2: 8473, .tttLinear: 8481, .tttMlp: 8482, .titans: 8483, .lact: 8484,
-        .plt: 8201,
+        .plt: 8201, .deepseekV3: 893,
     ]
 }
 
@@ -475,7 +490,7 @@ extension TinyModel {
             (suffixes, scale) = ([".gate.weight", ".e_score_correction_bias"], 1.0)
         case .flint:
             (suffixes, scale) = ([".gate.weight", ".expert_bias", ".softmax_offset"], 0.25)
-        case .inkling2Loop:
+        case .inkling2Loop, .deepseekV3:
             (suffixes, scale) = ([".query", ".proj", ".static_weight", "conv1d.weight", ".gate.weight", ".e_score_correction_bias"], 0.25)
         case .ricursive:
             (suffixes, scale) = ([".value_res_lambda"], 0.5)
