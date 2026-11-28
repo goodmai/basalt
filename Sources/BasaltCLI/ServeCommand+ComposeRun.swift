@@ -40,7 +40,9 @@ extension ServeCommand {
             startup: { [self] in try await startComposed(spec, boot, embeddings: embeddings, slot: slot, memory: memory) },
             speechSynthesizer: explicitSpeech,
             imageSynthesizer: explicitImage,
-            videoSynthesizer: explicitVideo)
+            videoSynthesizer: explicitVideo,
+            researchTools: researchTools,
+            toolFilter: try mcpOptions.toolFilter())
     }
 
     func startComposed(

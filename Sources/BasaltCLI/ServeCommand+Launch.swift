@@ -23,6 +23,8 @@ struct ServerLaunch: Sendable {
     var speechSynthesizer: (any SpeechSynthesizer)? = nil
     var imageSynthesizer: (any ImageSynthesizer)? = nil
     var videoSynthesizer: (any VideoSynthesizer)? = nil
+    var researchTools = false
+    var toolFilter = MCPToolFilter.standard
 }
 
 extension ServerLaunch {
@@ -124,6 +126,7 @@ extension ServeCommand {
                     .withImageSynthesizer(launch.imageSynthesizer)
                     .withVideoSynthesizer(launch.videoSynthesizer)
                     .withModelHub(.live(converter: UniversalModelConverter()))
+                    .withResearchTools(launch.researchTools, filter: launch.toolFilter)
                     .withReadyHandler(launch.readyHandler)
                 group.addTask { try await restServer.run(); return true }
             }

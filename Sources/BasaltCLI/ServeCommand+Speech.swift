@@ -117,7 +117,7 @@ extension ServeCommand {
                 pipeline: stages, pipelines: host?.registry, compose: host.map(\.control),
                 statsInterval: stats ? min(max(1, statsInterval), 86_400) : nil, canaryInterval: canaryMinutes.map { .seconds($0 * 60) },
                 announceReady: network.announceReady, speechSynthesizer: activeSpeech, imageSynthesizer: activeImage,
-                videoSynthesizer: activeVideo
+                videoSynthesizer: activeVideo, researchTools: researchTools, toolFilter: try mcpOptions.toolFilter()
             ),
             orchestrator: boot.orchestrator
         )

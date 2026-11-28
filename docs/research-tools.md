@@ -45,7 +45,7 @@ A slice is one half-open `[start, end)` pair per leading dimension; dimensions l
 
 ## Safety model
 
-- **Local only.** The tools are MCP tools served over stdio to the client that launched the server; they have no REST route.
+- **Local only.** Interventions, weight edits, and training tools are MCP tools served over stdio to the client that launched the server; they have no REST route. Read-only diagnostic sweeps (`depth_diagnostics`, `outlier_profile`, `causal_sweep`) are also exposed at `POST /v1/xray/{depth,outliers,causal}` only when `--research-tools` is enabled (enforcing the same `MCPToolFilter` and admin-only auth).
 - **Off by default.** Without `--research-tools` the experiment tools are neither listed nor accepted.
 - **Overlays, TTL, undo, journal.** Every experiment is an overlay with an id, a description and a 30-minute TTL, except an adapter that passed its quality gate (`adapter_apply` with `gate`, `steer_commit`, `train_experts`), which stays until `overlay_undo`. `overlay_undo` removes any overlay early; on expiry it is undone automatically. Adds, undos and expiries are appended to `~/.basalt/experiments/<model fingerprint>.jsonl` (directory 0700, file 0600). Loading another model drops every overlay.
 - **Model files on disk are never written.** Deltas, packs and adapters exist only in memory; restarting the server or reloading the model discards them. The only files written are the journal and the adapter `train_experts` saves to a new directory.
