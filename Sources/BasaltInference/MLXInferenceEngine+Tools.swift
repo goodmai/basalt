@@ -85,7 +85,20 @@ extension MLXInferenceEngine {
     static func toolCall(_ call: ToolCallOutput) -> ToolCall {
         let arguments = (try? JSONDecoder().decode([String: JSONValue].self, from: Data(call.arguments.utf8)))
             ?? ["input": .string(call.arguments)]
-        return ToolCall(function: .init(name: call.name, arguments: arguments), id: call.id.isEmpty ? nil : call.id)
+        return ToolCall(function: .init(name: call.name, arguments: withoutNullMembers(arguments)), id: call.id.isEmpty ? nil : call.id)
+    }
+
+    static func withoutNullMembers(_ object: [String: JSONValue]) -> [String: JSONValue] {
+        object.compactMapValues(withoutNulls)
+    }
+
+    static func withoutNulls(_ value: JSONValue) -> JSONValue? {
+        switch value {
+        case .null: nil
+        case .object(let inner): .object(withoutNullMembers(inner))
+        case .array(let items): .array(items.compactMap(withoutNulls))
+        default: value
+        }
     }
 
     static func toolSpecs(_ tools: [ToolDefinition]?) -> [ToolSpec]? {
