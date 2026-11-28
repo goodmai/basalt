@@ -13,6 +13,7 @@ public struct KokoroMLXConfig: Sendable, Codable, Equatable {
     public var nFFT: Int = 20
     public var hopLength: Int = 5
     public var sampleRate: Int = SpeechRequest.defaultSampleRate
+    public var vocab: [String: Int] = [:]
 
     public static var tiny: KokoroMLXConfig {
         var cfg = KokoroMLXConfig(modelID: "Kokoro-82M-Tiny", hiddenDim: 32, styleDim: 32)
@@ -57,6 +58,9 @@ public struct KokoroMLXConfig: Sendable, Codable, Equatable {
         cfg.upsampleStride = max(2, istft?["upsample_stride"] as? Int ?? 48)
         cfg.nFFT = max(4, rawNFFT.isMultiple(of: 2) ? rawNFFT : rawNFFT + 1)
         cfg.hopLength = max(1, istft?["gen_istft_hop_size"] as? Int ?? 5)
+        if let rawVocab = raw["vocab"] as? [String: Int] {
+            cfg.vocab = rawVocab
+        }
         return cfg
     }
 }
@@ -162,26 +166,47 @@ public actor KokoroMLXSynthesizer: SpeechSynthesizer {
     }
 
     public nonisolated let config: KokoroMLXConfig
+    package nonisolated let strictLoadReport: KokoroWeightLoader.StrictLoadReport?
+    private let checkpointDirectory: URL?
     private var module: KokoroMLXModule?
+    private var realModel: KokoroStyleTTS2Model?
+    private var voiceStyles: [String: MLXArray] = [:]
     private var epoch = 0
 
     public init(config: KokoroMLXConfig = KokoroMLXConfig(), seed: UInt64 = 493) {
         self.config = config
+        self.strictLoadReport = nil
+        self.checkpointDirectory = nil
         let built = withRandomState(MLXRandom.RandomState(seed: seed)) {
             KokoroMLXModule(config)
         }
         eval(built)
         self.module = built
+        self.realModel = nil
     }
 
     public init(directory: URL, modelID: String? = nil) throws(BasaltError) {
         let resolved = KokoroMLXConfig.from(directory: directory, fallbackID: modelID ?? directory.lastPathComponent)
-        self.config = resolved
-        let built = withRandomState(MLXRandom.RandomState(seed: 493)) {
-            KokoroMLXModule(resolved)
+        guard let weightsURL = KokoroWeightLoader.findModelSafetensors(in: directory) else {
+            throw .weightsCorrupted(
+                path: directory.path,
+                reason: "kokoro: missing kokoro-v1_0.safetensors or model.safetensors (refusing random initialization)"
+            )
         }
-        try ISTFTNetSynthesizer.loadSafetensorsIfPresent(in: directory, into: built)
-        self.module = built
+        let built = KokoroStyleTTS2Model(
+            vocabSize: resolved.vocabSize,
+            hiddenDim: resolved.hiddenDim,
+            styleDim: resolved.styleDim,
+            nFFT: resolved.nFFT,
+            hopLength: resolved.hopLength
+        )
+        let report = try KokoroWeightLoader.loadStrict(from: weightsURL, into: built)
+        _ = try KokoroPhonemizer.requireEspeakBinary()
+        self.config = resolved
+        self.strictLoadReport = report
+        self.checkpointDirectory = directory
+        self.module = nil
+        self.realModel = built
     }
 
     public var voices: [VoiceSpec] {
@@ -194,7 +219,7 @@ public actor KokoroMLXSynthesizer: SpeechSynthesizer {
                 id: config.modelID,
                 model: config.modelID,
                 compute: .mlx,
-                isAvailable: module != nil,
+                isAvailable: module != nil || realModel != nil,
                 estimatedTTFAMs: 55
             )
         )
@@ -203,17 +228,62 @@ public actor KokoroMLXSynthesizer: SpeechSynthesizer {
     public func unload() async {
         epoch &+= 1
         module = nil
+        realModel = nil
+        voiceStyles.removeAll()
         Memory.clearCache()
     }
 
     public func synthesize(_ request: SpeechRequest) async throws(BasaltError) -> AsyncThrowingStream<AudioChunk, any Error> {
         try request.validate()
-        guard module != nil else { throw .modelNotLoaded }
+        guard module != nil || realModel != nil else { throw .modelNotLoaded }
         guard let voiceIndex = TTSVoiceCatalog.kokoroVoiceIndex(for: request.voice, language: request.language) else {
             throw .invalidRequestStructure(details: "speech: unknown Kokoro voice '\(request.voice)'")
         }
+        if realModel != nil {
+            let resolvedVoice = TTSVoiceCatalog.kokoroVoiceIDs[voiceIndex]
+            let phonemes = try KokoroPhonemizer.phonemize(request.input, voice: resolvedVoice, language: request.language)
+            let tokens = try KokoroPhonemizer.tokenize(phonemes, vocab: config.vocab)
+            return Self.makeRealStream(owner: self, tokens: tokens, voice: resolvedVoice, speed: request.speed, expectedEpoch: epoch)
+        }
         let tokens = Self.encodePhonemeTokens(request.input, vocabSize: config.vocabSize)
         return Self.makeStream(owner: self, tokens: tokens, voiceIndex: voiceIndex, speed: request.speed, expectedEpoch: epoch)
+    }
+
+    nonisolated private static func makeRealStream(
+        owner: KokoroMLXSynthesizer,
+        tokens: [Int32],
+        voice: String,
+        speed: Double,
+        expectedEpoch: Int
+    ) -> AsyncThrowingStream<AudioChunk, any Error> {
+        let rate = owner.config.sampleRate
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try Task.checkCancellation()
+                    let samples = try await owner.runRealSynthesis(
+                        tokens: tokens,
+                        voice: voice,
+                        speed: speed,
+                        expectedEpoch: expectedEpoch
+                    )
+                    let chunkLen = max(1_200, rate / 8)
+                    var offset = 0
+                    while offset < samples.count {
+                        try Task.checkCancellation()
+                        let next = min(samples.count, offset + chunkLen)
+                        continuation.yield(
+                            AudioChunk(samples: Array(samples[offset ..< next]), sampleRate: rate, isFinal: next == samples.count)
+                        )
+                        offset = next
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     nonisolated private static func makeStream(
@@ -290,6 +360,28 @@ extension KokoroMLXSynthesizer {
             mlxWaveform: mlxOut.asArray(Float.self),
             cpuWaveform: cpuSamples
         )
+    }
+
+    private func runRealSynthesis(
+        tokens: [Int32],
+        voice: String,
+        speed: Double,
+        expectedEpoch: Int
+    ) throws(BasaltError) -> [Float] {
+        guard let realModel, let checkpointDirectory, epoch == expectedEpoch else { throw .modelNotLoaded }
+        let styleTable: MLXArray
+        if let cached = voiceStyles[voice] {
+            styleTable = cached
+        } else {
+            let loaded = try KokoroWeightLoader.loadVoiceStyle(voice: voice, in: checkpointDirectory)
+            voiceStyles[voice] = loaded
+            styleTable = loaded
+        }
+        let styleIdx = min(max(0, tokens.count - 3), max(0, styleTable.dim(0) - 1))
+        let refStyle = styleTable[styleIdx]
+        let wave = realModel.synthesize(tokenIDs: tokens, refStyle: refStyle, speed: speed)
+        eval(wave)
+        return wave.asType(.float32).asArray(Float.self)
     }
 
     private func runSynthesis(
