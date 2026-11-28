@@ -48,6 +48,7 @@ struct ModelOptConverterWiringTests {
             #expect(error.isFinite, "\(stem) relative RMSE \(error)")
             worst = max(worst, error)
             #expect(global.ndim == (weight.ndim == 3 ? 1 : 0), "\(stem) global_scale shape \(global.shape)")
+            #expect(scales.dim(-1).isMultiple(of: 2), "\(stem) has \(scales.dim(-1)) scale groups: an odd count makes MLX's nvfp4 qmm kernel read past the buffer (#782)")
             expertScales += weight.ndim == 3 ? 1 : 0
             checked += 1
         }
@@ -60,6 +61,37 @@ struct ModelOptConverterWiringTests {
         let quantized = try ModelOptImporterTests.load(.gemma4Moe, from: output)
         let logits = quantized(ModelOptImporterTests.tokens, cache: nil).asType(.float32)
         #expect(isNaN(logits).any().item(Bool.self) == false && abs(logits).max().item(Float.self).isFinite)
+    }
+
+    @Test("nvfp4 quantizedMM with an odd number of 16-wide groups reads one scale byte past the buffer: a known MLX kernel defect the converter avoids by leaving such layers dense (#782)",
+          arguments: [16, 48])
+    func scalesTailIsReadWhenGroupsAreOdd(inputs: Int) {
+        let weight = MLXRandom.normal([64, inputs], key: MLXRandom.key(782))
+        let x = MLXRandom.normal([1, 24, inputs], key: MLXRandom.key(783))
+        let (wq, scales, _) = MLX.quantized(weight, groupSize: 16, bits: 4, mode: .nvfp4)
+        func product(_ tail: UInt8) -> [UInt32] {
+            let bytes = scales.asData(access: .copy).data + Data(repeating: tail, count: 256)
+            let view = MLXArray(bytes, [scales.size + 256], dtype: .uint8)[0 ..< scales.size].reshaped(scales.shape)
+            return quantizedMM(x, wq, scales: view, biases: nil, transpose: true, groupSize: 16, bits: 4, mode: .nvfp4)
+                .asArray(Float.self).map(\.bitPattern)
+        }
+        withKnownIssue("MLX fp_quantized.h load_safe ignores the column bound, so the K-tail tile reads a scale past the end") {
+            #expect(product(0x7F) == product(0))
+        }
+    }
+
+    @Test("nvfp4 quantizedMM with an even number of 16-wide groups does not depend on the bytes after scales", arguments: [32, 64, 96])
+    func scalesTailIsNotReadWhenGroupsAreEven(inputs: Int) {
+        let weight = MLXRandom.normal([64, inputs], key: MLXRandom.key(782))
+        let x = MLXRandom.normal([1, 24, inputs], key: MLXRandom.key(783))
+        let (wq, scales, _) = MLX.quantized(weight, groupSize: 16, bits: 4, mode: .nvfp4)
+        func product(_ tail: UInt8) -> [UInt32] {
+            let bytes = scales.asData(access: .copy).data + Data(repeating: tail, count: 256)
+            let view = MLXArray(bytes, [scales.size + 256], dtype: .uint8)[0 ..< scales.size].reshaped(scales.shape)
+            return quantizedMM(x, wq, scales: view, biases: nil, transpose: true, groupSize: 16, bits: 4, mode: .nvfp4)
+                .asArray(Float.self).map(\.bitPattern)
+        }
+        #expect(product(0x7F) == product(0))
     }
 
     @Test("A ModelOpt directory is detected as modelopt:nvfp4 and its canonical decode equals ModelOpt's own dequantization tensor by tensor (the reference is fp16-rounded, so within 1e-3)")

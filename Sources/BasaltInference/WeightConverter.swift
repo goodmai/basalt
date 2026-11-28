@@ -172,7 +172,7 @@ extension WeightConverter {
         let nf4: Int? = if case .nf4(let groupSize) = precision,
             Self.takesNF4(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: groupSize) { groupSize } else { nil }
         let useMXFP4 = precision == .mxfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 32)
-        let useNVFP4 = precision == .nvfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 16)
+        let useNVFP4 = precision == .nvfp4 && Self.quantizable(key, tensor, packed: packed, sourceQuantized: sourceQuantized, groupSize: 32)
         let target = targetQuantization(key, tensor, packed: packed, sourceQuantized: sourceQuantized)
         if nf4 == nil, !useMXFP4, !useNVFP4, pair == nil, let packed, let target, packed.quantization.asTuple == target.asTuple {
             return packed.arrays(base, weight: tensor)
